@@ -3,45 +3,110 @@
 #![feature(rustc_private)]
 
 extern crate rustc_driver;
+extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_public;
 
-use std::collections::HashSet;
-use std::io::stdout;
-use rustc_public::run;
-use rustc_public::{CompilerError, CrateDef};
-use std::ops::ControlFlow;
-use std::process::ExitCode;
-use rustc_public::mir::{LocalDecl, MirVisitor, Terminator, TerminatorKind};
+use rustc_middle::ty::TyCtxt;
 use rustc_public::mir::mono::Instance;
 use rustc_public::mir::visit::Location;
+use rustc_public::mir::{LocalDecl, MirVisitor, Terminator, TerminatorKind};
 use rustc_public::ty::{RigidTy, Ty, TyKind};
+use rustc_public::{CompilerError, CrateDef};
+use rustc_public::{DefId, run_with_tcx};
 
+use std::collections::HashSet;
+use std::io::stdout;
+use std::ops::ControlFlow;
+use std::process::ExitCode;
 
 /// This is a wrapper that can be used to replace rustc.
 fn main() -> ExitCode {
     let rustc_args: Vec<String> = std::env::args().collect();
-    let result = run!(&rustc_args, start_demo);
+    let result = run_with_tcx!(&rustc_args, analyze);
     match result {
         Ok(_) | Err(CompilerError::Skipped | CompilerError::Interrupted(_)) => ExitCode::SUCCESS,
         _ => ExitCode::FAILURE,
     }
 }
 
-fn start_demo() -> ControlFlow<()> {
+fn analyze(tcx: TyCtxt) -> ControlFlow<()> {
     let crate_name = rustc_public::local_crate().name;
     eprintln!("--- Analyzing crate: {crate_name}");
 
+    let krate = rustc_public::local_crate();
+    let adts = krate.adts();
+    for item in adts {
+        let layout = item.ty().layout().unwrap().shape();
+        let docs = docs_for(tcx, item.def_id());
+        eprintln!(
+            "  - {} @{:?} @Layout{{ size: {}, align: {} }}",
+            item.name(),
+            item.span(),
+            layout.size.bytes(),
+            layout.abi_align
+        );
+        for doc in docs {
+            eprintln!("   - Docs: {}", doc);
+        }
+    }
+
     let crate_items = rustc_public::all_local_items();
     for item in crate_items {
-        eprintln!("  - {} @{:?}", item.name(), item.span())
+        let docs = docs_for(tcx, item.def_id());
+        eprintln!("  - {} @{:?}", item.name(), item.span());
+        for doc in docs {
+            eprintln!("   - Docs: {}", doc);
+        }
+        eprintln!(
+            "    - Kind: {} ",
+            match item.kind() {
+                rustc_public::ItemKind::Fn => "Fn",
+                rustc_public::ItemKind::Static => "Static",
+                rustc_public::ItemKind::Const => "Const",
+                rustc_public::ItemKind::Ctor(kind) => match kind {
+                    rustc_public::CtorKind::Const => "Ctor(Const)",
+                    rustc_public::CtorKind::Fn => "Ctor(Fn)",
+                },
+            }
+        );
+        if let Some(fn_sig) = item.ty().kind().fn_sig() {
+            let output = fn_sig.value.output();
+            let inputs = fn_sig.value.inputs();
+            let inputs_str = inputs
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("    - @Sig ({}) -> {} ", inputs_str, output);
+        }
     }
 
     let entry_fn = rustc_public::entry_fn().unwrap();
     let entry_instance = Instance::try_from(entry_fn).unwrap();
     analyze_instance(entry_instance);
     ControlFlow::Break(())
+}
+
+fn docs_for<'a>(tcx: TyCtxt<'a>, def_id: DefId) -> Vec<&'a str> {
+    let def_id = rustc_public::rustc_internal::internal(tcx, def_id);
+    let attrs = rustc_hir::attrs::HasAttrs::get_attrs(def_id, &tcx);
+    let mut docs = Vec::new();
+    for attr in attrs {
+        use rustc_hir::attrs::AttributeKind::*;
+        let attr: &rustc_hir::Attribute = attr;
+        match attr {
+            rustc_hir::Attribute::Parsed(DocComment { comment, .. }) => {
+                docs.push(comment.as_str());
+            }
+            rustc_hir::Attribute::Unparsed(..) => {} // not a doc comment
+
+            #[deny(unreachable_patterns)]
+            _ => {}
+        }
+    }
+    docs
 }
 
 fn analyze_instance(instance: Instance) {
@@ -56,8 +121,14 @@ fn analyze_instance(instance: Instance) {
         fn_calls: Default::default(),
     };
     visitor.visit_body(&body);
-    visitor.tys.iter().for_each(|ty| eprintln!("  - Visited: {ty}"));
-    visitor.fn_calls.iter().for_each(|instance| eprintln!("  - Call: {}", instance.name()));
+    visitor
+        .tys
+        .iter()
+        .for_each(|ty| eprintln!("  - Visited: {ty}"));
+    visitor
+        .fn_calls
+        .iter()
+        .for_each(|instance| eprintln!("  - Call: {}", instance.name()));
 
     body.dump(&mut stdout().lock(), &instance.name()).unwrap();
 }
@@ -73,7 +144,9 @@ impl<'a> MirVisitor for Visitor<'a> {
         match term.kind {
             TerminatorKind::Call { ref func, .. } => {
                 let op_ty = func.ty(self.locals).unwrap();
-                let TyKind::RigidTy(RigidTy::FnDef(def, args)) = op_ty.kind() else { return; };
+                let TyKind::RigidTy(RigidTy::FnDef(def, args)) = op_ty.kind() else {
+                    return;
+                };
                 self.fn_calls.insert(Instance::resolve(def, &args).unwrap());
             }
             _ => {}
