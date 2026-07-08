@@ -1,4 +1,4 @@
 [toolchain]
 # pin the nightly
-channel = "nightly-2026-03-05"
+channel = "nightly-2026-07-08"
 components = ["llvm-tools", "rustc-dev", "rust-src"]
