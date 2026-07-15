@@ -1,4 +1,5 @@
-#![feature(box_into_inner)]
+#![feature(register_tool)]
+#![register_tool(autozng)]
 
 use std::pin::Pin;
 use std::rc::Rc;
@@ -7,23 +8,45 @@ use std::sync::Arc;
 /// Docs for Example type
 ///   multiple lines
 ///     multiple attrs
+///
+/// <!--
+/// autozng::emit(second)
+/// -->
+///
+#[autozng::emit(third, forth)]
 #[derive(Default, Debug)]
-struct Example {
-    inner: String,
+pub struct Example {
+    /// autozng::rename(inner)
+    pub first: String,
+    second: i32,
+    third: u32,
+    forth: Vec<String>,
 }
 
 /// Alias of Example
 type Alias = Example;
 
+pub enum EnumEx {
+    V1,
+    V2(i32),
+    V3(u32, u32),
+    V4 { f1: u32 },
+    V5 { f1: u32, f2: u32 },
+}
+
 /// a Trait
 ///   multiline doc comment
-trait Trait {
+pub trait Trait {
     type Output;
+    fn trait_fn(&self);
 }
 
 /// trait impl
 impl Trait for Example {
     type Output = Example;
+    fn trait_fn(&self) {
+        self.by_ref("from_trait");
+    }
 }
 
 /// main impl block
@@ -36,19 +59,18 @@ impl Example {
 
     /// by ref fn
     pub fn by_ref(self: &Self, source: &str) {
-        println!("{source}: {}", self.inner);
+        println!("{source}: {}", self.first);
     }
 
     /// by ref mut fn
     pub fn by_ref_mut(self: &mut Self) {
-        self.inner = "by_ref_mut".to_string();
+        self.first = "by_ref_mut".to_string();
         self.by_ref("mut");
     }
 
     /// by box fn
     pub fn by_box(self: Box<Self>) {
         self.by_ref("by_box");
-        Box::into_inner(self).by_value();
     }
 
     /// by rc fn
@@ -88,7 +110,12 @@ impl Example {
 
     /// from ctor
     pub fn from(name: String) -> Self {
-        Example { inner: name }
+        Example {
+            first: name,
+            second: -1,
+            third: 1,
+            forth: vec!["hello".into(), "world".into()],
+        }
     }
 }
 

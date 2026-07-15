@@ -18,3 +18,4 @@ generated*.*
 *.dSYM/
 .envrc
 fail_list*.txt
+zngur-autozng/target
