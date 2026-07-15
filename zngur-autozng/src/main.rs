@@ -7,19 +7,22 @@ extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_public;
+extern crate rustc_span;
 
 use rustc_middle::ty::TyCtxt;
-use rustc_public::mir::mono::Instance;
-use rustc_public::mir::visit::Location;
-use rustc_public::mir::{LocalDecl, MirVisitor, Terminator, TerminatorKind};
-use rustc_public::ty::{RigidTy, Ty, TyKind};
+use rustc_public::abi::VariantsShape;
+use rustc_public::run_with_tcx;
+use rustc_public::target::MachineSize;
+use rustc_public::ty::AdtKind;
 use rustc_public::{CompilerError, CrateDef};
-use rustc_public::{DefId, run_with_tcx};
 
-use std::collections::HashSet;
-use std::io::stdout;
+use crate::rustc_public::CrateDefType;
+
 use std::ops::ControlFlow;
 use std::process::ExitCode;
+mod ctx;
+
+use ctx::AutoZngContext;
 
 /// This is a wrapper that can be used to replace rustc.
 fn main() -> ExitCode {
@@ -32,6 +35,8 @@ fn main() -> ExitCode {
 }
 
 fn analyze(tcx: TyCtxt) -> ControlFlow<()> {
+    let ctx = AutoZngContext::new(tcx);
+
     let crate_name = rustc_public::local_crate().name;
     eprintln!("--- Analyzing crate: {crate_name}");
 
@@ -39,24 +44,82 @@ fn analyze(tcx: TyCtxt) -> ControlFlow<()> {
     let adts = krate.adts();
     for item in adts {
         let layout = item.ty().layout().unwrap().shape();
-        let docs = docs_for(tcx, item.def_id());
+        let docs = ctx.docs_for(item.def_id());
         eprintln!(
             "  - {} @{:?} @Layout{{ size: {}, align: {} }}",
-            item.name(),
+            item.trimmed_name(),
             item.span(),
             layout.size.bytes(),
             layout.abi_align
         );
-        for doc in docs {
-            eprintln!("   - Docs: {}", doc);
+        for attr in item.all_tool_attrs() {
+            eprintln!("    - TOOL_ATTR: {}", attr.as_str());
+        }
+        for (doc, _span) in docs {
+            eprintln!("    - Docs: {}", doc);
+        }
+        eprintln!(
+            "    - {} ({} variants) {{",
+            match item.kind() {
+                AdtKind::Enum => "Enum",
+                AdtKind::Union => "Union",
+                AdtKind::Struct => "Struct",
+            },
+            item.num_variants(),
+        );
+        eprintln!("      FIELDS: {:?}", &layout.fields);
+        for (_v, variant) in item.variants().iter().enumerate() {
+            eprintln!("      {} {{", variant.name());
+            eprintln!("      FIELDS: {:?}", &variant.fields());
+            for (f, field) in variant.fields().iter().enumerate() {
+                let offset =
+                    if let rustc_public::abi::FieldsShape::Arbitrary { offsets } = &layout.fields {
+                        offsets.get(f).copied()
+                    } else {
+                        None
+                    };
+                let is_pub = ctx.is_public_vis(field.def_id());
+                let field_name = field
+                    .trimmed_name()
+                    .trim_start_matches(&(item.trimmed_name() + "::"))
+                    .trim_start_matches(&(variant.name() + "::"))
+                    .to_string();
+                eprintln!(
+                    "        {}{}: {}, @offset({})",
+                    if is_pub { "pub " } else { "" },
+                    field_name,
+                    field.ty(),
+                    offset.map(|o| o.bytes()).unwrap_or_default(),
+                )
+            }
+            eprintln!("      }},");
+        }
+        eprintln!("    }}");
+    }
+    for impl_ in krate.trait_impls() {
+        eprintln!("  Impl: {}", impl_.name());
+        for item in impl_.associated_items() {
+            eprintln!("    - assoc: {}", item.def_id.name());
         }
     }
 
     let crate_items = rustc_public::all_local_items();
     for item in crate_items {
-        let docs = docs_for(tcx, item.def_id());
-        eprintln!("  - {} @{:?}", item.name(), item.span());
-        for doc in docs {
+        let docs = ctx.docs_for(item.def_id());
+        if let Some(owner_docs) = ctx.docs_for_owner(item.def_id()) {
+            eprintln!("  Owner Docs: ",);
+            for (line, _span) in owner_docs {
+                eprintln!("    - Docs: {line} ");
+            }
+        }
+        let is_pub = ctx.is_public_vis(item.def_id());
+        eprintln!(
+            "  - {}fn {} @{:?}",
+            if is_pub { "pub " } else { "" },
+            item.name(),
+            item.span()
+        );
+        for (doc, _span) in docs {
             eprintln!("   - Docs: {}", doc);
         }
         eprintln!(
@@ -83,80 +146,60 @@ fn analyze(tcx: TyCtxt) -> ControlFlow<()> {
         }
     }
 
-    let entry_fn = rustc_public::entry_fn().unwrap();
-    let entry_instance = Instance::try_from(entry_fn).unwrap();
-    analyze_instance(entry_instance);
+    // let entry_fn = rustc_public::entry_fn().unwrap();
+    // let entry_instance = Instance::try_from(entry_fn).unwrap();
+    // analyze_instance(entry_instance);
     ControlFlow::Break(())
 }
 
-fn docs_for<'a>(tcx: TyCtxt<'a>, def_id: DefId) -> Vec<&'a str> {
-    let def_id = rustc_public::rustc_internal::internal(tcx, def_id);
-    let attrs = rustc_hir::attrs::HasAttrs::get_attrs(def_id, &tcx);
-    let mut docs = Vec::new();
-    for attr in attrs {
-        use rustc_hir::attrs::AttributeKind::*;
-        let attr: &rustc_hir::Attribute = attr;
-        match attr {
-            rustc_hir::Attribute::Parsed(DocComment { comment, .. }) => {
-                docs.push(comment.as_str());
-            }
-            rustc_hir::Attribute::Unparsed(..) => {} // not a doc comment
+// fn analyze_instance(instance: Instance) {
+//     eprintln!("--- Analyzing instance: {}", instance.name());
+//     eprintln!("  - Mangled name: {}", instance.mangled_name());
+//     eprintln!("  - FnABI: {:?}", instance.fn_abi().unwrap());
 
-            #[deny(unreachable_patterns)]
-            _ => {}
-        }
-    }
-    docs
-}
+//     let body = instance.body().unwrap();
+//     let mut visitor = Visitor {
+//         locals: body.locals(),
+//         tys: Default::default(),
+//         fn_calls: Default::default(),
+//     };
+//     visitor.visit_body(&body);
+//     visitor
+//         .tys
+//         .iter()
+//         .for_each(|ty| eprintln!("  - Visited: {ty}"));
+//     visitor
+//         .fn_calls
+//         .iter()
+//         .for_each(|instance| eprintln!("  - Call: {}", instance.name()));
 
-fn analyze_instance(instance: Instance) {
-    eprintln!("--- Analyzing instance: {}", instance.name());
-    eprintln!("  - Mangled name: {}", instance.mangled_name());
-    eprintln!("  - FnABI: {:?}", instance.fn_abi().unwrap());
+//     body.dump(&mut stdout().lock(), &instance.name()).unwrap();
+// }
 
-    let body = instance.body().unwrap();
-    let mut visitor = Visitor {
-        locals: body.locals(),
-        tys: Default::default(),
-        fn_calls: Default::default(),
-    };
-    visitor.visit_body(&body);
-    visitor
-        .tys
-        .iter()
-        .for_each(|ty| eprintln!("  - Visited: {ty}"));
-    visitor
-        .fn_calls
-        .iter()
-        .for_each(|instance| eprintln!("  - Call: {}", instance.name()));
+// struct Visitor<'a> {
+//     locals: &'a [LocalDecl],
+//     tys: HashSet<Ty>,
+//     fn_calls: HashSet<Instance>,
+// }
 
-    body.dump(&mut stdout().lock(), &instance.name()).unwrap();
-}
+// impl<'a> MirVisitor for Visitor<'a> {
+//     fn visit_terminator(&mut self, term: &Terminator, _location: Location) {
+//         match term.kind {
+//             TerminatorKind::Call { ref func, .. } => {
+//                 let op_ty = func.ty(self.locals).unwrap();
+//                 let TyKind::RigidTy(RigidTy::FnDef(def, args)) = op_ty.kind() else {
+//                     return;
+//                 };
+//                 self.fn_calls.insert(Instance::resolve(def, &args).unwrap());
+//             }
+//             _ => {}
+//         }
+//     }
 
-struct Visitor<'a> {
-    locals: &'a [LocalDecl],
-    tys: HashSet<Ty>,
-    fn_calls: HashSet<Instance>,
-}
-
-impl<'a> MirVisitor for Visitor<'a> {
-    fn visit_terminator(&mut self, term: &Terminator, _location: Location) {
-        match term.kind {
-            TerminatorKind::Call { ref func, .. } => {
-                let op_ty = func.ty(self.locals).unwrap();
-                let TyKind::RigidTy(RigidTy::FnDef(def, args)) = op_ty.kind() else {
-                    return;
-                };
-                self.fn_calls.insert(Instance::resolve(def, &args).unwrap());
-            }
-            _ => {}
-        }
-    }
-
-    fn visit_ty(&mut self, ty: &Ty, _location: Location) {
-        self.tys.insert(*ty);
-    }
-}
+//     fn visit_ty(&mut self, ty: &Ty, _location: Location) {
+//         self.tys.insert(*ty);
+//     }
+// }
 
 // use std::collections::HashMap;
 //
