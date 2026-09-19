@@ -6,19 +6,19 @@
 
 namespace rust {
 
-Unit Impl<crate::Dispatcher>::constructor(
-    RefMut<crate::Dispatcher> dispatcher) {
+Unit Impl<Dispatcher>::constructor(
+    RefMut<Dispatcher> dispatcher) {
   new (&dispatcher.cpp()) task::Dispatcher();
   return {};
 }
 
-Unit Impl<crate::CppTask>::constructor(RefMut<crate::CppTask> dispatcher) {
+Unit Impl<CppTask>::constructor(RefMut<CppTask> dispatcher) {
   new (&dispatcher.cpp()) task::CppTaskForRust();
   return {};
 }
 
-::rust::Unit Impl<rust::crate::Dispatcher>::run_task(
-    ::rust::Ref<rust::crate::Dispatcher> self,
+::rust::Unit Impl<rust::Dispatcher>::run_task(
+    ::rust::Ref<rust::Dispatcher> self,
     ::rust::RefMut<rust::crate::RustTask> task) {
   auto &d = self.cpp();
   ::rust::RawMut<::rust::crate::RustTask> raw_mut(task);

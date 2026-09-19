@@ -1,7 +1,7 @@
 #[rustfmt::skip]
 mod generated;
 
-pub use generated::cpp::MyCppWrapper;
+use generated::MyCppWrapper;
 
 fn main() {
     let c = MyCppWrapper::new(5, 6);

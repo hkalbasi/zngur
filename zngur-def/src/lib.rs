@@ -143,7 +143,7 @@ impl LayoutPolicy {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ZngurMethodDetails {
     pub data: ZngurMethod,
-    pub use_path: Option<Vec<String>>,
+    pub use_path: Option<String>,
     pub deref: Option<(RustType, Mutability)>,
     pub cpp_name: Option<String>,
 }
@@ -277,6 +277,7 @@ pub enum RustType {
     Tuple(Vec<RustType>),
     Adt(RustPathAndGenerics),
     TypeVar(TypeVar),
+    Cpp(Vec<String>),
 }
 
 impl RustType {
@@ -371,6 +372,18 @@ impl Display for RustType {
             }
             RustType::Slice(s) => write!(f, "[{s}]"),
             RustType::TypeVar(TypeVar(v)) => write!(f, "{v}"),
+            RustType::Cpp(segs) => write!(f, "{}", segs.join("::")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cpp_display() {
+        let cpp = RustType::Cpp(vec!["a".to_owned(), "b".to_owned(), "Name".to_owned()]);
+        assert_eq!(cpp.to_string(), "a::b::Name");
     }
 }

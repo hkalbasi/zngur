@@ -122,6 +122,12 @@ impl IntoCpp for RustType {
                 tail: None,
             },
             RustType::Adt(pg) => pg.into_cpp(namespace, crate_name),
+            RustType::Cpp(segs) => RustPathAndGenerics {
+                path: segs.clone(),
+                generics: vec![],
+                named_generics: vec![],
+            }
+            .into_cpp(namespace, crate_name),
             RustType::Tuple(v) => {
                 if v.is_empty() {
                     return CppType::from(&*format!("{namespace}::Unit"));
@@ -1104,15 +1110,18 @@ pub {}fn {rust_name}("#,
     }
 
     pub fn add_cpp_heap_allocated_bridge(&mut self, ty: &RustType) -> String {
-        let type_name = ty.to_string().split("::").last().unwrap().to_string();
+        let wrapper_ref = match ty {
+            RustType::Cpp(_) => ty.to_string(),
+            _ => ty.to_string().split("::").last().unwrap().to_string(),
+        };
         let mangled_name = self.mangle_name(&format!("{ty}_cpp_heap_allocated"));
         w!(
             self,
             r#"
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
-pub extern "C" fn {mangled_name}(d: *mut u8) -> *mut cpp::{type_name} {{
-    d as *mut cpp::{type_name}
+pub extern "C" fn {mangled_name}(d: *mut u8) -> *mut {wrapper_ref} {{
+    d as *mut {wrapper_ref}
 }}"#
         );
         mangled_name
@@ -1124,7 +1133,7 @@ pub extern "C" fn {mangled_name}(d: *mut u8) -> *mut cpp::{type_name} {{
         rust_name: &str,
         inputs: &[RustType],
         output: &RustType,
-        use_path: Option<Vec<String>>,
+        use_path: Option<String>,
         deref: Option<Mutability>,
         namespace: &str,
         crate_name: &str,
@@ -1156,11 +1165,7 @@ pub extern "C" fn {mangled_name}("#
         wln!(self, "o: *mut u8) {{ unsafe {{");
         self.wrap_in_catch_unwind(|this| {
             if let Some(use_path) = use_path {
-                if use_path.first().is_some_and(|x| x == "crate") {
-                    wln!(this, "    use {};", use_path.iter().join("::"));
-                } else {
-                    wln!(this, "    use ::{};", use_path.iter().join("::"));
-                }
+                wln!(this, "    use {use_path};");
             }
 
             w!(
@@ -1446,5 +1451,17 @@ pub extern "C" fn {make_coro_future_fn}(handle: *mut u8, out: *mut u8) {{
             }
             LayoutPolicy::OnlyByRef => CppLayoutPolicy::OnlyByRef,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cpp_into_cpp() {
+        let cpp = RustType::Cpp(vec!["a".to_owned(), "Name".to_owned()]);
+        let cpp_type = cpp.into_cpp("rust", "my_crate");
+        assert_eq!(cpp_type.to_string(), "::rust::a::Name");
     }
 }

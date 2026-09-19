@@ -22,13 +22,13 @@ type ::std::result::Result<&str, ::std::str::Utf8Error> {
     fn expect(self, &str) -> &str;
 }
 
-type crate::Inventory {
+type c++::Inventory {
     #layout(size = 16, align = 8);
 
     #cpp_heap_allocated "::cpp_inventory::Inventory";
 }
 
-type crate::Item {
+type c++::Item {
     #layout(size = 16, align = 8);
 
     #cpp_heap_allocated "::cpp_inventory::Item";
@@ -45,17 +45,17 @@ type ::std::fmt::Formatter {
 }
 
 extern "C++" {
-    impl crate::Inventory {
-        safe fn new_empty(u32) -> crate::Inventory;
+    impl c++::Inventory {
+        safe fn new_empty(u32) -> c++::Inventory;
         safe fn add_banana(&mut self, u32);
-        safe fn add_item(&mut self, crate::Item);
+        safe fn add_item(&mut self, c++::Item);
     }
 
-    impl crate::Item {
-        safe fn new(&str, u32) -> crate::Item;
+    impl c++::Item {
+        safe fn new(&str, u32) -> c++::Item;
     }
 
-    impl std::fmt::Debug for crate::Inventory {
+    impl std::fmt::Debug for c++::Inventory {
         safe fn fmt(&self, &mut ::std::fmt::Formatter) -> ::std::fmt::Result;
     }
 }

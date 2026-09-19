@@ -1,10 +1,12 @@
 use std::panic::catch_unwind;
 
 use expect_test::{Expect, expect};
-use zngur_def::{CppHeapAllocated, LayoutPolicy, RustPathAndGenerics, RustType, ZngurSpec};
+use zngur_def::{
+    CppHeapAllocated, CppRef, CppStackOwned, LayoutPolicy, RustPathAndGenerics, RustType, ZngurSpec,
+};
 
 use crate::{
-    ImportResolver, ParsedZngFile,
+    EntityPath, ImportResolver, ParsedZngFile, Scope,
     cfg::{InMemoryRustCfgProvider, NullCfg, RustCfgProvider},
 };
 
@@ -1200,5 +1202,500 @@ fn cpp_additional_includes() {
     assert_eq!(
         parsed.spec.additional_includes.0,
         "\n    // comment\n    \"stuff\"\n"
+    );
+}
+
+// Tests for `c++::a::b::Name` paths.
+
+fn assert_cpp(expected: &[&str], ty: &RustType) {
+    let RustType::Cpp(segs) = ty else {
+        panic!("type `{:?}` is not a c++ type", ty);
+    };
+    assert_eq!(segs.as_slice(), expected);
+}
+
+#[test]
+fn cpp_path_with_cpp_heap_allocated_parses() {
+    let parsed = ParsedZngFile::parse_str(
+        r#"
+type c++::a::b::Name {
+    #layout(size = 16, align = 8);
+    #cpp_heap_allocated "::foo::Bar";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = parsed.spec.types.first().expect("no type parsed");
+    assert_cpp(&["a", "b", "Name"], &ty.ty);
+    // The c++:: segments are a Rust-side placement hint only; the C++-side path
+    // in #cpp_heap_allocated's string argument is independent of them.
+    assert_eq!(
+        ty.cpp_heap_allocated,
+        Some(CppHeapAllocated("::foo::Bar".to_owned())),
+    );
+}
+
+#[test]
+fn cpp_path_with_cpp_ref_parses_and_forces_zero_sized_layout() {
+    let parsed = ParsedZngFile::parse_str(
+        r#"
+type c++::a::b::Name {
+    #cpp_ref "::foo::Bar";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = parsed.spec.types.first().expect("no type parsed");
+    assert_cpp(&["a", "b", "Name"], &ty.ty);
+    assert_eq!(ty.cpp_ref, Some(CppRef("::foo::Bar".to_owned())));
+    assert_eq!(ty.layout, Some(LayoutPolicy::ZERO_SIZED_TYPE));
+}
+
+#[test]
+fn cpp_path_with_cpp_stack_owned_parses() {
+    let parsed = ParsedZngFile::parse_str(
+        r#"
+type c++::a::b::Name {
+    #cpp_stack_owned "::foo::Bar" (size = 8, align = 4);
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = parsed.spec.types.first().expect("no type parsed");
+    assert_cpp(&["a", "b", "Name"], &ty.ty);
+    assert_eq!(
+        ty.cpp_stack_owned,
+        Some(CppStackOwned {
+            cpp_type: "::foo::Bar".to_owned(),
+            size: 8,
+            align: 4,
+        }),
+    );
+}
+
+#[test]
+fn mod_cpp_shorthand_matches_explicit_cpp_path() {
+    let direct = ParsedZngFile::parse_str(
+        r#"
+type c++::a::b::Name {
+    #layout(size = 16, align = 8);
+    #cpp_heap_allocated "::x";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let via_mod = ParsedZngFile::parse_str(
+        r#"
+mod c++::a::b {
+    type Name {
+        #layout(size = 16, align = 8);
+        #cpp_heap_allocated "::x";
+    }
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let direct_ty = &direct.spec.types.first().expect("no type parsed").ty;
+    let via_mod_ty = &via_mod.spec.types.first().expect("no type parsed").ty;
+    assert_cpp(&["a", "b", "Name"], direct_ty);
+    assert_eq!(direct_ty, via_mod_ty);
+}
+
+#[test]
+fn alias_can_target_a_cpp_path() {
+    // Unlike a method's `use` path or a trait bound, a `use ... as` alias
+    // target can legitimately be a `c++::` path -- referencing the alias
+    // elsewhere should resolve to exactly that `c++::` path.
+    let parsed = ParsedZngFile::parse_str(
+        r#"
+use c++::a::Foo as MyFoo;
+
+type MyFoo {
+    #layout(size = 16, align = 8);
+    #cpp_heap_allocated "::x";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = parsed.spec.types.first().expect("no type parsed");
+    assert_cpp(&["a", "Foo"], &ty.ty);
+}
+
+#[test]
+fn cpp_path_rejected_in_method_use_path() {
+    check_fail(
+        r#"
+type crate::Foo {
+    #layout(size = 1, align = 1);
+    fn bar(self) -> usize use c++::a::Bar;
+}
+    "#,
+        expect![[r#"
+            Error: `c++::` paths cannot be used in a method's `use` path
+               ╭─[test.zng:4:42]
+               │
+             4 │     fn bar(self) -> usize use c++::a::Bar;
+               │                                          ┬  
+               │                                          ╰── `c++::` paths cannot be used in a method's `use` path
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_path_rejected_as_trait() {
+    check_fail(
+        r#"
+extern "C++" {
+    impl c++::Foo for crate::X {
+    }
+}
+    "#,
+        expect![[r#"
+            Error: `c++::` paths cannot be used as a trait
+               ╭─[test.zng:3:19]
+               │
+             3 │     impl c++::Foo for crate::X {
+               │                   ─┬─  
+               │                    ╰─── `c++::` paths cannot be used as a trait
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+#[should_panic(expected = "a c++::-only path was used somewhere that can't support it")]
+fn cpp_path_via_alias_indirection_as_trait_is_a_known_ice() {
+    // The syntactic check above only catches an *explicit* `c++::` prefix in
+    // trait position. An alias that itself targets a `c++::` path slips
+    // past it (nothing about `MyTrait` looks like a `c++::` path until it's
+    // resolved), and hits a deliberate `todo!()` instead of a clean
+    // diagnostic -- see the `RustPathAndGenerics::to_zngur` `Cpp` arm.
+    let _ = ParsedZngFile::parse_str(
+        r#"
+use c++::Foo as MyTrait;
+
+extern "C++" {
+    impl MyTrait for crate::X {
+    }
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+}
+
+#[test]
+fn cpp_path_allowed_as_impl_target() {
+    check_success(
+        r#"
+extern "C++" {
+    impl c++::Foo {
+    }
+}
+    "#,
+    );
+}
+
+#[test]
+fn cpp_path_allowed_as_impl_for_trait_target() {
+    check_success(
+        r#"
+extern "C++" {
+    impl crate::SomeTrait for c++::Foo {
+    }
+}
+    "#,
+    );
+}
+
+#[test]
+fn cpp_path_lexer_tolerates_whitespace_between_tokens() {
+    // `c++` is lexed as a single, indivisible token (like `->` or `::`), so
+    // whitespace *inside* it (`c ++`) does not lex as `Token::CppPathStart` --
+    // it falls back to `Ident("c")` + `Plus` + `Plus`, same as any other
+    // unrecognized punctuation sequence would. But, like every other token in
+    // this grammar (e.g. `crate ::`), ordinary whitespace *between* the
+    // `c++` token and the following `::`/segments is fine.
+    let normal = ParsedZngFile::parse_str(
+        r#"
+type c++::Name {
+    #layout(size = 16, align = 8);
+    #cpp_heap_allocated "::x";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let spaced = ParsedZngFile::parse_str(
+        r#"
+type c++ :: Name {
+    #layout(size = 16, align = 8);
+    #cpp_heap_allocated "::x";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let normal_ty = &normal.spec.types.first().expect("no type parsed").ty;
+    let spaced_ty = &spaced.spec.types.first().expect("no type parsed").ty;
+    assert_cpp(&["Name"], normal_ty);
+    assert_eq!(normal_ty, spaced_ty);
+}
+
+#[test]
+fn cpp_path_with_space_inside_token_is_a_clean_syntax_error_not_a_panic() {
+    // `c ++ :: Name` (space between `c` and `++`) does NOT lex as the `c++`
+    // path-start token -- it lexes as `Ident("c")` followed by `Plus`, `Plus`,
+    // which is a plain syntax error (not a panic).
+    check_fail(
+        r#"
+type c ++ :: Name {
+    #layout(size = 16, align = 8);
+}
+    "#,
+        expect![[r#"
+            Error: found '+' expected '::', '<', or '{'
+               ╭─[test.zng:2:8]
+               │
+             2 │ type c ++ :: Name {
+               │        ┬  
+               │        ╰── found '+' expected '::', '<', or '{'
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn ordinary_path_starting_with_c_is_unaffected() {
+    let parsed = ParsedZngFile::parse_str(
+        r#"
+type crate::config::Foo {
+    #layout(size = 1, align = 1);
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = parsed.spec.types.first().expect("no type parsed");
+    assert_ty_path!(["crate", "config", "Foo"], &ty.ty);
+}
+
+#[test]
+fn cpp_mod_rejected_when_nested_inside_another_module() {
+    check_fail(
+        r#"
+mod crate::foo {
+    mod c++::a::b {
+        type Name {
+            #layout(size = 16, align = 8);
+        }
+    }
+}
+    "#,
+        expect![[r#"
+            Error: `c++::` modules can only appear at the top level of a file, not nested inside another module
+               ╭─[test.zng:3:9]
+               │
+             3 │     mod c++::a::b {
+               │         ────┬────  
+               │             ╰────── `c++::` modules can only appear at the top level of a file, not nested inside another module
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn free_fn_rejected_inside_cpp_scope() {
+    // There's no real Rust function living in the generated c++::-only
+    // module tree, so a top-level `fn` declaration inside `mod c++::a {
+    // ... }` must be rejected rather than silently misinterpreting the
+    // c++::-only path as if it were a real, absolute Rust path.
+    check_fail(
+        r#"
+mod c++::a {
+    fn foo(i32) -> bool;
+}
+    "#,
+        expect![[r#"
+            Error: a free function cannot be declared inside a c++:: scope
+               ╭─[test.zng:3:5]
+               │
+             3 │     fn foo(i32) -> bool;
+               │     ─────────┬─────────  
+               │              ╰─────────── a free function cannot be declared inside a c++:: scope
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn crate_mod_rejected_when_nested_inside_another_module() {
+    check_fail(
+        r#"
+mod crate::foo {
+    mod crate::bar {
+        type Name {
+            #layout(size = 16, align = 8);
+        }
+    }
+}
+    "#,
+        expect![[r#"
+            Error: `crate::` modules can only appear at the top level of a file, not nested inside another module
+               ╭─[test.zng:3:9]
+               │
+             3 │     mod crate::bar {
+               │         ─────┬────  
+               │              ╰────── `crate::` modules can only appear at the top level of a file, not nested inside another module
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn absolute_mod_rejected_when_nested_inside_another_module() {
+    check_fail(
+        r#"
+mod crate::foo {
+    mod ::std::bar {
+        type Name {
+            #layout(size = 16, align = 8);
+        }
+    }
+}
+    "#,
+        expect![[r#"
+            Error: `::` modules can only appear at the top level of a file, not nested inside another module
+               ╭─[test.zng:3:9]
+               │
+             3 │     mod ::std::bar {
+               │         ─────┬────  
+               │              ╰────── `::` modules can only appear at the top level of a file, not nested inside another module
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn relative_mod_nested_in_cpp_mod_extends_the_cpp_prefix() {
+    // `mod c++::a { mod b { type Name { ... } } }` is `c++::a::b::Name` --
+    // a plain relative `mod` nested inside a `c++::` scope composes onto the
+    // same `c++::` prefix rather than starting a fresh Rust module path.
+    let parsed = ParsedZngFile::parse_str(
+        r#"
+mod c++::a {
+    mod b {
+        type Name {
+            #layout(size = 16, align = 8);
+            #cpp_heap_allocated "::x";
+        }
+    }
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = parsed.spec.types.first().expect("no type parsed");
+    assert_cpp(&["a", "b", "Name"], &ty.ty);
+}
+
+#[test]
+fn aliased_type_referenced_inside_cpp_mod_still_resolves_via_the_alias() {
+    // A bare relative name that matches an alias must still expand via that
+    // alias, even when referenced from inside a `c++::` scope -- it must
+    // NOT get the `c++::` prefix composed onto it instead.
+    let parsed = ParsedZngFile::parse_str(
+        r#"
+use ::std::string::String as MyString;
+
+mod c++::a {
+    type Name {
+        #layout(size = 16, align = 8);
+        #cpp_heap_allocated "::x";
+        field s (offset = auto, type = MyString);
+    }
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = parsed.spec.types.first().expect("no type parsed");
+    // The type's own declaration still composes onto the c++:: prefix:
+    assert_cpp(&["a", "Name"], &ty.ty);
+    // But the aliased field type resolves as the real Rust path, not
+    // `Cpp(["a", "s"])`:
+    let field = ty.fields.first().expect("no field parsed");
+    assert_ty_path!(["std", "string", "String"], &field.ty);
+}
+
+#[test]
+fn scope_reference_to_cpp_target_from_top_level_cpp_base_is_bare() {
+    // At the root of the c++::-only tree (an empty `Cpp` base), there's
+    // nothing to climb out of, so the reference is just the target's own
+    // segments.
+    let scope = scope_with_base(EntityPath::Cpp(Vec::new()));
+    assert_eq!(
+        scope.reference_to(&EntityPath::cpp(["foo", "Bar"])),
+        Some("foo::Bar".to_owned()),
+    );
+}
+
+fn scope_with_base(base: EntityPath) -> Scope<'static> {
+    Scope {
+        aliases: Vec::new(),
+        base,
+        type_vars: Default::default(),
+    }
+}
+
+#[test]
+fn scope_reference_to_rust_target_is_always_reachable_regardless_of_base() {
+    // A `Rust` target is crate- or globally-qualified, so it's reachable the
+    // same way no matter what the referencing scope's own base is -- even
+    // from a `Cpp` base.
+    let scope = scope_with_base(EntityPath::cpp(["a", "b"]));
+    assert_eq!(
+        scope.reference_to(&EntityPath::crate_relative(["foo", "Bar"])),
+        Some("crate::foo::Bar".to_owned()),
+    );
+    assert_eq!(
+        scope.reference_to(&EntityPath::rust(["foo", "Bar"])),
+        Some("::foo::Bar".to_owned()),
+    );
+}
+
+#[test]
+fn scope_reference_to_cpp_target_from_rust_base_is_impossible() {
+    // We don't know which module the c++::-only tree will itself be
+    // generated into relative to an arbitrary Rust path, so there's no way
+    // to reference it from a `Rust` base.
+    let scope = scope_with_base(EntityPath::Rust(Vec::new()));
+    assert_eq!(scope.reference_to(&EntityPath::cpp(["a", "Foo"])), None);
+}
+
+#[test]
+fn scope_reference_to_cpp_target_from_cpp_base_uses_super_as_needed() {
+    let scope = scope_with_base(EntityPath::cpp(["a", "b"]));
+    // Different branch entirely: climb out twice, then descend.
+    assert_eq!(
+        scope.reference_to(&EntityPath::cpp(["x", "y"])),
+        Some("super::super::x::y".to_owned()),
+    );
+    // Sibling module under the shared parent `a`: climb out once.
+    assert_eq!(
+        scope.reference_to(&EntityPath::cpp(["a", "c"])),
+        Some("super::c".to_owned()),
+    );
+    // Child of the current base: no climbing needed at all.
+    assert_eq!(
+        scope.reference_to(&EntityPath::cpp(["a", "b", "Name"])),
+        Some("Name".to_owned()),
     );
 }

@@ -2,11 +2,11 @@
 #include <impls.h>
 "
 
-type crate::CppTask {
+type c++::CppTask {
     #cpp_stack_owned "task::CppTaskForRust" (size = 8, align = 8);
 }
 
-type crate::Dispatcher {
+type c++::Dispatcher {
     #cpp_stack_owned "task::Dispatcher" (size = 1, align = 1);
 }
 
@@ -25,11 +25,11 @@ type crate::RustTask {
 }
 
 extern "C++" {
-    impl crate::CppTask {
+    impl c++::CppTask {
         safe fn constructor(&mut self);
     }
 
-    impl crate::Dispatcher {
+    impl c++::Dispatcher {
         safe fn constructor(&mut self);
         safe fn run_task(&self, &mut crate::RustTask);
     }

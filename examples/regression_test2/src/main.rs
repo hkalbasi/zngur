@@ -10,7 +10,7 @@ use std::task::{Context, Poll, Waker};
 
 use cpp_inherit::CppInherit;
 
-use crate::generated::cpp::{CppTask, Dispatcher};
+use crate::generated::{CppTask, Dispatcher};
 
 pub struct RustTask<'a>(pub Pin<&'a mut dyn Future<Output = ()>>);
 

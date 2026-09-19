@@ -2,13 +2,13 @@
 #include <cpp_type.h>
 "
 
-type crate::MyCppWrapper {
+type c++::MyCppWrapper {
     #cpp_stack_owned "::CppType" (size = 8, align = 4);
 }
 
 extern "C++" {
-    impl crate::MyCppWrapper {
-        safe fn new(i32, i32) -> crate::MyCppWrapper;
+    impl c++::MyCppWrapper {
+        safe fn new(i32, i32) -> c++::MyCppWrapper;
         safe fn print(&self);
     }
 }
