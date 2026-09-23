@@ -2,7 +2,7 @@
 
 type bool {
 	#layout(size = 1, align = 1);
-	wellknown_traits(Copy);
+	wellknown_traits(Debug, Copy);
 }
 
 type str {
@@ -77,6 +77,22 @@ mod ::std::option {
 
         fn is_some(&self) -> bool;
         fn unwrap(self) -> &&str;
+    }
+
+    type Option<&i32> {
+        #layout(size = 8, align = 8);
+        wellknown_traits(Debug, Copy);
+
+        fn is_some(&self) -> bool;
+        fn unwrap(self) -> &i32;
+    }
+
+    type Option<crate::FieldTypeC> {
+        #layout(size = 16, align = 4);
+        wellknown_traits(Debug, Copy);
+
+        fn is_some(&self) -> bool;
+        fn unwrap(self) -> crate::FieldTypeC;
     }
 
     type Option<&mut &str> {
@@ -167,6 +183,9 @@ type crate::ZeroSizedType {
 }
 
 mod crate {
+    fn make_option_holder() -> crate::OptionHolder;
+    fn make_empty_option_holder() -> crate::OptionHolder;
+
     fn call_dyn_fn_multi_args(Box<dyn Fn(i32, crate::Scoped, &str)>);
 }
 
@@ -214,6 +233,24 @@ type crate::TypeB {
     field foo (offset = 0, type = i32 );
     field bar (offset = 4, type = crate::FieldTypeA );
     field baz (offset = 16, type = crate::FieldTypeB );
+}
+
+type crate::BoolHolder {
+    #layout(size = 16, align = 4);
+    wellknown_traits(Debug, Copy);
+    constructor { flag: bool, data: crate::FieldTypeC };
+
+    // rustc reordering
+    field data (offset = 0, type = crate::FieldTypeC );
+    field flag (offset = 12, type = bool );
+}
+
+type crate::OptionHolder {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug, Copy);
+
+    field opt_ref (offset = auto, type = ::std::option::Option<&i32> );
+    field opt_copy (offset = auto, type = ::std::option::Option<crate::FieldTypeC> );
 }
 
 type crate::ConservativeLayoutType {

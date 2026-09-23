@@ -258,6 +258,25 @@ impl<'a> CppHeaderTemplate<'a> {
                 ));
             }
         }
+
+        // Out-of-line definitions for the `operator T` conversion declared in the
+        // per-type `Field*` specializations. The specializations are emitted before
+        // the type and `Ref` definitions.
+        if td.has_copy() && !is_unsized && !td.layout.is_only_by_ref() {
+            for field_kind in ["FieldOwned", "FieldRef", "FieldRefMut"] {
+                s.push_str(&format!(
+                    r#"
+        template<typename Offset, typename... Offsets>
+        inline {namespace}::{field_kind}< {ty}, Offset, Offsets... >::operator {ty}() const {{
+          return *::{namespace}::Ref< {ty} >(*this);
+        }}
+"#,
+                    namespace = self.namespace,
+                    field_kind = field_kind,
+                    ty = td.ty,
+                ));
+            }
+        }
         s
     }
 

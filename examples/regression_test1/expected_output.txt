@@ -59,19 +59,106 @@ Test Field* underlying conversions -- started
 [main.cpp:88] pmut.f1.len() = 3
 Test Field* underlying conversions -- finished
 
+Test Ref and RefMut deref of user types -- started
+[main.cpp:101] view.flag = true
+[main.cpp:102] int32_t(view.data.buzz_3) = 9
+[main.cpp:107] snapshot = BoolHolder {
+    flag: true,
+    data: FieldTypeC {
+        buzz_1: 7,
+        buzz_2: 8,
+        buzz_3: 9,
+    },
+}
+[main.cpp:110] int32_t(r->data.buzz_3) = 9
+[main.cpp:115] holder.flag = false
+[main.cpp:117] holder.flag = true
+Test Ref and RefMut deref of user types -- finished
+
+Test Bool and Copy struct field conversions -- started
+[main.cpp:129] holder.flag = true
+[main.cpp:131] b1 = true
+[main.cpp:135] c1 = FieldTypeC {
+    buzz_1: 7,
+    buzz_2: 8,
+    buzz_3: 9,
+}
+[main.cpp:139] v1 = 8
+[main.cpp:143] r.flag = true
+[main.cpp:145] c2 = FieldTypeC {
+    buzz_1: 7,
+    buzz_2: 8,
+    buzz_3: 9,
+}
+[main.cpp:148] m.flag = true
+[main.cpp:150] int32_t(c3.buzz_1) = 7
+Test Bool and Copy struct field conversions -- finished
+
+Test Option field conversions -- started
+[main.cpp:157] some = OptionHolder {
+    opt_ref: Some(
+        1234,
+    ),
+    opt_copy: Some(
+        FieldTypeC {
+            buzz_1: 11,
+            buzz_2: 22,
+            buzz_3: 33,
+        },
+    ),
+}
+[main.cpp:161] o1 = Some(
+    1234,
+)
+[main.cpp:165] o2 = Some(
+    FieldTypeC {
+        buzz_1: 11,
+        buzz_2: 22,
+        buzz_3: 33,
+    },
+)
+[main.cpp:166] o2.unwrap() = FieldTypeC {
+    buzz_1: 11,
+    buzz_2: 22,
+    buzz_3: 33,
+}
+[main.cpp:171] o3 = Some(
+    1234,
+)
+[main.cpp:173] o4 = Some(
+    FieldTypeC {
+        buzz_1: 11,
+        buzz_2: 22,
+        buzz_3: 33,
+    },
+)
+[main.cpp:177] o5 = Some(
+    1234,
+)
+[main.cpp:179] o6 = Some(
+    FieldTypeC {
+        buzz_1: 11,
+        buzz_2: 22,
+        buzz_3: 33,
+    },
+)
+[main.cpp:184] o7 = None
+[main.cpp:186] o8 = None
+Test Option field conversions -- finished
+
 Test floats -- started
-[main.cpp:98] *r1 = 12.3
-[main.cpp:100] v1 = 12.3
-[main.cpp:105] fvec = [
+[main.cpp:196] *r1 = 12.3
+[main.cpp:198] v1 = 12.3
+[main.cpp:203] fvec = [
     42.24,
     147.0,
 ]
-[main.cpp:106] fvec.get(0) = Some(
+[main.cpp:204] fvec.get(0) = Some(
     42.24,
 )
-[main.cpp:107] fvec.get(2) = None
-[main.cpp:108] *fvec.get(1).unwrap() = 147
-[main.cpp:110] fvec = [
+[main.cpp:205] fvec.get(2) = None
+[main.cpp:206] *fvec.get(1).unwrap() = 147
+[main.cpp:208] fvec = [
     42.24,
     5.43,
 ]
@@ -86,19 +173,19 @@ End of call_dyn_fn_multi_args
 Test dyn Fn() with multiple arguments -- finished
 
 Test Ref<Ref<T>> -- started
-[main.cpp:131] strvec = [
+[main.cpp:229] strvec = [
     "a str",
     "foobar",
     "a third str",
 ]
-[main.cpp:132] strvec.get(0) = Some(
+[main.cpp:230] strvec.get(0) = Some(
     "a str",
 )
-[main.cpp:133] strvec.get(2) = Some(
+[main.cpp:231] strvec.get(2) = Some(
     "a third str",
 )
-[main.cpp:138] *strvec.get(1).unwrap() = "foobar"
-[main.cpp:140] strvec = [
+[main.cpp:236] *strvec.get(1).unwrap() = "foobar"
+[main.cpp:238] strvec = [
     "a str",
     "flip flop",
     "a third str",
@@ -107,11 +194,11 @@ Test Ref<Ref<T>> -- finished
 
 Test zero-sized type -- started
 Method call on ZST
-[main.cpp:147] zst = ZeroSizedType
+[main.cpp:245] zst = ZeroSizedType
 Test zero-sized type -- finished
 
 Test nested Ref<T> where T is #heap_allocated and auto field offsets -- started
-[main.cpp:162] a = TypeA {
+[main.cpp:260] a = TypeA {
     foo: 10,
     bar: FieldTypeA {
         fizz: FieldTypeC {
@@ -128,12 +215,12 @@ Test nested Ref<T> where T is #heap_allocated and auto field offsets -- started
         },
     },
 }
-[main.cpp:163] ::rust::Ref<int32_t>(a.foo) = 10
-[main.cpp:164] ::rust::Ref<int32_t>(a.bar.fizz.buzz_2) = 30
-[main.cpp:165] ::rust::RefMut<int32_t>(a.baz.fizz.buzz_3) = 70
-[main.cpp:168] ::rust::Ref<int32_t>(a_fa_fizz.buzz_1) = 20
-[main.cpp:170] ::rust::Ref<int32_t>(a_fb_fizz.buzz_2) = 60
-[main.cpp:181] b = TypeB {
+[main.cpp:261] ::rust::Ref<int32_t>(a.foo) = 10
+[main.cpp:262] ::rust::Ref<int32_t>(a.bar.fizz.buzz_2) = 30
+[main.cpp:263] ::rust::RefMut<int32_t>(a.baz.fizz.buzz_3) = 70
+[main.cpp:266] ::rust::Ref<int32_t>(a_fa_fizz.buzz_1) = 20
+[main.cpp:268] ::rust::Ref<int32_t>(a_fb_fizz.buzz_2) = 60
+[main.cpp:279] b = TypeB {
     foo: 100,
     bar: FieldTypeA {
         fizz: FieldTypeC {
@@ -150,40 +237,40 @@ Test nested Ref<T> where T is #heap_allocated and auto field offsets -- started
         },
     },
 }
-[main.cpp:182] ::rust::Ref<int32_t>(b.foo) = 100
-[main.cpp:183] ::rust::Ref<int32_t>(b.bar.fizz.buzz_2) = 300
-[main.cpp:184] ::rust::RefMut<int32_t>(b.baz.fizz.buzz_3) = 700
-[main.cpp:187] ::rust::Ref<int32_t>(b_fa_fizz.buzz_1) = 200
-[main.cpp:189] ::rust::Ref<int32_t>(b_fb_fizz.buzz_2) = 600
-[main.cpp:194] fa = FieldTypeA {
+[main.cpp:280] ::rust::Ref<int32_t>(b.foo) = 100
+[main.cpp:281] ::rust::Ref<int32_t>(b.bar.fizz.buzz_2) = 300
+[main.cpp:282] ::rust::RefMut<int32_t>(b.baz.fizz.buzz_3) = 700
+[main.cpp:285] ::rust::Ref<int32_t>(b_fa_fizz.buzz_1) = 200
+[main.cpp:287] ::rust::Ref<int32_t>(b_fb_fizz.buzz_2) = 600
+[main.cpp:292] fa = FieldTypeA {
     fizz: FieldTypeC {
         buzz_1: 21,
         buzz_2: 31,
         buzz_3: 41,
     },
 }
-[main.cpp:195] ::rust::Ref<int32_t>(fa.fizz.buzz_1) = 21
-[main.cpp:196] ::rust::Ref<int32_t>(fa.fizz.buzz_3) = 41
-[main.cpp:201] fa = FieldTypeA {
+[main.cpp:293] ::rust::Ref<int32_t>(fa.fizz.buzz_1) = 21
+[main.cpp:294] ::rust::Ref<int32_t>(fa.fizz.buzz_3) = 41
+[main.cpp:299] fa = FieldTypeA {
     fizz: FieldTypeC {
         buzz_1: 21,
         buzz_2: 31,
         buzz_3: 41,
     },
 }
-[main.cpp:202] ::rust::Ref<int32_t>(fb.fizz.buzz_2) = 61
-[main.cpp:203] ::rust::Ref<int32_t>(fb.fizz.buzz_3) = 71
+[main.cpp:300] ::rust::Ref<int32_t>(fb.fizz.buzz_2) = 61
+[main.cpp:301] ::rust::Ref<int32_t>(fb.fizz.buzz_3) = 71
 Test nested Ref<T> where T is #heap_allocated and auto field offsets -- finished
 
 Test #layout_conservative -- started
-[main.cpp:212] c_layout = ConservativeLayoutType {
+[main.cpp:310] c_layout = ConservativeLayoutType {
     field1: 3.14159,
     field2: 42,
     field3: "A string at some unknown offset",
 }
 Rust( size = 32 , align = 8 )
 c++( size = 48 , align = 8 )
-[main.cpp:224] layouts = [
+[main.cpp:322] layouts = [
     ConservativeLayoutType {
         field1: 3.14159,
         field2: 42,
@@ -195,26 +282,26 @@ c++( size = 48 , align = 8 )
         field3: "Another test string",
     },
 ]
-[main.cpp:225] layouts.get(0) = Some(
+[main.cpp:323] layouts.get(0) = Some(
     ConservativeLayoutType {
         field1: 3.14159,
         field2: 42,
         field3: "A string at some unknown offset",
     },
 )
-[main.cpp:226] layouts.get(1) = Some(
+[main.cpp:324] layouts.get(1) = Some(
     ConservativeLayoutType {
         field1: 2.71828,
         field2: 1000,
         field3: "Another test string",
     },
 )
-[main.cpp:227] layouts.get(1).unwrap() = ConservativeLayoutType {
+[main.cpp:325] layouts.get(1).unwrap() = ConservativeLayoutType {
     field1: 2.71828,
     field2: 1000,
     field3: "Another test string",
 }
-[main.cpp:229] layouts = [
+[main.cpp:327] layouts = [
     ConservativeLayoutType {
         field1: 3.14159,
         field2: 42,
@@ -229,28 +316,28 @@ c++( size = 48 , align = 8 )
 Test #layout_conservative -- finished
 
 Test dbg of Ref<Ref<T>> -- started
-[main.cpp:241] r = RefHolder(
+[main.cpp:339] r = RefHolder(
     SimpleFoo(
         42,
     ),
 )
-[main.cpp:242] rr = RefHolder(
+[main.cpp:340] rr = RefHolder(
     SimpleFoo(
         42,
     ),
 )
-[main.cpp:243] rrr = RefHolder(
+[main.cpp:341] rrr = RefHolder(
     SimpleFoo(
         42,
     ),
 )
-[main.cpp:244] rust::Ref(r.f0) = SimpleFoo(
+[main.cpp:342] rust::Ref(r.f0) = SimpleFoo(
     42,
 )
-[main.cpp:245] rust::Ref((*rr).f0) = SimpleFoo(
+[main.cpp:343] rust::Ref((*rr).f0) = SimpleFoo(
     42,
 )
-[main.cpp:246] rust::Ref((**rrr).f0) = SimpleFoo(
+[main.cpp:344] rust::Ref((**rrr).f0) = SimpleFoo(
     42,
 )
 Test dbg of Ref<Ref<T>> -- finished

@@ -189,6 +189,14 @@ namespace {{ self.namespace }} {
     };
     {% endif %}
 
+    {# The primary template of `{{ field_kind }}` provides a conversion to `T`, #}
+    {# but this explicit specialization would silently drop it. Only `Copy` #}
+    {# types can support it, since it copies the value out of the parent. #}
+    {# Defined out-of-line, where `Ref` and `T` are complete. #}
+    {% if td.has_copy() && !td.has_unsized() %}
+      inline operator {{ td.ty }}() const;
+    {% endif %}
+
     {% for method in td.methods %}
       {% if method.is_valid_field_method(field_kind) %}
           {{ method.sig.output }} {{ method.name }}(
@@ -702,6 +710,22 @@ namespace {{ self.namespace }} {
       }
     {% endif %}
 
+    {% if !is_unsized && !td.layout.is_only_by_ref() %}
+      // deref to the aliased object without taking ownership
+      {{ td.ty }}& operator*() noexcept {
+        return *reinterpret_cast< {{ td.ty }}* >(reinterpret_cast<uint8_t*>(__zngur_data));
+      }
+      {{ td.ty }} const& operator*() const noexcept {
+        return *reinterpret_cast< {{ td.ty }} const* >(reinterpret_cast<const uint8_t*>(__zngur_data));
+      }
+      {{ td.ty }}* operator->() noexcept {
+        return reinterpret_cast< {{ td.ty }}* >(reinterpret_cast<uint8_t*>(__zngur_data));
+      }
+      {{ td.ty }} const* operator->() const noexcept {
+        return reinterpret_cast< {{ td.ty }} const* >(reinterpret_cast<const uint8_t*>(__zngur_data));
+      }
+    {% endif %}
+
     {{ td.render_make_box_ref(td.ty.path.name(), self.namespace, self.crate_name) }}
 
     {% if let Some(cpp_heap_allocated) = td.cpp_heap_allocated %}
@@ -922,6 +946,22 @@ namespace {{ self.namespace }} {
       Ref(const FieldRefMut< {{ td.ty }}, Offset, Offsets...>& f) {
           size_t offset = __zngur_internal_calc_field<Offset, Offsets...>::offset(*reinterpret_cast<const uint8_t* const*>(&f));
           __zngur_data = *reinterpret_cast<const size_t*>(&f) + offset;
+      }
+    {% endif %}
+
+    {% if !is_unsized && !td.layout.is_only_by_ref() %}
+      // deref to the aliased object without taking ownership
+      {{ td.ty }}& operator*() noexcept {
+        return *reinterpret_cast< {{ td.ty }}* >(reinterpret_cast<uint8_t*>(__zngur_data));
+      }
+      {{ td.ty }} const& operator*() const noexcept {
+        return *reinterpret_cast< {{ td.ty }} const* >(reinterpret_cast<const uint8_t*>(__zngur_data));
+      }
+      {{ td.ty }}* operator->() noexcept {
+        return reinterpret_cast< {{ td.ty }}* >(reinterpret_cast<uint8_t*>(__zngur_data));
+      }
+      {{ td.ty }} const* operator->() const noexcept {
+        return reinterpret_cast< {{ td.ty }} const* >(reinterpret_cast<const uint8_t*>(__zngur_data));
       }
     {% endif %}
 
