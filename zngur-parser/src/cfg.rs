@@ -8,7 +8,7 @@ use crate::{
 use chumsky::prelude::*;
 
 /// A configuration provider, Must be Clone.
-pub trait RustCfgProvider: CloneableCfg {
+pub trait RustCfgProvider {
     /// Gets values associated with a config key if it's present.
     fn get_cfg(&self, key: &str) -> Option<Vec<String>>;
     /// Gets a list of feature names that are enabled
@@ -20,16 +20,15 @@ pub trait RustCfgProvider: CloneableCfg {
     fn get_cfg_pairs(&self) -> Vec<(String, Option<String>)>;
 }
 
-pub trait CloneableCfg {
-    fn clone_box(&self) -> Box<dyn RustCfgProvider>;
-}
-
-impl<T> CloneableCfg for T
-where
-    T: 'static + RustCfgProvider + Clone,
-{
-    fn clone_box(&self) -> Box<dyn RustCfgProvider> {
-        Box::new(self.clone())
+impl<T: RustCfgProvider + ?Sized> RustCfgProvider for Box<T> {
+    fn get_cfg(&self, key: &str) -> Option<Vec<String>> {
+        <T as RustCfgProvider>::get_cfg(self, key)
+    }
+    fn get_features(&self) -> Vec<String> {
+        <T as RustCfgProvider>::get_features(self)
+    }
+    fn get_cfg_pairs(&self) -> Vec<(String, Option<String>)> {
+        <T as RustCfgProvider>::get_cfg_pairs(self)
     }
 }
 

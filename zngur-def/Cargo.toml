@@ -14,5 +14,15 @@ license.workspace = true
 printing = []
 
 [dependencies]
-indexmap = "2.13.0"
-itertools = "0.11"
+indexmap = { workspace = true }
+itertools = { workspace = true }
+
+[dev-dependencies]
+zngur-parser = { version = "0.11.0", path = "../zngur-parser" }
+expect-test = { workspace = true }
+strip-ansi-escapes = { workspace = true }
+ariadne = { workspace = true }
+
+[[test]]
+name = "round_trip"
+required-features = ["printing"]

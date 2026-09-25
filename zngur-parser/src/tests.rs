@@ -4,19 +4,100 @@ use expect_test::{Expect, expect};
 use zngur_def::{CppHeapAllocated, LayoutPolicy, RustPathAndGenerics, RustType, ZngurSpec};
 
 use crate::{
-    ImportResolver, ParsedZngFile,
+    DefaultImportResolver, ImportResolver, ParsedZngFile, ReportSink,
     cfg::{InMemoryRustCfgProvider, NullCfg, RustCfgProvider},
 };
 
+/// Parse a .zng file from a string.
+fn parse_str(
+    text: &str,
+    cfg: impl RustCfgProvider + 'static,
+    warning_sink: impl FnMut(&str),
+) -> crate::ParseResult {
+    let mut error_sink = TestErrorSink::new(warning_sink);
+    ParsedZngFile::parse_str_with_resolver(
+        text,
+        "test.zng",
+        cfg,
+        &DefaultImportResolver,
+        &mut error_sink,
+    )
+}
+
+fn parse_str_with_resolver(
+    text: &str,
+    cfg: impl RustCfgProvider + 'static,
+    resolver: &impl ImportResolver,
+    warning_sink: impl FnMut(&str),
+) -> crate::ParseResult {
+    let mut report_sink = TestErrorSink::new(warning_sink);
+    ParsedZngFile::parse_str_with_resolver(text, "test.zng", cfg, resolver, &mut report_sink)
+}
+
+#[derive(Debug)]
+struct TestErrorSink<F>
+where
+    F: FnMut(&str),
+{
+    error_buffer: Vec<u8>,
+    warning_sink: F,
+}
+
+impl<F> TestErrorSink<F>
+where
+    F: FnMut(&str),
+{
+    fn new(f: F) -> Self {
+        Self {
+            error_buffer: Default::default(),
+            warning_sink: f,
+        }
+    }
+}
+
+impl<F> ReportSink for TestErrorSink<F>
+where
+    F: FnMut(&str),
+{
+    fn sink_report(&mut self, report: &crate::ReportEntry, source_cache: crate::SourceCache) {
+        if report.fatal {
+            report
+                .report
+                .write(source_cache, &mut self.error_buffer)
+                .unwrap();
+        } else {
+            let mut buf = Vec::<u8>::new();
+            report.report.write(source_cache, &mut buf).unwrap();
+            (self.warning_sink)(&String::from_utf8(strip_ansi_escapes::strip(buf)).unwrap());
+        };
+    }
+}
+
+/// unwind with the full error on drop if not empty
+impl<F> Drop for TestErrorSink<F>
+where
+    F: FnMut(&str),
+{
+    fn drop(&mut self) {
+        if !self.error_buffer.is_empty() {
+            std::panic::resume_unwind(Box::new(ErrorText(
+                String::from_utf8(strip_ansi_escapes::strip(&self.error_buffer)).unwrap(),
+            )))
+        }
+    }
+}
+
 fn check_success(zng: &str) {
-    let _ = ParsedZngFile::parse_str(zng, NullCfg, |_| {});
+    let _ = parse_str(zng, NullCfg, |msg| {
+        unreachable!("an unexpected warning was emitted: {msg}");
+    });
 }
 
 pub struct ErrorText(pub String);
 
 fn check_fail(zng: &str, error: Expect) {
     let r = catch_unwind(|| {
-        let _ = ParsedZngFile::parse_str(zng, NullCfg, |_| {});
+        let _ = parse_str(zng, NullCfg, |_| {});
     });
     match r {
         Ok(_) => panic!("Parsing succeeded but we expected fail"),
@@ -33,7 +114,7 @@ fn check_fail_with_cfg(
     error: Expect,
 ) {
     let r = catch_unwind(|| {
-        let _ = ParsedZngFile::parse_str(zng, cfg, |_| {});
+        let _ = parse_str(zng, cfg, |_| {});
     });
     match r {
         Ok(_) => panic!("Parsing succeeded but we expected fail"),
@@ -46,7 +127,7 @@ fn check_fail_with_cfg(
 
 fn check_import_fail(zng: &str, error: Expect, resolver: &MockFilesystem) {
     let r = catch_unwind(|| {
-        let _ = ParsedZngFile::parse_str_with_resolver(zng, NullCfg, resolver, |_| {});
+        let _ = parse_str_with_resolver(zng, NullCfg, resolver, |_| {});
     });
 
     match r {
@@ -63,16 +144,18 @@ fn catch_parse_fail(
     zng: &str,
     cfg: impl RustCfgProvider + std::panic::UnwindSafe + 'static,
 ) -> crate::ParseResult {
-    let r = catch_unwind(move || ParsedZngFile::parse_str(zng, cfg, |_| {}));
+    let r = catch_unwind(move || parse_str(zng, cfg, |_| {}));
 
     match r {
         Ok(r) => r,
         Err(e) => match e.downcast::<ErrorText>() {
             Ok(t) => {
-                eprintln!("{}", &t.0);
+                eprintln!("{}", t.0);
                 crate::ParseResult {
                     spec: ZngurSpec::default(),
                     processed_files: Vec::new(),
+                    errors: 1,
+                    warnings: 0,
                 }
             }
             Err(e) => std::panic::resume_unwind(e),
@@ -91,7 +174,7 @@ type () {
     "#,
         expect![[r#"
             Error: Unit type is declared implicitly. Remove this entirely.
-               ╭─[test.zng:2:6]
+               ╭─[ test.zng:2:6 ]
                │
              2 │ type () {
                │      ─┬  
@@ -123,7 +206,7 @@ type () {
     "#,
         expect![[r#"
             Error: found 'welcome_traits' expected '#', 'variant', 'wellknown_traits', 'non_exhaustive', 'constructor', 'field', 'async', 'fn', or '}'
-               ╭─[test.zng:4:5]
+               ╭─[ test.zng:4:5 ]
                │
              4 │     welcome_traits(Copy);
                │     ───────┬──────  
@@ -144,7 +227,7 @@ type ::std::string::String {
     "#,
         expect![[r#"
             Error: Duplicate layout policy found
-               ╭─[test.zng:4:5]
+               ╭─[ test.zng:4:5 ]
                │
              4 │     #heap_allocated;
                │     ───────┬───────  
@@ -166,7 +249,7 @@ type crate::Way {
     "#,
         expect![[r#"
             Error: Duplicate layout policy found
-               ╭─[test.zng:3:5]
+               ╭─[ test.zng:3:5 ]
                │
              3 │     #layout(size = 1, align = 2);
                │     ──────────────┬─────────────  
@@ -185,7 +268,7 @@ type crate::Way {
 
 #[test]
 fn cpp_heap_allocated_directive_parses() {
-    let result = ParsedZngFile::parse_str(
+    let result = parse_str(
         r#"
 type crate::Way {
     #layout(size = 16, align = 8);
@@ -205,7 +288,7 @@ type crate::Way {
 #[test]
 fn cpp_value_emits_deprecation_warning_and_forwards_to_cpp_heap_allocated() {
     let mut warnings = Vec::new();
-    let result = ParsedZngFile::parse_str(
+    let result = parse_str(
         r#"
 type crate::Way {
     #layout(size = 16, align = 8);
@@ -213,12 +296,12 @@ type crate::Way {
 }
     "#,
         NullCfg,
-        |w| warnings.push(w.to_owned()),
+        &mut |w: &str| warnings.push(w.to_owned()),
     );
     assert_eq!(warnings.len(), 1);
     expect![[r#"
         Warning: #cpp_value is deprecated; use #cpp_heap_allocated instead
-           ╭─[test.zng:4:5]
+           ╭─[ test.zng:4:5 ]
            │
          4 │     #cpp_value "0" "::osmium::Way";
            │     ───────────────┬───────────────  
@@ -245,7 +328,7 @@ type crate::Way {
     )]);
 
     let mut warnings = Vec::new();
-    let parsed = ParsedZngFile::parse_str_with_resolver(
+    let parsed = parse_str_with_resolver(
         r#"
 merge "./a.zng";
 type crate::Way {
@@ -254,7 +337,7 @@ type crate::Way {
     "#,
         NullCfg,
         &resolver,
-        |w| warnings.push(w.to_owned()),
+        &mut |w: &str| warnings.push(w.to_owned()),
     );
     // The #cpp_value directive that triggered this warning lives in the imported
     // a.zng, not the root file, so the rendered warning must show a.zng's own
@@ -281,7 +364,7 @@ macro_rules! assert_ty_path {
 
 #[test]
 fn alias_expands_correctly() {
-    let parsed = ParsedZngFile::parse_str(
+    let parsed = parse_str(
         r#"
 use ::std::string::String as MyString;
 type MyString {
@@ -300,7 +383,7 @@ type MyString {
 
 #[test]
 fn alias_expands_nearest_scope_first() {
-    let parsed = ParsedZngFile::parse_str(
+    let parsed = parse_str(
         r#"
 use ::std::string::String as MyString;
 mod crate {
@@ -324,7 +407,7 @@ mod crate {
 fn parse_variants() {
     println!("meow");
 
-    let parsed = ParsedZngFile::parse_str(
+    let parsed = parse_str(
         r#"
 type Option<i32> {
     #layout(size = 8, align = 4);
@@ -392,7 +475,7 @@ fn import_parser_test() {
         "type Imported { #layout(size = 1, align = 1); }",
     )]);
 
-    let parsed = ParsedZngFile::parse_str_with_resolver(
+    let parsed = parse_str_with_resolver(
         r#"
 merge "./relative/path.zng";
 type Example {
@@ -416,7 +499,7 @@ fn module_import_prohibited() {
     "#,
         expect![[r#"
             Error: Module import is not supported. Use a relative path instead.
-               ╭─[test.zng:2:5]
+               ╭─[ test.zng:2:5 ]
                │
              2 │     merge "foo/bar.zng";
                │     ──────────┬─────────  
@@ -448,11 +531,20 @@ fn import_has_conflict() {
 "#,
         expect![[r#"
             Error: Conflicting layout policy found
-               ╭─[a.zng:2:12]
+               ╭─[ ./a.zng:2:12 ]
                │
              2 │       type A {
                │            ┬  
                │            ╰── Conflicting layout policy found
+             3 │         #layout(size = 1, align = 1);
+               │         ──────────────┬─────────────  
+               │                       ╰─────────────── declaration here ...
+               │
+               ├─[ test.zng:4:7 ]
+               │
+             4 │       #layout(size = 2, align = 2);
+               │       ──────────────┬─────────────  
+               │                     ╰─────────────── conflicts with the declaration here.
             ───╯
         "#]],
         &resolver,
@@ -476,18 +568,20 @@ fn missing_layout_across_files() {
     type A {}
 "#,
         expect![[r#"
-            Error: No layout policy found for type ::A. Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.
-               ╭─[test.zng:3:10]
+            Error: No layout policy found for type ::A.
+               ╭─[ test.zng:1:1 ]
                │
              3 │     type A {}
                │          ┬  
-               │          ╰── Type defined here
+               │          ╰── Type first declared here.
                │
-               ├─[a.zng:2:12]
+               ├─[ ./a.zng:2:12 ]
                │
              2 │       type A {
                │            ┬  
-               │            ╰── Type defined here
+               │            ╰── Type also declared here
+               │ 
+               │ Note: Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.
             ───╯
         "#]],
         &resolver,
@@ -513,21 +607,26 @@ fn missing_layout_across_files_with_template() {
     type A<B> {}
 "#,
         expect![[r#"
-            Error: No layout policy found for type ::A::<::B>. Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.
-               ╭─[test.zng:5:10]
+            Error: No layout policy found for type ::A::<::B>.
+               ╭─[ test.zng:1:1 ]
+               │
+             5 │     type A<B> {}
+               │          ──┬─  
+               │            ╰─── Type first declared here.
+               │
+               ├─[ ./a.zng:2:12 ]
+               │
+             2 │       type A<B> {
+               │            ──┬─  
+               │              ╰─── Type also declared here
+               │
+               ├─[ test.zng:1:1 ]
                │
              4 │     type<T> A<T> {}
                │             ──┬─  
                │               ╰─── Matching template defined here
-             5 │     type A<B> {}
-               │          ──┬─  
-               │            ╰─── Type defined here
-               │
-               ├─[a.zng:2:12]
-               │
-             2 │       type A<B> {
-               │            ──┬─  
-               │              ╰─── Type defined here
+               │ 
+               │ Note: Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.
             ───╯
         "#]],
         &resolver,
@@ -542,7 +641,7 @@ fn import_not_found() {
     merge "./a.zng";
     "#,
         expect![[r#"
-            Error: Import path not found: ./a.zng
+            Error: Failed to process merge file `./a.zng`: File not found: ./a.zng
         "#]],
         &resolver,
     );
@@ -565,11 +664,19 @@ fn import_has_mismatched_method_signature() {
   "#,
         expect![[r#"
             Error: Method mismatch
-               ╭─[a.zng:1:6]
+               ╭─[ ./a.zng:1:6 ]
                │
              1 │ type A { #layout(size = 1, align = 1); fn foo(i32) -> i32; }
-               │      ┬  
-               │      ╰── Method mismatch
+               │      ┬                                 ─────────┬─────────  
+               │      ╰────────────────────────────────────────────────────── Method mismatch
+               │                                                 │           
+               │                                                 ╰─────────── declaration here ...
+               │
+               ├─[ test.zng:5:5 ]
+               │
+             5 │     fn foo(i64) -> i64;
+               │     ─────────┬─────────  
+               │              ╰─────────── conflicts with the declaration here.
             ───╯
         "#]],
         &resolver,
@@ -596,11 +703,21 @@ fn import_has_mismatched_field() {
   "#,
         expect![[r#"
             Error: Field mismatch
-               ╭─[a.zng:1:6]
+               ╭─[ ./a.zng:1:6 ]
                │
              1 │ type A {
                │      ┬  
                │      ╰── Field mismatch
+               │ 
+             3 │         field x (offset = 0, type = i32);
+               │         ────────────────┬────────────────  
+               │                         ╰────────────────── declaration here ...
+               │
+               ├─[ test.zng:5:5 ]
+               │
+             5 │     field x (offset = 0, type = i64);
+               │     ────────────────┬────────────────  
+               │                     ╰────────────────── conflicts with the declaration here.
             ───╯
         "#]],
         &resolver,
@@ -628,7 +745,7 @@ type B {
         "#,
         expect![[r#"
             Error: Using `#convert_panic_to_exception` in imported zngur files is not supported. This directive can only be used in the main zngur file.
-               ╭─[imported.zng:2:10]
+               ╭─[ ./imported.zng:2:10 ]
                │
              2 │         #convert_panic_to_exception
                │          ─────────────┬────────────  
@@ -655,7 +772,7 @@ type A {
 
 #[test]
 fn processed_files_single_file() {
-    let parsed = ParsedZngFile::parse_str(
+    let parsed = parse_str(
         r#"
 type A {
     #layout(size = 1, align = 1);
@@ -683,7 +800,7 @@ fn processed_files_with_import() {
         "type Imported { #layout(size = 1, align = 1); }",
     )]);
 
-    let parsed = ParsedZngFile::parse_str_with_resolver(
+    let parsed = parse_str_with_resolver(
         r#"
 merge "./imported.zng";
 type Main {
@@ -719,7 +836,7 @@ fn processed_files_with_nested_imports() {
         ("./c.zng", "type C { #layout(size = 1, align = 1); }"),
     ]);
 
-    let parsed = ParsedZngFile::parse_str_with_resolver(
+    let parsed = parse_str_with_resolver(
         r#"
 merge "./a.zng";
 type Main {
@@ -802,7 +919,7 @@ type ::std::string::String {
         32 => {
             #layout(size = 12, align = 4);
         },
-     
+
         _ => {
             // silly size for testing
             #layout(size = 27, align = 9);
@@ -901,7 +1018,7 @@ fn match_pattern_single_cfg() {
     "bar" | "zigza" => type crate::BarZigZa {
         #layout(size = 1, align = 1);
     }
-    // match two values from a cfg value as a set 
+    // match two values from a cfg value as a set
     "foo" & "baz" => type crate::FooBaz {
         #layout(size = 1, align = 1);
     }
@@ -1013,11 +1130,11 @@ fn match_pattern_multi_cfg_bad_pattern() {
 #unstable(cfg_match)
 
 #match (cfg!(feature.foo), cfg!(target_pointer_width)) {
-    (Some, "32") => type crate::Foo32 { 
+    (Some, "32") => type crate::Foo32 {
         // would succeed if cfg match attempted
         #layout(size = 1, align = 1);
     }
-    "64" => type crate::NoFoo64 { 
+    "64" => type crate::NoFoo64 {
         // will fail: cardinality of pattern and tuple don't match
         #layout(size = 1, align = 1);
     }
@@ -1033,7 +1150,7 @@ fn match_pattern_multi_cfg_bad_pattern() {
         InMemoryRustCfgProvider::default().with_values([("target_pointer_width", &["64"])]),
         expect![[r#"
             Error: Can not match single pattern against multiple cfg values.
-               ╭─[test.zng:9:5]
+               ╭─[ test.zng:9:5 ]
                │
              9 │     "64" => type crate::NoFoo64 {
                │     ──┬─  
@@ -1049,11 +1166,11 @@ fn match_pattern_multi_cfg_bad_pattern2() {
 #unstable(cfg_match)
 
 #match (cfg!(feature.foo), cfg!(target_pointer_width), cfg!(target_feature) ) {
-    (Some, "32", "avx" & "avx2") => type crate::Foo32 { 
+    (Some, "32", "avx" & "avx2") => type crate::Foo32 {
         // would succeed if cfg match attempted
         #layout(size = 1, align = 1);
     }
-    (None, "64") => type crate::NoFoo64 { 
+    (None, "64") => type crate::NoFoo64 {
         // will fail: cardinality of pattern and tuple don't match
         #layout(size = 1, align = 1);
     }
@@ -1073,7 +1190,7 @@ fn match_pattern_multi_cfg_bad_pattern2() {
         InMemoryRustCfgProvider::default().with_values(cfg),
         expect![[r#"
             Error: Number of patterns and number of scrutinees do not match.
-               ╭─[test.zng:9:5]
+               ╭─[ test.zng:9:5 ]
                │
              9 │     (None, "64") => type crate::NoFoo64 {
                │     ──────┬─────  
@@ -1102,7 +1219,7 @@ fn cfg_match_unstable() {
         InMemoryRustCfgProvider::default().with_values([("feature", &["foo"])]),
         expect![[r#"
             Error: `#match` statements are unstable. Enable them by using `#unstable(cfg_match)` at the top of the file.
-                ╭─[test.zng:2:1]
+                ╭─[ test.zng:2:1 ]
                 │
               2 │ ╭─▶ #match cfg!(feature) {
                 ┆ ┆   
@@ -1116,11 +1233,11 @@ fn cfg_match_unstable() {
 
 #[test]
 fn module_import_parser_test() {
-    let parsed = crate::ParsedZngFile::parse_str(
+    let parsed = parse_str(
         r#"
 import "module.zng";
 "#,
-        crate::cfg::NullCfg,
+        NullCfg,
         |_| {},
     );
     assert_eq!(parsed.spec.imported_modules.len(), 1);
@@ -1141,7 +1258,7 @@ extern "C++" {
         source,
         expect![[r#"
             Error: found 'fn' expected 'safe', 'unsafe', 'impl', or '}'
-               ╭─[test.zng:3:5]
+               ╭─[ test.zng:3:5 ]
                │
              3 │     fn foo();
                │     ─┬  
@@ -1160,7 +1277,7 @@ extern "C++" {
         source,
         expect![[r#"
             Error: found 'fn' expected 'safe', 'unsafe', or '}'
-               ╭─[test.zng:4:9]
+               ╭─[ test.zng:4:9 ]
                │
              4 │         fn foo();
                │         ─┬  
@@ -1172,14 +1289,14 @@ extern "C++" {
 
 #[test]
 fn cpp_additional_includes() {
-    let parsed = crate::ParsedZngFile::parse_str(
+    let parsed = parse_str(
         r#"
 #cpp_additional_includes "
     // comment
     stuff
 "
     "#,
-        crate::cfg::NullCfg,
+        NullCfg,
         |_| {},
     );
     assert_eq!(
@@ -1187,14 +1304,14 @@ fn cpp_additional_includes() {
         "\n    // comment\n    stuff\n"
     );
 
-    let parsed = crate::ParsedZngFile::parse_str(
+    let parsed = parse_str(
         r##"
 #cpp_additional_includes r#"
     // comment
     "stuff"
 "#
     "##,
-        crate::cfg::NullCfg,
+        NullCfg,
         |_| {},
     );
     assert_eq!(

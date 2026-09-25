@@ -20,7 +20,10 @@ mod template;
 
 use askama::Template;
 pub use rust::RustFile;
-pub use zngur_parser::{ParseResult, ParsedZngFile, cfg};
+pub use zngur_parser::{
+    ParseReport, ParseResult, ParsedZngFile, ReportEntry, ReportSink, ReportSpan, SourceCache,
+    SourceId, StdErrReportSink, cfg,
+};
 
 pub use zngur_def::*;
 
@@ -460,12 +463,12 @@ pub struct ZngHeaderGenerator {
 
 impl ZngHeaderGenerator {
     /// Renders the zngur.h header
-    pub fn render(&self) -> String {
+    pub fn render(&self) -> Result<String, askama::Error> {
         let zng_h = ZngHeaderTemplate {
             panic_to_exception: self.panic_to_exception,
             cpp_namespace: self.cpp_namespace.clone(),
         };
-        zng_h.render().unwrap()
+        zng_h.render()
     }
 }
 

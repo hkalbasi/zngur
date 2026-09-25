@@ -1,22 +1,20 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fmt::Display,
+    ops::{Deref, DerefMut},
     path::Component,
 };
 
-#[cfg(not(test))]
-use std::process::exit;
-
-use ariadne::{Color, Label, Report, ReportKind, sources};
+use ariadne::{Color, Label, Report, ReportKind};
 use chumsky::{input::MapExtra, prelude::*};
 use itertools::{Either, Itertools};
 
 use zngur_def::{
-    AdditionalIncludes, ConvertPanicToException, CppHeapAllocated, CppRef, CppStackOwned, Import,
-    LayoutPolicy, Merge, MergeFailure, ModuleImport, Mutability, PrimitiveRustType,
-    RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurConstructor, ZngurExternCppFn,
-    ZngurExternCppImpl, ZngurField, ZngurFn, ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver,
-    ZngurSpec, ZngurTrait, ZngurType, ZngurVariant, ZngurWellknownTrait,
+    AdditionalIncludes, ConflictSource, ConvertPanicToException, CppHeapAllocated, CppRef,
+    CppStackOwned, Import, LayoutPolicy, Merge, MergeFailure, ModuleImport, Mutability,
+    PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurConstructor,
+    ZngurExternCppFn, ZngurExternCppImpl, ZngurField, ZngurFn, ZngurMethod, ZngurMethodDetails,
+    ZngurMethodReceiver, ZngurSpec, ZngurTrait, ZngurType, ZngurVariant, ZngurWellknownTrait,
 };
 
 pub type Span = SimpleSpan<usize>;
@@ -28,6 +26,10 @@ pub struct ParseResult {
     pub spec: ZngurSpec,
     /// All .zng files that were processed (main file + transitive imports)
     pub processed_files: Vec<std::path::PathBuf>,
+    /// count of errors reported
+    pub errors: usize,
+    /// count of warnings reported
+    pub warnings: usize,
 }
 
 #[cfg(test)]
@@ -423,17 +425,179 @@ impl ParsedMethod<'_> {
     }
 }
 
-fn checked_merge<T, U>(src: T, dst: &mut U, span: Span, ctx: &mut ParseContext)
-where
+struct MergeContext {
+    outer_ty: RustType,
+    variant: Option<String>,
+}
+
+fn checked_merge<T, U>(
+    src: T,
+    dst: &mut U,
+    span: Span,
+    ctx: &mut ParseContext,
+    src_ctx: Option<MergeContext>,
+) where
     T: Merge<U>,
 {
     match src.merge(dst) {
         Ok(()) => {}
         Err(e) => match e {
-            MergeFailure::Conflict(s) => {
-                ctx.add_error_str(&s, span);
+            MergeFailure::Conflict(s, conflict) => {
+                ctx.add_fatal_report(build_merge_conflict_report(
+                    ctx, span, &s, conflict, src_ctx,
+                ));
             }
         },
+    }
+}
+
+fn build_template_conflict_report(
+    ctx: &ParseContext,
+    template: &TemplateDef,
+    target_ty: &ZngurType,
+    template_span: ReportSpan,
+    msg: &str,
+    conflict: (ConflictSource, ConflictSource),
+) -> ParseReport<'static> {
+    let spans = ctx.fetch_spans_global(target_ty);
+    let (first, rest) = {
+        let mut it = spans.into_iter();
+        let first = it.next().cloned();
+        (first, it.collect::<Vec<_>>())
+    };
+
+    let mut report = Report::build(ReportKind::Error, (0usize, 0usize..0))
+        .with_message(format!(
+            "Failed to apply template {} to type {}: {msg}",
+            template.ty.ty, target_ty.ty
+        ))
+        .with_label(
+            Label::new(template_span)
+                .with_message("Template declared here")
+                .with_color(Color::Blue),
+        );
+
+    if let Some(first) = first {
+        report.add_label(
+            Label::new(first)
+                .with_message("Type first declared here.")
+                .with_color(Color::Blue),
+        );
+    }
+
+    add_conflict_labels(
+        ctx,
+        &mut report,
+        conflict,
+        &MergeContext {
+            outer_ty: target_ty.ty.clone(),
+            variant: None,
+        },
+    );
+
+    let count = rest.len();
+    for (i, span) in rest.into_iter().enumerate() {
+        report.add_label(
+            Label::new(span.clone())
+                .with_message("Type also declared here")
+                .with_color(Color::Blue),
+        );
+        if i >= 2 {
+            report.add_note(format!(
+                "{} additional type declaration sites omitted",
+                count - i
+            ));
+            break;
+        }
+    }
+    report.finish()
+}
+
+fn build_merge_conflict_report(
+    ctx: &ParseContext,
+    span: Span,
+    msg: &str,
+    conflict: (ConflictSource, ConflictSource),
+    merge_ctx: Option<MergeContext>,
+) -> ParseReport<'static> {
+    let report_span = ctx.report_span_for_range(span.into_range());
+    let mut report = Report::build(ReportKind::Error, report_span.clone())
+        .with_message(msg)
+        .with_label(
+            Label::new(report_span)
+                .with_message(msg)
+                .with_color(Color::Red),
+        );
+    if let Some(merge_ctx) = &merge_ctx {
+        add_conflict_labels(ctx, &mut report, conflict, merge_ctx);
+    }
+    report.finish()
+}
+
+fn add_conflict_labels(
+    ctx: &ParseContext,
+    report: &mut ariadne::ReportBuilder<'static, ReportSpan>,
+    conflict: (ConflictSource, ConflictSource),
+    merge_ctx: &MergeContext,
+) {
+    let (src_conflict, dst_conflict) = conflict;
+    let src_span_key = src_conflict
+        .clone()
+        .into_span_key_with_variant(merge_ctx.outer_ty.clone(), merge_ctx.variant.clone());
+    let dst_span_key = dst_conflict
+        .clone()
+        .into_span_key_with_variant(merge_ctx.outer_ty.clone(), merge_ctx.variant.clone());
+    let src_spans = ctx.fetch_spans_global(&src_span_key);
+    let dst_spans = ctx.fetch_spans_global(&dst_span_key);
+    let (src_span, dst_span, first_span, rest) = if src_conflict == dst_conflict {
+        let mut src = src_spans.into_iter();
+        (
+            src.next_back().cloned(),
+            src.next_back().cloned(),
+            src.next().cloned(),
+            src.collect::<Vec<_>>(),
+        )
+    } else {
+        let mut src = src_spans.into_iter();
+        let mut dst = dst_spans.into_iter();
+        (
+            src.next_back().cloned(),
+            dst.next_back().cloned(),
+            dst.next().cloned(),
+            dst.collect::<Vec<_>>(),
+        )
+    };
+    if let Some(src_span) = src_span {
+        report.add_label(
+            Label::new(src_span)
+                .with_message("declaration here ...")
+                .with_color(Color::Yellow),
+        );
+    }
+    if let Some(dst_span) = dst_span {
+        report.add_label(
+            Label::new(dst_span)
+                .with_message("conflicts with the declaration here.")
+                .with_color(Color::Yellow),
+        );
+    }
+    if let Some(first_span) = first_span {
+        report.add_label(
+            Label::new(first_span)
+                .with_message("first declared here.")
+                .with_color(Color::Yellow),
+        );
+    }
+    let count = rest.len();
+    for (i, span) in rest.into_iter().enumerate() {
+        report.add_label(
+            Label::new(span.clone())
+                .with_message("also declared here.")
+                .with_color(Color::Blue),
+        );
+        if i >= 2 {
+            report.add_note(format!("{} additional conflict sites omitted", count - i));
+        }
     }
 }
 
@@ -461,7 +625,9 @@ impl ProcessedItem<'_> {
                 }
                 match path.path.components().next() {
                     Some(Component::CurDir) | Some(Component::ParentDir) => {
-                        r.imports.push(Import(path.path));
+                        let import = Import(path.path);
+                        ctx.record_span(&import, path.span.into_range());
+                        r.imports.push(import);
                     }
                     _ => ctx.add_error_str(
                         "Module import is not supported. Use a relative path instead.",
@@ -528,12 +694,13 @@ impl ProcessedItem<'_> {
                         Err(errors)
                     }
                 };
+                let rust_ty = ty.inner.to_zngur(scope);
                 while let Some(item) = to_process.pop() {
                     let item_span = item.span;
                     let item = item.inner;
                     match item {
                         ParsedTypeItem::Layout(span, p) => {
-                            layout = Some(match p {
+                            let l = match p {
                                 ParsedLayoutPolicy::StackAllocated(p) => {
                                     match check_size_align(p) {
                                         Ok((size, align)) => {
@@ -558,7 +725,12 @@ impl ProcessedItem<'_> {
                                 },
                                 ParsedLayoutPolicy::HeapAllocated => LayoutPolicy::HeapAllocated,
                                 ParsedLayoutPolicy::OnlyByRef => LayoutPolicy::OnlyByRef,
-                            });
+                            };
+                            ctx.record_span(
+                                &l.into_span_key_with(rust_ty.clone()),
+                                span.into_range(),
+                            );
+                            layout = Some(l);
                             match layout_span {
                                 Some(_) => {
                                     ctx.add_error_str("Duplicate layout policy found", span);
@@ -582,7 +754,7 @@ impl ProcessedItem<'_> {
                             if constructor.is_some() {
                                 ctx.add_error_str("Duplicate constructor found", item_span);
                             }
-                            constructor = Some(ZngurConstructor {
+                            let c = ZngurConstructor {
                                 inputs: match args {
                                     ParsedConstructorArgs::Unit => vec![],
                                     ParsedConstructorArgs::Tuple(t) => t
@@ -595,7 +767,12 @@ impl ProcessedItem<'_> {
                                         .map(|(i, t)| (i.to_owned(), t.to_zngur(scope)))
                                         .collect(),
                                 },
-                            });
+                            };
+                            ctx.record_span(
+                                &c.into_span_key_with(rust_ty.clone()),
+                                item_span.into_range(),
+                            );
+                            constructor = Some(c);
                         }
                         ParsedTypeItem::Variant { name, items } => {
                             let mut exhaustive = true;
@@ -618,11 +795,19 @@ impl ProcessedItem<'_> {
                                                 item.span,
                                             );
                                         }
-                                        fields.push(ZngurField {
+                                        let field = ZngurField {
                                             name: name.to_owned(),
                                             ty: ty.to_zngur(scope),
                                             offset,
-                                        });
+                                        };
+                                        ctx.record_span(
+                                            &field.into_span_key_with_variant(
+                                                rust_ty.clone(),
+                                                Some(name.clone()),
+                                            ),
+                                            item.span.into_range(),
+                                        );
+                                        fields.push(field);
                                     }
                                     _ => panic!("bug: invalid variant item found: {item:?}"),
                                 }
@@ -634,11 +819,16 @@ impl ProcessedItem<'_> {
                             });
                         }
                         ParsedTypeItem::Field { name, ty, offset } => {
-                            fields.push(ZngurField {
+                            let field = ZngurField {
                                 name: name.to_owned(),
                                 ty: ty.to_zngur(scope),
                                 offset,
-                            });
+                            };
+                            ctx.record_span(
+                                &field.into_span_key_with_variant(rust_ty.clone(), None),
+                                item_span.into_range(),
+                            );
+                            fields.push(field);
                         }
                         ParsedTypeItem::Method {
                             data,
@@ -660,22 +850,33 @@ impl ProcessedItem<'_> {
                                 };
                                 Some((deref_type, receiver_mutability))
                             });
-                            methods.push(ZngurMethodDetails {
+                            let method = ZngurMethodDetails {
                                 data: data.to_zngur(scope),
                                 use_path: use_path.map(|x| scope.resolve_path(x)),
                                 deref,
                                 cpp_name: cpp_name.map(|s| s.to_owned()),
-                            });
+                            };
+                            ctx.record_span(
+                                &method.data.into_span_key_with(rust_ty.clone()),
+                                item_span.into_range(),
+                            );
+                            methods.push(method);
                         }
                         ParsedTypeItem::CppValue { field: _, cpp_type } => {
                             ctx.add_warning_str(
                                 "#cpp_value is deprecated; use #cpp_heap_allocated instead",
                                 item_span,
                             );
-                            cpp_heap_allocated = Some(CppHeapAllocated(cpp_type.to_owned()));
+                            let cpp = CppHeapAllocated(cpp_type.to_owned());
+                            cpp_heap_allocated = Some(cpp);
                         }
                         ParsedTypeItem::CppHeapAllocated { cpp_type } => {
-                            cpp_heap_allocated = Some(CppHeapAllocated(cpp_type.to_owned()));
+                            let cpp = CppHeapAllocated(cpp_type.to_owned());
+                            ctx.record_span(
+                                &cpp.into_span_key_with(rust_ty.clone()),
+                                item_span.into_range(),
+                            );
+                            cpp_heap_allocated = Some(cpp);
                         }
                         ParsedTypeItem::CppRef { cpp_type } => {
                             match layout_span {
@@ -688,7 +889,12 @@ impl ProcessedItem<'_> {
                                     layout_span = Some(item_span);
                                 }
                             }
-                            cpp_ref = Some(CppRef(cpp_type.to_owned()));
+                            let cpp = CppRef(cpp_type.to_owned());
+                            ctx.record_span(
+                                &cpp.into_span_key_with(rust_ty.clone()),
+                                item_span.into_range(),
+                            );
+                            cpp_ref = Some(cpp);
                         }
                         ParsedTypeItem::CppStackOwned { cpp_type, props } => {
                             let (size, align) = match check_size_align(props) {
@@ -700,11 +906,16 @@ impl ProcessedItem<'_> {
                                     continue;
                                 }
                             };
-                            cpp_stack_owned = Some(CppStackOwned {
+                            let cpp = CppStackOwned {
                                 cpp_type: cpp_type.to_owned(),
                                 size,
                                 align,
-                            });
+                            };
+                            ctx.record_span(
+                                &cpp.into_span_key_with(rust_ty.clone()),
+                                item_span.into_range(),
+                            );
+                            cpp_stack_owned = Some(cpp);
                             layout = Some(LayoutPolicy::StackAllocated { size, align });
                         }
                         ParsedTypeItem::MatchOnCfg(match_) => {
@@ -728,24 +939,20 @@ impl ProcessedItem<'_> {
                         ctx.add_fatal_report(
                             Report::build(
                                 ReportKind::Error,
-                                ctx.filename().to_string(),
-                                span.start,
+                                ctx.report_span_for_range(span.into_range()),
                             )
                             .with_message("Duplicate layout policy found for unsized type.")
                             .with_label(
-                                Label::new((ctx.filename().to_string(), span.start..span.end))
+                                Label::new(ctx.report_span_for_range(span.into_range()))
                                     .with_message(
                                         "Unsized types have implicit layout policy, remove this.",
                                     )
                                     .with_color(Color::Red),
                             )
                             .with_label(
-                                Label::new((
-                                    ctx.filename().to_string(),
-                                    is_unsized.span.start..is_unsized.span.end,
-                                ))
-                                .with_message("Type declared as unsized here.")
-                                .with_color(Color::Blue),
+                                Label::new(ctx.report_span_for_range(is_unsized.span.into_range()))
+                                    .with_message("Type declared as unsized here.")
+                                    .with_color(Color::Blue),
                             )
                             .finish(),
                         )
@@ -753,7 +960,7 @@ impl ProcessedItem<'_> {
                     layout = Some(LayoutPolicy::OnlyByRef);
                 }
                 let zngur_type = ZngurType {
-                    ty: ty.inner.to_zngur(scope),
+                    ty: rust_ty.clone(),
                     layout,
                     methods,
                     wellknown_traits: wt,
@@ -768,44 +975,44 @@ impl ProcessedItem<'_> {
                 if is_template {
                     r.templates.push(TemplateDef {
                         ty: zngur_type,
-                        filename: ctx.filename().to_owned(),
+                        source_id: ctx.source_id(),
                         span: ty.span,
                     });
                 } else {
-                    r.ty_to_locations
-                        .entry(zngur_type.ty.clone())
-                        .or_default()
-                        .push((ctx.filename().to_owned(), ty.span.start..ty.span.end));
-                    checked_merge(zngur_type, &mut r.spec, ty.span, ctx);
+                    ctx.record_span(&zngur_type, ty.span.into_range());
+                    checked_merge(
+                        zngur_type,
+                        &mut r.spec,
+                        ty.span,
+                        ctx,
+                        Some(MergeContext {
+                            outer_ty: rust_ty,
+                            variant: None,
+                        }),
+                    );
                 }
             }
             ProcessedItem::Trait { tr, methods } => {
-                checked_merge(
-                    ZngurTrait {
-                        tr: tr.inner.to_zngur(scope),
-                        methods: methods.into_iter().map(|m| m.to_zngur(scope)).collect(),
-                    },
-                    &mut r.spec,
-                    tr.span,
-                    ctx,
-                );
+                let trt = ZngurTrait {
+                    tr: tr.inner.to_zngur(scope),
+                    methods: methods.into_iter().map(|m| m.to_zngur(scope)).collect(),
+                };
+                ctx.record_span(&trt, tr.span.into_range());
+                checked_merge(trt, &mut r.spec, tr.span, ctx, None);
             }
             ProcessedItem::Fn(f) => {
                 let method = f.inner.to_zngur(scope);
-                checked_merge(
-                    ZngurFn {
-                        path: RustPathAndGenerics {
-                            path: scope.simple_relative_path(&method.name),
-                            generics: method.generics,
-                            named_generics: vec![],
-                        },
-                        inputs: method.inputs,
-                        output: method.output,
+                let func = ZngurFn {
+                    path: RustPathAndGenerics {
+                        path: scope.simple_relative_path(&method.name),
+                        generics: method.generics,
+                        named_generics: vec![],
                     },
-                    &mut r.spec,
-                    f.span,
-                    ctx,
-                );
+                    inputs: method.inputs,
+                    output: method.output,
+                };
+                ctx.record_span(&func, f.span.into_range());
+                checked_merge(func, &mut r.spec, f.span, ctx, None);
             }
             ProcessedItem::ExternCpp(items) => {
                 for item in items {
@@ -823,6 +1030,7 @@ impl ProcessedItem<'_> {
                                 &mut r.spec,
                                 span,
                                 ctx,
+                                None,
                             );
                         }
                         ParsedExternCppItem::Impl { tr, ty, methods } => {
@@ -842,6 +1050,7 @@ impl ProcessedItem<'_> {
                                 &mut r.spec,
                                 ty.span,
                                 ctx,
+                                None,
                             );
                         }
                     }
@@ -966,110 +1175,440 @@ impl ParsedRustPathAndGenerics<'_> {
     }
 }
 
+pub type SourceId = usize;
+pub type ReportSpan = (SourceId, std::ops::Range<usize>);
+pub type ParseReport<'b> = Report<'b, ReportSpan>;
+
 /// A diagnostic report, tagged with whether it should abort the parse.
-struct ReportEntry<'b> {
-    fatal: bool,
-    report: Report<'b, (String, std::ops::Range<usize>)>,
+pub struct ReportEntry<'b> {
+    pub fatal: bool,
+    pub report: ParseReport<'b>,
 }
 
-struct ParseContext<'a, 'b> {
-    path: std::path::PathBuf,
-    text: &'a str,
+/// One half of a split key to identify a parsed item type
+/// to store a list of spans for that type. The other half is a [`SourceId`](SourceId).
+///
+/// Uniquely identifying an individual span would require generating
+/// and storing a declaration id in the parser and most spans are only
+/// needed to identify conflicts when merging declarations so identifying
+/// a declaration type is enough
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum PartialSpanKey {
+    /// an [`Import`](zngur_def::Import)
+    Import(Box<std::path::Path>),
+    /// a [`Type`](zngur_def::ZngurType)
+    Ty(RustType),
+    /// a [`Trait`](zngur_def::ZngurTrait)
+    Trait(RustTrait),
+    /// a [`Fn`](zngur_def::ZngurFn)
+    Fn(ZngurFn),
+
+    // spans likely to be inside others
+    /// a [`LayoutPolicy`](zngur_def::LayoutPolicy)
+    /// outer_ty
+    Layout(RustType),
+    /// a [`Constructor`](zngur_def::ZngurConstructor)
+    /// outer_ty, constructor_sig?
+    Constructor(RustType, Option<Vec<(String, RustType)>>),
+    /// a [`CppRef`](zngur_def::CppRef)
+    /// outer_ty
+    CppRef(RustType),
+    /// a [`CppHeapAllocated`](zngur_def::CppHeapAllocated)
+    /// outer_ty
+    CppHeapAllocated(RustType),
+    /// a [`CppStackOwned`](zngur_def::CppStackOwned)
+    /// outer_ty
+    CppStackOwned(RustType),
+    /// a [`Method`](zngur_def::ZngurMethod) on a
+    /// [`Type`](zngur_def::ZngurType) or [`Trait`](zngur_def::ZngurTrait)
+    /// outer_ty, method
+    Method(RustType, ZngurMethod),
+    /// a [`Field`](`zngur_def::ZngurField`) on a [`Type`](zngur_def::ZngurType)
+    /// or it's internal [`Variant`](zngur_def::ZngurVariant)
+    /// outer_ty, variant?, field_name
+    Field(RustType, Option<String>, String),
+}
+
+impl PartialSpanKey {
+    /// combine with a [`SourceId`] to make a full [`SpanKey`]
+    fn full_key_with(self, source_id: SourceId) -> SpanKey {
+        SpanKey(source_id, self)
+    }
+}
+
+/// a full key identifying a list of spans for a given type in a particular source
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SpanKey(SourceId, PartialSpanKey);
+
+/// trait to impl for types to allow easy span lookup
+trait IntoSpanKey {
+    fn into_span_key(&self) -> PartialSpanKey;
+}
+
+impl IntoSpanKey for SpanKey {
+    fn into_span_key(&self) -> PartialSpanKey {
+        self.1.clone()
+    }
+}
+
+impl IntoSpanKey for PartialSpanKey {
+    fn into_span_key(&self) -> PartialSpanKey {
+        self.clone()
+    }
+}
+
+impl IntoSpanKey for zngur_def::Import {
+    fn into_span_key(&self) -> PartialSpanKey {
+        PartialSpanKey::Import(self.0.as_path().into())
+    }
+}
+
+impl IntoSpanKey for zngur_def::ZngurType {
+    fn into_span_key(&self) -> PartialSpanKey {
+        PartialSpanKey::Ty(self.ty.clone())
+    }
+}
+impl IntoSpanKey for zngur_def::RustType {
+    fn into_span_key(&self) -> PartialSpanKey {
+        PartialSpanKey::Ty(self.clone())
+    }
+}
+
+impl IntoSpanKey for zngur_def::ZngurTrait {
+    fn into_span_key(&self) -> PartialSpanKey {
+        PartialSpanKey::Trait(self.tr.clone())
+    }
+}
+impl IntoSpanKey for zngur_def::RustTrait {
+    fn into_span_key(&self) -> PartialSpanKey {
+        PartialSpanKey::Trait(self.clone())
+    }
+}
+
+impl IntoSpanKey for zngur_def::ZngurFn {
+    fn into_span_key(&self) -> PartialSpanKey {
+        PartialSpanKey::Fn(self.clone())
+    }
+}
+
+/// trait to impl for type that require variant and type qualifications for lookup
+trait VariantQualifiedSpanKeyExt {
+    fn into_span_key_with_variant(
+        &self,
+        outer_ty: RustType,
+        variant: Option<String>,
+    ) -> PartialSpanKey;
+}
+
+/// trait to impl for type that require type qualifications for lookup
+trait QualifiedSpanKeyExt {
+    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey;
+}
+
+impl VariantQualifiedSpanKeyExt for zngur_def::ConflictSource {
+    fn into_span_key_with_variant(
+        &self,
+        outer_ty: RustType,
+        variant: Option<String>,
+    ) -> PartialSpanKey {
+        match self {
+            zngur_def::ConflictSource::Layout => PartialSpanKey::Layout(outer_ty),
+            zngur_def::ConflictSource::Constructor(sig) => {
+                PartialSpanKey::Constructor(outer_ty, sig.clone())
+            }
+            zngur_def::ConflictSource::CppRef => PartialSpanKey::CppRef(outer_ty),
+            zngur_def::ConflictSource::CppHeapAllocated => {
+                PartialSpanKey::CppHeapAllocated(outer_ty)
+            }
+            zngur_def::ConflictSource::CppStackOwned => PartialSpanKey::CppStackOwned(outer_ty),
+            zngur_def::ConflictSource::Method(method) => {
+                PartialSpanKey::Method(outer_ty, method.clone())
+            }
+            zngur_def::ConflictSource::Field(name) => {
+                PartialSpanKey::Field(outer_ty, variant, name.clone())
+            }
+        }
+    }
+}
+
+impl VariantQualifiedSpanKeyExt for zngur_def::ZngurField {
+    fn into_span_key_with_variant(
+        &self,
+        outer_ty: RustType,
+        variant: Option<String>,
+    ) -> PartialSpanKey {
+        PartialSpanKey::Field(outer_ty, variant, self.name.clone())
+    }
+}
+
+impl QualifiedSpanKeyExt for zngur_def::LayoutPolicy {
+    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
+        PartialSpanKey::Layout(outer_ty)
+    }
+}
+
+impl QualifiedSpanKeyExt for zngur_def::ZngurMethod {
+    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
+        PartialSpanKey::Method(outer_ty, self.clone())
+    }
+}
+
+impl QualifiedSpanKeyExt for zngur_def::CppHeapAllocated {
+    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
+        PartialSpanKey::CppHeapAllocated(outer_ty)
+    }
+}
+
+impl QualifiedSpanKeyExt for zngur_def::CppRef {
+    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
+        PartialSpanKey::CppRef(outer_ty)
+    }
+}
+
+impl QualifiedSpanKeyExt for zngur_def::CppStackOwned {
+    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
+        PartialSpanKey::CppStackOwned(outer_ty)
+    }
+}
+
+impl QualifiedSpanKeyExt for zngur_def::ZngurConstructor {
+    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
+        PartialSpanKey::Constructor(outer_ty, Some(self.inputs.clone()))
+    }
+}
+
+/// A wrapper around both an owned value and a exclusive mutable
+/// reference to that same value. Used to allow nested parse contexts
+/// to internally borrow from their parent.
+///
+/// Implements the important [`AsMut`](AsMut) and
+/// [`Deref`](Deref)/[`DerefMut`](DerefMut) traits to allow the type
+/// to be used transparently.
+enum OwnedRefMut<'a, T> {
+    Owned(T),
+    Borrowed(&'a mut T),
+}
+
+impl<'a, T> Deref for OwnedRefMut<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Owned(t) => t,
+            Self::Borrowed(t) => t,
+        }
+    }
+}
+
+impl<'a, T> DerefMut for OwnedRefMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Owned(t) => t,
+            Self::Borrowed(t) => t,
+        }
+    }
+}
+
+impl<'a, T, U> AsMut<U> for OwnedRefMut<'a, T>
+where
+    <OwnedRefMut<'a, T> as Deref>::Target: AsMut<U>,
+{
+    fn as_mut(&mut self) -> &mut U {
+        self.deref_mut().as_mut()
+    }
+}
+
+impl<'a, T, U> AsRef<U> for OwnedRefMut<'a, T>
+where
+    <OwnedRefMut<'a, T> as Deref>::Target: AsRef<U>,
+{
+    fn as_ref(&self) -> &U {
+        self.deref().as_ref()
+    }
+}
+
+impl<'a, T> OwnedRefMut<'a, T> {
+    /// exclusively borrows from self returning a wrapped value
+    pub fn into_borrowed<'t>(&'t mut self) -> OwnedRefMut<'t, T> {
+        match self {
+            Self::Owned(t) => OwnedRefMut::<'t, T>::Borrowed(t),
+            Self::Borrowed(t) => OwnedRefMut::<'t, T>::Borrowed(t),
+        }
+    }
+
+    /// consume self to return the inner value if owned
+    #[allow(dead_code)]
+    pub fn into_inner(self) -> Option<T> {
+        match self {
+            Self::Owned(t) => Some(t),
+            Self::Borrowed(_) => None,
+        }
+    }
+}
+
+impl<'a, T: Default> Default for OwnedRefMut<'a, T> {
+    fn default() -> Self {
+        Self::Owned(Default::default())
+    }
+}
+
+impl<'a, T: Clone> OwnedRefMut<'a, T> {
+    /// clones the inner value unconditionally
+    pub fn clone_inner(&self) -> T {
+        match self {
+            Self::Owned(t) => t.clone(),
+            Self::Borrowed(t) => (*t).clone(),
+        }
+    }
+
+    /// returns the inner value, cloning a borrowed value if necessary
+    #[allow(dead_code)]
+    pub fn unwrap_or_clone(self) -> T {
+        match self {
+            Self::Owned(t) => t,
+            Self::Borrowed(t) => t.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ReportCounter {
+    pub errors: usize,
+    pub warnings: usize,
+}
+
+/// The parse context. Holds references to the current source path and text and tracks
+/// errors and declaration spans. Also holds the [configuration provider](RustCfgProvider)
+/// and [report sink](ReportSink) used for this parse.
+struct ParseContext<'this, 'source, 'cfg> {
+    path: &'source std::path::Path,
+    source: &'source str,
+    source_id: SourceId,
     depth: usize,
-    reports: Vec<ReportEntry<'b>>,
-    source_cache: std::collections::HashMap<std::path::PathBuf, String>,
+    cfg_provider: &'cfg dyn RustCfgProvider,
+    report_sink: &'cfg mut dyn ReportSink,
     /// All .zng files processed during parsing (main file + imports)
-    processed_files: Vec<std::path::PathBuf>,
-    cfg_provider: Box<dyn RustCfgProvider>,
+    processed_files: OwnedRefMut<'this, Vec<std::path::PathBuf>>,
+    report_counter: OwnedRefMut<'this, ReportCounter>,
+    sources: OwnedRefMut<'this, indexmap::IndexMap<std::path::PathBuf, ariadne::Source<String>>>,
+    recorded_spans: OwnedRefMut<'this, indexmap::IndexMap<SpanKey, Vec<ReportSpan>>>,
 }
 
-impl<'a, 'b> ParseContext<'a, 'b> {
-    fn new(path: std::path::PathBuf, text: &'a str, cfg: Box<dyn RustCfgProvider>) -> Self {
-        let processed_files = vec![path.clone()];
-        Self {
-            path,
-            text,
-            depth: 0,
-            reports: Vec::new(),
-            source_cache: HashMap::new(),
-            processed_files,
-            cfg_provider: cfg,
-        }
-    }
-
-    fn with_depth(
-        path: std::path::PathBuf,
-        text: &'a str,
-        depth: usize,
-        cfg: Box<dyn RustCfgProvider>,
+impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
+    fn new(
+        path: &'source std::path::Path,
+        source: &'source str,
+        cfg: &'cfg dyn RustCfgProvider,
+        report_sink: &'cfg mut dyn ReportSink,
     ) -> Self {
-        let processed_files = vec![path.clone()];
+        let processed_files = OwnedRefMut::Owned(vec![path.to_path_buf()]);
+        let mut sources = OwnedRefMut::Owned(indexmap::IndexMap::default());
+        let (source_id, _) = sources.insert_full(
+            path.to_path_buf(),
+            ariadne::Source::from(source.to_string()),
+        );
         Self {
             path,
-            text,
-            depth,
-            reports: Vec::new(),
-            source_cache: HashMap::new(),
-            processed_files,
+            source_id,
+            source,
+            depth: 0,
             cfg_provider: cfg,
+            report_sink,
+            processed_files,
+            report_counter: Default::default(),
+            sources,
+            recorded_spans: Default::default(),
         }
     }
 
-    fn filename(&self) -> &str {
-        self.path.file_name().unwrap().to_str().unwrap()
+    /// build a nested parse context for parsing a new source
+    /// to be merged into the current one
+    fn nested<'borrowed, 'src>(
+        &'borrowed mut self,
+        path: &'src std::path::Path,
+        source: &'src str,
+    ) -> ParseContext<'borrowed, 'src, 'borrowed> {
+        let (source_id, _) = self.sources.insert_full(
+            path.to_path_buf(),
+            ariadne::Source::from(source.to_string()),
+        );
+        self.processed_files.push(path.to_path_buf());
+        ParseContext {
+            path,
+            source_id,
+            source,
+            depth: self.depth + 1,
+            cfg_provider: self.cfg_provider,
+            report_sink: self.report_sink,
+            processed_files: self.processed_files.into_borrowed(),
+            report_counter: self.report_counter.into_borrowed(),
+            sources: self.sources.into_borrowed(),
+            recorded_spans: self.recorded_spans.into_borrowed(),
+        }
     }
 
-    /// Every known source file (this file plus every imported file already
-    /// processed), paired with its text, for ariadne's `sources()` cache. Needed so
-    /// that a report whose span points into an imported file can still be rendered
-    /// correctly after that file's `ParseContext` has been merged into this one.
-    fn all_sources(&self) -> impl Iterator<Item = (String, &str)> {
-        [(self.filename().to_string(), self.text)]
-            .into_iter()
-            .chain(self.source_cache.iter().map(|(path, text)| {
-                (
-                    path.file_name().unwrap().to_str().unwrap().to_string(),
-                    text.as_str(),
-                )
-            }))
+    /// the [`SourceId`] of the current source which can be fetched from the cache
+    /// retrieved by calling [`source_cache`](Self::source_cache)
+    fn source_id(&self) -> SourceId {
+        self.source_id
+    }
+
+    /// returns a borrowed source cache that implements the ariadne Cache trait
+    #[allow(dead_code)]
+    fn source_cache(&self) -> SourceCache<'_> {
+        SourceCache::new(&self.sources)
     }
 
     /// Renders a single report to text (stripped of ANSI color codes).
-    fn render_report(&self, report: &Report<'b, (String, std::ops::Range<usize>)>) -> String {
+    #[allow(dead_code)]
+    fn render_report(&self, report: &ParseReport) -> String {
         let mut buf = Vec::new();
-        report.write(sources(self.all_sources()), &mut buf).unwrap();
+        report.write(self.source_cache(), &mut buf).unwrap();
         String::from_utf8(strip_ansi_escapes::strip(buf)).unwrap()
     }
 
-    fn add_fatal_report(&mut self, report: Report<'b, (String, std::ops::Range<usize>)>) {
-        self.reports.push(ReportEntry {
+    /// Record a report that should invalidate the current parse
+    fn add_fatal_report<'r>(&mut self, report: ParseReport<'r>) {
+        self.sink_report(ReportEntry {
             fatal: true,
             report,
         });
     }
+
+    /// Record a non-fatal report
+    fn add_report<'r>(&mut self, report: ParseReport<'r>) {
+        self.sink_report(ReportEntry {
+            fatal: false,
+            report,
+        });
+    }
+
+    /// Record fatal reports from the passed parse errors
     fn add_errors<'err_src>(&mut self, errs: impl Iterator<Item = Rich<'err_src, String>>) {
-        let filename = self.filename().to_string();
-        self.reports.extend(errs.map(|e| {
-            let report = Report::build(ReportKind::Error, &filename, e.span().start)
+        let path = self.source_id;
+        for e in errs {
+            let e_span = (path.to_owned(), e.span().into_range());
+            let report = Report::build(ReportKind::Error, e_span.clone())
                 .with_message(e.to_string())
                 .with_label(
-                    Label::new((filename.clone(), e.span().into_range()))
+                    Label::new(e_span)
                         .with_message(e.reason().to_string())
                         .with_color(Color::Red),
                 )
                 .with_labels(e.contexts().map(|(label, span)| {
-                    Label::new((filename.clone(), span.into_range()))
+                    let l_span = (path.to_owned(), span.into_range());
+                    Label::new(l_span)
                         .with_message(format!("while parsing this {}", label))
                         .with_color(Color::Yellow)
                 }))
                 .finish();
-            ReportEntry {
+            self.sink_report(ReportEntry {
                 fatal: true,
                 report,
-            }
-        }));
+            });
+        }
     }
 
+    /// Record a fatal report from the passed message and span
     fn add_error_str(&mut self, error: &str, span: Span) {
         self.add_errors([Rich::custom(span, error)].into_iter());
     }
@@ -1077,59 +1616,109 @@ impl<'a, 'b> ParseContext<'a, 'b> {
     /// Records a non-fatal warning as an ariadne diagnostic pointing at `span`.
     /// Rendering is deferred until dispatch time (see `render_report`).
     fn add_warning_str(&mut self, warning: &str, span: Span) {
-        let filename = self.filename().to_string();
-        let report = Report::build(ReportKind::Warning, &filename, span.start)
-            .with_message(warning)
-            .with_label(
-                Label::new((filename.clone(), span.into_range()))
-                    .with_message(warning)
-                    .with_color(Color::Yellow),
-            )
-            .finish();
-        self.reports.push(ReportEntry {
+        let report = Report::build(
+            ReportKind::Warning,
+            (self.source_id.to_owned(), span.into_range()),
+        )
+        .with_message(warning)
+        .with_label(
+            Label::new((self.source_id.to_owned(), span.into_range()))
+                .with_message(warning)
+                .with_color(Color::Yellow),
+        )
+        .finish();
+        self.sink_report(ReportEntry {
             fatal: false,
             report,
         });
     }
 
-    fn consume_from(&mut self, mut other: ParseContext<'_, 'b>) {
-        self.processed_files.append(&mut other.processed_files);
-        self.reports.extend(other.reports);
-        // Always cache the source in case errors come up in post-processing
-        self.source_cache.insert(other.path, other.text.to_string());
-        self.source_cache.extend(other.source_cache);
+    /// a count of the errors recorded by this parse context and any nested ones
+    fn reports(&self) -> &ReportCounter {
+        &self.report_counter
     }
 
-    fn has_errors(&self) -> bool {
-        self.reports.iter().any(|entry| entry.fatal)
-    }
-
-    #[cfg(test)]
-    fn emit_ariadne_errors(&self) -> ! {
-        let mut r = Vec::<u8>::new();
-        for entry in self.reports.iter().filter(|entry| entry.fatal) {
-            entry
-                .report
-                .write(sources(self.all_sources()), &mut r)
-                .unwrap();
+    /// drains and sinks the current reports
+    /// returns true if any errors were reported
+    fn sink_report<'r>(&mut self, report: ReportEntry<'r>) {
+        let ParseContext {
+            report_sink,
+            sources,
+            report_counter,
+            ..
+        } = self;
+        let report_counter = report_counter.deref_mut();
+        if report.fatal {
+            report_counter.errors += 1;
+        } else {
+            report_counter.warnings += 1;
         }
-        std::panic::resume_unwind(Box::new(tests::ErrorText({
-            let s = String::from_utf8(strip_ansi_escapes::strip(r)).unwrap();
-            eprintln!("{s}");
-            s
-        })));
-    }
-
-    #[cfg(not(test))]
-    fn emit_ariadne_errors(&self) -> ! {
-        for entry in self.reports.iter().filter(|entry| entry.fatal) {
-            entry.report.eprint(sources(self.all_sources())).unwrap();
-        }
-        exit(101);
+        let source_cache = SourceCache::new(sources);
+        report_sink.sink_report(&report, source_cache);
     }
 
     fn get_config_provider(&self) -> &dyn RustCfgProvider {
-        self.cfg_provider.as_ref()
+        self.cfg_provider
+    }
+
+    fn get_processed_files(&self) -> Vec<std::path::PathBuf> {
+        self.processed_files.clone_inner()
+    }
+
+    /// Record a span for the key as existing in the currently processing file
+    fn record_span<K: IntoSpanKey>(&mut self, key: &K, range: std::ops::Range<usize>) {
+        let span = self.report_span_for_range(range);
+        use indexmap::map::Entry;
+        match self
+            .recorded_spans
+            .entry(key.into_span_key().full_key_with(self.source_id))
+        {
+            Entry::Occupied(mut spans) => {
+                let spans = spans.get_mut();
+                if !spans.contains(&span) {
+                    spans.push(span);
+                }
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(vec![span]);
+            }
+        }
+    }
+
+    /// Transform a range into a [report span](ReportSpan) for the currently processing file
+    fn report_span_for_range(&self, range: std::ops::Range<usize>) -> ReportSpan {
+        (self.source_id.to_owned(), range)
+    }
+
+    /// fetch the recorded spans for the item in the currently processing source
+    /// stored in order of declaration
+    fn fetch_spans_current<K: IntoSpanKey>(&self, key: &K) -> Vec<&ReportSpan> {
+        self.fetch_spans_for(key, self.source_id)
+    }
+
+    /// fetch the recorded spans for the item in the given source
+    /// stored in order of declaration
+    fn fetch_spans_for<K: IntoSpanKey>(&self, key: &K, source_id: SourceId) -> Vec<&ReportSpan> {
+        self.recorded_spans
+            .get(&key.into_span_key().full_key_with(source_id))
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    /// fetch the recorded spans for the item in all sources
+    /// stored in order of declaration
+    fn fetch_spans_global<K: IntoSpanKey>(&self, key: &K) -> Vec<&ReportSpan> {
+        let partial = key.into_span_key();
+        self.recorded_spans
+            .iter()
+            .filter_map(
+                |(SpanKey(_, part), spans)| {
+                    if *part == partial { Some(spans) } else { None }
+                },
+            )
+            .flatten()
+            .collect()
     }
 }
 
@@ -1143,7 +1732,7 @@ pub trait ImportResolver {
 }
 
 /// A default implementation of ImportResolver which uses conventional filesystem paths and semantics.
-struct DefaultImportResolver;
+pub struct DefaultImportResolver;
 
 impl ImportResolver for DefaultImportResolver {
     fn resolve_import(
@@ -1159,19 +1748,87 @@ impl ImportResolver for DefaultImportResolver {
     }
 }
 
+impl<T: ImportResolver + ?Sized> ImportResolver for Box<T> {
+    fn resolve_import(
+        &self,
+        cwd: &std::path::Path,
+        relpath: &std::path::Path,
+    ) -> Result<String, String> {
+        self.deref().resolve_import(cwd, relpath)
+    }
+}
+
+/// a [`ariadne::Cache<SourceId>`] compatible source cache
+/// internally maps a [`SourceId`] to a [`ariadne::Source<String>`]
+/// borrowed from the [`ParseContext`]
+#[derive(Debug, Clone, Copy)]
+pub struct SourceCache<'c> {
+    sources: &'c indexmap::IndexMap<std::path::PathBuf, ariadne::Source<String>>,
+}
+
+impl<'c> SourceCache<'c> {
+    fn new(sources: &'c indexmap::IndexMap<std::path::PathBuf, ariadne::Source<String>>) -> Self {
+        Self { sources }
+    }
+}
+
+impl<'c> ariadne::Cache<SourceId> for SourceCache<'c> {
+    type Storage = String;
+    fn fetch(
+        &mut self,
+        id: &SourceId,
+    ) -> Result<&ariadne::Source<Self::Storage>, impl std::fmt::Debug> {
+        match self.sources.get_index(*id) {
+            Some((_path, source)) => Ok(source),
+            None => Err(format!("Unknown source id '{}'", id)),
+        }
+    }
+
+    fn display<'a>(&self, id: &'a SourceId) -> Option<impl std::fmt::Display + 'a> {
+        self.sources
+            .get_index(*id)
+            .map(|(path, _source)| path.display().to_string())
+    }
+}
+
+/// a type that can receive reports from the zngur parser as they are generated
+pub trait ReportSink {
+    fn sink_report(&mut self, report: &ReportEntry, source_cache: SourceCache);
+}
+
+impl<T> ReportSink for T
+where
+    T: for<'r, 'c> FnMut(bool, &ParseReport<'r>, SourceCache<'c>),
+{
+    fn sink_report(&mut self, report: &ReportEntry, source_cache: SourceCache) {
+        self(report.fatal, &report.report, source_cache)
+    }
+}
+
+/// a [`ReportSink`] that prints to `stderr`
+pub struct StdErrReportSink<const ERRORS: bool = true, const WARNINGS: bool = true>;
+
+impl<const ERRORS: bool, const WARNINGS: bool> ReportSink for StdErrReportSink<ERRORS, WARNINGS> {
+    fn sink_report(&mut self, report: &ReportEntry, source_cache: SourceCache) {
+        if (report.fatal && ERRORS) || (!report.fatal && WARNINGS) {
+            let _ = report.report.eprint(source_cache);
+        }
+    }
+}
+
 impl<'a> ParsedZngFile<'a> {
     fn parse_into(
         zngur: &mut ZngurSpecBuilder,
         ctx: &mut ParseContext,
         resolver: &impl ImportResolver,
     ) {
-        let (tokens, errs) = lexer().parse(ctx.text).into_output_errors();
+        let (tokens, errs) = lexer().parse(ctx.source).into_output_errors();
         let Some(tokens) = tokens else {
             ctx.add_errors(errs.into_iter().map(|e| e.map_token(|c| c.to_string())));
-            ctx.emit_ariadne_errors();
+            return;
         };
         let tokens: ParserInput<'_> = tokens.as_slice().map(
-            (ctx.text.len()..ctx.text.len()).into(),
+            (ctx.source.len()..ctx.source.len()).into(),
             Box::new(|(t, s)| (t, s)),
         );
         let (ast, errs) = file_parser()
@@ -1180,7 +1837,7 @@ impl<'a> ParsedZngFile<'a> {
             .into_output_errors();
         let Some(ast) = ast else {
             ctx.add_errors(errs.into_iter().map(|e| e.map_token(|c| c.to_string())));
-            ctx.emit_ariadne_errors();
+            return;
         };
 
         let (aliases, items) = partition_parsed_items(
@@ -1190,32 +1847,49 @@ impl<'a> ParsedZngFile<'a> {
                 .map(|item| process_parsed_item(item, ctx)),
         );
         ProcessedZngFile::new(aliases, items).into_zngur_spec(zngur, ctx);
+        if ctx.reports().errors > 0 {
+            return;
+        }
 
         if let Some(dirname) = ctx.path.to_owned().parent() {
             for import in std::mem::take(&mut zngur.imports) {
                 match resolver.resolve_import(dirname, &import.0) {
                     Ok(text) => {
-                        let mut nested_ctx = ParseContext::with_depth(
-                            dirname.join(&import.0),
-                            &text,
-                            ctx.depth + 1,
-                            ctx.get_config_provider().clone_box(),
-                        );
+                        let path = dirname.join(&import.0);
+                        let mut nested_ctx = ctx.nested(&path, &text);
                         Self::parse_into(zngur, &mut nested_ctx, resolver);
-                        ctx.consume_from(nested_ctx);
                     }
-                    Err(_) => {
-                        // TODO: emit a better error. How should we get a span here?
-                        // I'd like to avoid putting a ParsedImportPath in ZngurSpec, and
-                        // also not have to pass a filename to add_to_zngur_spec.
-                        ctx.add_fatal_report(
-                            Report::build(ReportKind::Error, ctx.filename(), 0)
-                                .with_message(format!(
-                                    "Import path not found: {}",
-                                    import.0.display()
-                                ))
-                                .finish(),
-                        );
+                    Err(err) => {
+                        let path = import.0.display();
+                        let spans = ctx.fetch_spans_current(&import);
+                        let (first, rest) = {
+                            let mut iter = spans.into_iter();
+                            let first = iter
+                                .next()
+                                .cloned()
+                                .unwrap_or_else(|| ctx.report_span_for_range(0..0));
+                            let rest: Vec<_> = iter.collect();
+                            (first, rest)
+                        };
+                        let mut report = Report::build(ReportKind::Error, first)
+                            .with_message(format!("Failed to process merge file `{path}`: {err}",));
+                        let count = rest.len();
+                        for (i, span) in rest.into_iter().enumerate() {
+                            report = report.with_label(
+                                ariadne::Label::new(span.clone())
+                                    .with_message("Also merged here")
+                                    .with_color(Color::Blue),
+                            );
+                            if i >= 2 {
+                                report = report.with_note(format!(
+                                    "{} additional locations omitted",
+                                    count - i
+                                ));
+                                break;
+                            }
+                        }
+
+                        ctx.add_fatal_report(report.finish());
                     }
                 }
             }
@@ -1227,27 +1901,24 @@ impl<'a> ParsedZngFile<'a> {
     /// `warning_sink` is called once per deprecation or other non-fatal warning
     /// produced while parsing.
     pub fn parse(
-        path: std::path::PathBuf,
-        cfg: Box<dyn RustCfgProvider>,
-        warning_sink: &dyn Fn(&str),
+        path: &std::path::Path,
+        cfg: impl RustCfgProvider + 'static,
+        report_sink: &mut impl ReportSink,
     ) -> ParseResult {
         let mut zngur = ZngurSpecBuilder::default();
         zngur.spec.rust_cfg.extend(cfg.get_cfg_pairs());
         zngur.spec.rust_cfg.sort();
         let text = std::fs::read_to_string(&path).unwrap();
-        let mut ctx = ParseContext::new(path.clone(), &text, cfg.clone_box());
+        let cfg: &dyn RustCfgProvider = &cfg;
+        let mut ctx = ParseContext::new(path, &text, cfg, report_sink);
         Self::parse_into(&mut zngur, &mut ctx, &DefaultImportResolver);
         let spec = zngur.to_zngur(&mut ctx);
-        for entry in ctx.reports.iter().filter(|entry| !entry.fatal) {
-            warning_sink(&ctx.render_report(&entry.report));
-        }
-        if ctx.has_errors() {
+        if ctx.reports().errors > 0 {
             // add report of cfg values used
-            ctx.add_fatal_report(
+            ctx.add_report(
                 Report::build(
-                    ReportKind::Custom("cfg values", ariadne::Color::Green),
-                    path.file_name().unwrap_or_default().to_string_lossy(),
-                    0,
+                    ReportKind::Custom("cfg values used", ariadne::Color::Green),
+                    ctx.report_span_for_range(0..0),
                 )
                 .with_message(
                     cfg.get_cfg_pairs()
@@ -1261,44 +1932,34 @@ impl<'a> ParsedZngFile<'a> {
                 )
                 .finish(),
             );
-            ctx.emit_ariadne_errors();
         }
         ParseResult {
             spec,
-            processed_files: ctx.processed_files,
+            processed_files: ctx.get_processed_files(),
+            errors: ctx.reports().errors,
+            warnings: ctx.reports().warnings,
         }
     }
 
-    /// Parse a .zng file from a string. Mainly useful for testing.
-    #[cfg(test)]
-    pub fn parse_str(
+    /// parse a IDL source str with with given options.
+    /// sinks errors and warnings instead of panicking
+    pub fn parse_str_with_resolver(
         text: &str,
-        cfg: impl RustCfgProvider + 'static,
-        warning_sink: impl FnMut(&str),
-    ) -> ParseResult {
-        Self::parse_str_with_resolver(text, cfg, &DefaultImportResolver, warning_sink)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn parse_str_with_resolver(
-        text: &str,
+        path: &str,
         cfg: impl RustCfgProvider + 'static,
         resolver: &impl ImportResolver,
-        mut warning_sink: impl FnMut(&str),
+        report_sink: &mut impl ReportSink,
     ) -> ParseResult {
         let mut zngur = ZngurSpecBuilder::default();
-        let mut ctx = ParseContext::new(std::path::PathBuf::from("test.zng"), text, Box::new(cfg));
+        let path = std::path::PathBuf::from(path);
+        let mut ctx = ParseContext::new(&path, text, &cfg, report_sink);
         Self::parse_into(&mut zngur, &mut ctx, resolver);
         let spec = zngur.to_zngur(&mut ctx);
-        for entry in ctx.reports.iter().filter(|entry| !entry.fatal) {
-            warning_sink(&ctx.render_report(&entry.report));
-        }
-        if ctx.has_errors() {
-            ctx.emit_ariadne_errors();
-        }
         ParseResult {
             spec,
-            processed_files: ctx.processed_files,
+            processed_files: ctx.get_processed_files(),
+            errors: ctx.reports().errors,
+            warnings: ctx.reports().warnings,
         }
     }
 }
@@ -1400,7 +2061,7 @@ impl<'a> ProcessedZngFile<'a> {
 
 struct TemplateDef {
     ty: ZngurType,
-    filename: String,
+    source_id: SourceId,
     span: Span,
 }
 
@@ -1408,7 +2069,6 @@ struct TemplateDef {
 struct ZngurSpecBuilder {
     spec: ZngurSpec,
     templates: Vec<TemplateDef>,
-    ty_to_locations: HashMap<RustType, Vec<(String, std::ops::Range<usize>)>>,
     imports: Vec<Import>,
 }
 
@@ -1418,31 +2078,27 @@ impl ZngurSpecBuilder {
             mut spec,
             templates,
             imports: _,
-            mut ty_to_locations,
         } = self;
         for ty in &mut spec.types {
             let mut template_locations = Vec::new();
             for template in &templates {
                 if let Some(template_match) = try_match_template(&ty.ty, &template.ty) {
-                    let location = (
-                        template.filename.clone(),
-                        template.span.start..template.span.end,
-                    );
+                    let location = (template.source_id, template.span.into_range());
                     if let Err(e) = template_match.merge(ty) {
-                        let MergeFailure::Conflict(e) = e;
-                        ctx.add_fatal_report(
-                            Report::build(ReportKind::Error, &template.filename, 0)
-                                .with_message(format!(
-                                    "Failed to apply template {} to type {}: {}",
-                                    template.ty.ty, ty.ty, e
-                                ))
-                                .with_label(
-                                    Label::new(location)
-                                        .with_message("Template defined here")
-                                        .with_color(Color::Blue),
-                                )
-                                .finish(),
-                        );
+                        match e {
+                            MergeFailure::Conflict(msg, conflict) => {
+                                let report = build_template_conflict_report(
+                                    ctx,
+                                    template,
+                                    &ty,
+                                    location.clone(),
+                                    &msg,
+                                    conflict,
+                                );
+
+                                ctx.add_fatal_report(report);
+                            }
+                        }
                     } else {
                         template_locations.push(location);
                     }
@@ -1457,24 +2113,53 @@ impl ZngurSpecBuilder {
                 ty.wellknown_traits.push(ZngurWellknownTrait::Drop);
             }
             if ty.layout.is_none() {
-                let mut report = Report::build(ReportKind::Error, "", 0).with_message(format!(
-                    "No layout policy found for type {}. \
-    Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.",
+                let spans = ctx.fetch_spans_global(ty);
+                let (first, rest) = {
+                    let mut it = spans.into_iter();
+                    let first = it.next().cloned();
+                    (first, it.collect::<Vec<_>>())
+                };
+                let mut report = Report::build(ReportKind::Error, (0, 0usize..0)).with_message(format!(
+                    "No layout policy found for type {}.",
                     ty.ty
-                ));
-                for location in ty_to_locations.remove(&ty.ty).unwrap_or_default() {
-                    report = report.with_label(
-                        Label::new(location)
-                            .with_message("Type defined here")
+                )).with_note("Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.");
+
+                if let Some(first) = first {
+                    report.add_label(
+                        Label::new(first)
+                            .with_message("Type first declared here.")
                             .with_color(Color::Blue),
                     );
                 }
-                for location in template_locations {
+                let count = rest.len();
+                for (i, span) in rest.into_iter().enumerate() {
+                    report = report.with_label(
+                        Label::new(span.clone())
+                            .with_message("Type also declared here")
+                            .with_color(Color::Blue),
+                    );
+                    if i >= 2 {
+                        report = report.with_note(format!(
+                            "{} additional type declaration locations omitted",
+                            count - i
+                        ));
+                        break;
+                    }
+                }
+                let t_count = template_locations.len();
+                for (i, location) in template_locations.into_iter().enumerate() {
                     report = report.with_label(
                         Label::new(location)
                             .with_message("Matching template defined here")
                             .with_color(Color::Blue),
                     );
+                    if i >= 2 {
+                        report = report.with_note(format!(
+                            "{} additional template declaration locations omitted",
+                            t_count - i
+                        ));
+                        break;
+                    }
                 }
                 ctx.add_fatal_report(report.finish());
             }

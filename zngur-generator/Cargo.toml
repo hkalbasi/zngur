@@ -10,10 +10,10 @@ license.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-itertools = "0.11"
+sha2 = { workspace = true }
+hex = { workspace = true }
+itertools = { workspace = true }
+indexmap = { workspace = true }
 askama = "0.12"
 zngur-parser = { version = "=0.11.0", path = "../zngur-parser" }
 zngur-def = { version = "=0.11.0", path = "../zngur-def" }
-sha2 = "0.10.9"
-hex = "0.4.3"
-indexmap = "2.13.0"

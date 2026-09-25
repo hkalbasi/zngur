@@ -1,14 +1,14 @@
 use crate::{
     AdditionalIncludes, ConvertPanicToException, CppHeapAllocated, CppRef, CppStackOwned,
-    LayoutPolicy, ZngurConstructor, ZngurExternCppFn, ZngurExternCppImpl, ZngurField, ZngurFn,
-    ZngurMethodDetails, ZngurSpec, ZngurTrait, ZngurType, ZngurVariant,
+    LayoutPolicy, RustType, ZngurConstructor, ZngurExternCppFn, ZngurExternCppImpl, ZngurField,
+    ZngurFn, ZngurMethod, ZngurMethodDetails, ZngurSpec, ZngurTrait, ZngurType, ZngurVariant,
 };
 
 /// Trait for types with a partial union operation.
 ///
 /// If a type T is Merge, it provides a partial union operation `merge`: T x T -> T.
 ///
-/// Partial unions do not need to be homogenous. If a type U is Merge<T>,
+/// Partial unions do not need to be homogeneous. If a type U is Merge<T>,
 /// it provides a partial union operation `merge`: T X U -> U.
 /// For example, T: usize, U: Set<usize>; the partial union is the result of
 /// adding the lhs usize to the rhs Set.
@@ -34,7 +34,20 @@ pub type MergeResult = Result<(), MergeFailure>;
 /// An unsuccessful merge operation.
 pub enum MergeFailure {
     /// The merge was not successful because of a conflict.
-    Conflict(String),
+    /// the second member is a tuple of conflict sources:
+    ///     (source in self, source in the item merging into)
+    Conflict(String, (ConflictSource, ConflictSource)),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ConflictSource {
+    Layout,
+    Constructor(Option<Vec<(String, RustType)>>),
+    CppRef,
+    CppHeapAllocated,
+    CppStackOwned,
+    Method(ZngurMethod),
+    Field(String),
 }
 
 /// Push an item onto a vector if it is not already present, in linear time.
@@ -136,6 +149,7 @@ impl Merge for ZngurType {
         {
             return Err(MergeFailure::Conflict(
                 "Conflicting layout policy found".to_string(),
+                (ConflictSource::Layout, ConflictSource::Layout),
             ));
         } else {
             into.layout = into.layout.or(self.layout);
@@ -145,6 +159,7 @@ impl Merge for ZngurType {
         if self.cpp_ref.is_some() && into.layout != Some(LayoutPolicy::ZERO_SIZED_TYPE) {
             return Err(MergeFailure::Conflict(
                 "cpp_ref implies a zero sized stack allocated type".to_string(),
+                (ConflictSource::CppRef, ConflictSource::Layout),
             ));
         }
 
@@ -162,6 +177,14 @@ impl Merge for ZngurType {
         } else if self.constructor != into.constructor {
             return Err(MergeFailure::Conflict(
                 "Duplicate constructor found".to_string(),
+                (
+                    ConflictSource::Constructor(
+                        self.constructor.as_ref().map(|c| c.inputs.clone()),
+                    ),
+                    ConflictSource::Constructor(
+                        into.constructor.as_ref().map(|c| c.inputs.clone()),
+                    ),
+                ),
             ));
         }
         into.exhaustive = self.exhaustive && into.exhaustive;
@@ -199,6 +222,10 @@ impl Merge for CppHeapAllocated {
         if self != *into {
             return Err(MergeFailure::Conflict(
                 "Cpp heap allocated mismatch".to_string(),
+                (
+                    ConflictSource::CppHeapAllocated,
+                    ConflictSource::CppHeapAllocated,
+                ),
             ));
         }
         Ok(())
@@ -212,7 +239,10 @@ impl Merge for CppRef {
     /// merging the same CppRef from different sources.
     fn merge(self, into: &mut Self) -> MergeResult {
         if self != *into {
-            return Err(MergeFailure::Conflict("Cpp ref mismatch".to_string()));
+            return Err(MergeFailure::Conflict(
+                "Cpp ref mismatch".to_string(),
+                (ConflictSource::CppRef, ConflictSource::CppRef),
+            ));
         }
         Ok(())
     }
@@ -223,6 +253,7 @@ impl Merge for CppStackOwned {
         if self != *into {
             return Err(MergeFailure::Conflict(
                 "Cpp stack owned mismatch".to_string(),
+                (ConflictSource::CppStackOwned, ConflictSource::CppStackOwned),
             ));
         }
         Ok(())
@@ -244,7 +275,13 @@ impl Merge<ZngurSpec> for ZngurType {
 impl Merge for ZngurMethodDetails {
     fn merge(self, into: &mut Self) -> MergeResult {
         if self != *into {
-            return Err(MergeFailure::Conflict("Method mismatch".to_string()));
+            return Err(MergeFailure::Conflict(
+                "Method mismatch".to_string(),
+                (
+                    ConflictSource::Method(self.data.clone()),
+                    ConflictSource::Method(into.data.clone()),
+                ),
+            ));
         }
         Ok(())
     }
@@ -253,7 +290,13 @@ impl Merge for ZngurMethodDetails {
 impl Merge for ZngurConstructor {
     fn merge(self, into: &mut Self) -> MergeResult {
         if self != *into {
-            return Err(MergeFailure::Conflict("Constructor mismatch".to_string()));
+            return Err(MergeFailure::Conflict(
+                "Constructor mismatch".to_string(),
+                (
+                    ConflictSource::Constructor(Some(self.inputs.clone())),
+                    ConflictSource::Constructor(Some(into.inputs.clone())),
+                ),
+            ));
         }
         Ok(())
     }
@@ -276,7 +319,13 @@ impl Merge for ZngurVariant {
 impl Merge for ZngurField {
     fn merge(self, into: &mut Self) -> MergeResult {
         if self != *into {
-            return Err(MergeFailure::Conflict("Field mismatch".to_string()));
+            return Err(MergeFailure::Conflict(
+                "Field mismatch".to_string(),
+                (
+                    ConflictSource::Field(self.name.clone()),
+                    ConflictSource::Field(into.name.clone()),
+                ),
+            ));
         }
         Ok(())
     }

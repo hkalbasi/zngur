@@ -122,3 +122,6 @@ xvalue
 relocatability
 Relocatability
 libstdc
+Deque
+reparsed
+sepc

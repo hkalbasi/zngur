@@ -102,7 +102,7 @@ impl<'a, W: Write> IDLPrinter<'a, W> {
         write!(&mut self.out, "{indent}")
     }
 
-    pub fn write_idl<I: WriteIDL>(&mut self, item: &I) -> std::io::Result<()> {
+    pub fn write_idl<I: WriteIDL + ?Sized>(&mut self, item: &I) -> std::io::Result<()> {
         item.write_idl(self)
     }
 
@@ -119,7 +119,7 @@ pub trait WriteIDL {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()>;
 }
 
-impl<T: WriteIDL> WriteIDL for Box<T> {
+impl<T: WriteIDL + ?Sized> WriteIDL for Box<T> {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         p.write_idl::<T>(&**self)
     }
@@ -128,7 +128,7 @@ impl<T: WriteIDL> WriteIDL for Box<T> {
 impl<T: WriteIDL> WriteIDL for Vec<T> {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         for (i, item) in self.iter().enumerate() {
-            if i > 0 {
+            if i > 0 && i < self.len() {
                 write!(p, ", ")?;
             }
             p.write_idl(item)?;
@@ -178,7 +178,7 @@ impl WriteIDL for crate::RustType {
                 write!(p, ">")
             }
             Self::Slice(ty) => {
-                write!(p, "&[")?;
+                write!(p, "[")?;
                 p.write_idl(ty)?;
                 write!(p, "]")
             }
@@ -282,41 +282,65 @@ impl WriteIDL for crate::TypeVar {
 
 impl WriteIDL for crate::ZngurSpec {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
-        for (i, ty) in self.types.iter().enumerate() {
-            p.write_idl(ty)?;
-            if i > 0 && i < self.types.len() {
+        if self.convert_panic_to_exception.0 {
+            writeln!(p, "#convert_panic_to_exception")?;
+        }
+        if !self.types.is_empty() {
+            if self.convert_panic_to_exception.0 {
                 writeln!(p)?;
+            }
+            for (i, ty) in self.types.iter().enumerate() {
+                if i > 0 && i < self.types.len() {
+                    writeln!(p)?;
+                }
+                p.write_indent()?;
+                p.write_idl(ty)?;
             }
         }
         if !self.funcs.is_empty() {
-            writeln!(p)?;
+            if !self.types.is_empty() || self.convert_panic_to_exception.0 {
+                writeln!(p)?;
+            }
             for func in &self.funcs {
                 p.write_idl(func)?;
             }
         }
         if !self.traits.is_empty() {
-            writeln!(p)?;
+            if !self.funcs.is_empty() || !self.types.is_empty() || self.convert_panic_to_exception.0
+            {
+                writeln!(p)?;
+            }
             for (i, trt) in self.traits.values().enumerate() {
-                p.write_idl(trt)?;
-                if i > 0 {
+                if i > 0 && i < self.traits.len() {
                     writeln!(p)?;
                 }
+                p.write_idl(trt)?;
             }
         }
         if !self.extern_cpp_funcs.is_empty() || !self.extern_cpp_impls.is_empty() {
-            writeln!(p)?;
+            if !self.traits.is_empty()
+                || !self.funcs.is_empty()
+                || !self.types.is_empty()
+                || self.convert_panic_to_exception.0
+            {
+                writeln!(p)?;
+            }
             p.write_indent()?;
             writeln!(p, r#"extern "C++" {{"#)?;
             p.indent();
             if !self.extern_cpp_funcs.is_empty() {
                 writeln!(p)?;
                 for extern_fn in &self.extern_cpp_funcs {
+                    p.write_indent()?;
                     p.write_idl(extern_fn)?;
                 }
             }
             if !self.extern_cpp_impls.is_empty() {
-                writeln!(p)?;
+                if !self.extern_cpp_funcs.is_empty() {
+                    writeln!(p)?;
+                }
                 for extern_impl in &self.extern_cpp_impls {
+                    p.write_indent()?;
                     p.write_idl(extern_impl)?;
                 }
             }
@@ -350,39 +374,55 @@ impl WriteIDL for crate::ZngurFn {
 impl WriteIDL for crate::ZngurType {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::Type) {
-            p.write_indent()?;
-
             write!(p, "type ")?;
             p.write_idl(&self.ty)?;
             writeln!(p, " {{")?;
             p.indent();
 
-            p.write_idl(&self.layout)?;
-            p.write_idl(&self.cpp_heap_allocated)?;
-            p.write_idl(&self.cpp_ref)?;
-            p.write_idl(&self.cpp_stack_owned)?;
-
-            if p.enabled(&IDLItem::TypeWellknownTrait) && !self.wellknown_traits.is_empty() {
+            // don't duplicate layout info
+            if self.cpp_ref.is_none() {
                 p.write_indent()?;
-                write!(p, "wellknown_traits(")?;
-                p.write_idl(&self.wellknown_traits)?;
-                writeln!(p, ");")?;
+                p.write_idl(&self.layout)?;
+            }
+            if self.cpp_heap_allocated.is_some() {
+                p.write_indent()?;
+                p.write_idl(&self.cpp_heap_allocated)?;
+            }
+            if self.cpp_ref.is_some() {
+                p.write_indent()?;
+                p.write_idl(&self.cpp_ref)?;
+            }
+            if self.cpp_stack_owned.is_some() {
+                p.write_indent()?;
+                p.write_idl(&self.cpp_stack_owned)?;
+            }
+
+            if p.enabled(&IDLItem::TypeWellknownTrait) {
+                let drop_filtered: Vec<_> = self
+                    .wellknown_traits
+                    .iter()
+                    .filter(|wk| !matches!(wk, crate::ZngurWellknownTrait::Drop))
+                    .collect();
+                if !drop_filtered.is_empty() {
+                    p.write_indent()?;
+                    write!(p, "wellknown_traits(")?;
+                    p.write_idl(&self.wellknown_traits)?;
+                    writeln!(p, ");")?;
+                }
             }
 
             if self.constructor.is_some() {
-                writeln!(p)?;
+                p.write_indent()?;
                 p.write_idl(&self.constructor)?;
             }
 
             if p.enabled(&IDLItem::TypeVariant) {
-                if !self.variants.is_empty() {
-                    writeln!(p)?;
-                }
                 if !self.exhaustive {
                     p.write_indent()?;
                     writeln!(p, "non_exhaustive;")?;
                 }
                 for variant in &self.variants {
+                    p.write_indent()?;
                     p.write_idl(variant)?;
                 }
             }
@@ -390,6 +430,7 @@ impl WriteIDL for crate::ZngurType {
             if !self.fields.is_empty() {
                 writeln!(p)?;
                 for field in &self.fields {
+                    p.write_indent()?;
                     p.write_idl(field)?;
                 }
             }
@@ -397,6 +438,7 @@ impl WriteIDL for crate::ZngurType {
             if !self.methods.is_empty() {
                 writeln!(p)?;
                 for method in &self.methods {
+                    p.write_indent()?;
                     p.write_idl(method)?;
                 }
             }
@@ -412,7 +454,6 @@ impl WriteIDL for crate::ZngurType {
 impl WriteIDL for crate::ZngurTrait {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::Trait) {
-            p.write_indent()?;
             write!(p, "trait ")?;
             p.write_idl(&self.tr)?;
             write!(p, " {{")?;
@@ -420,6 +461,7 @@ impl WriteIDL for crate::ZngurTrait {
                 writeln!(p, "")?;
                 p.indent();
                 for method in &self.methods {
+                    p.write_indent()?;
                     p.write_idl(method)?;
                 }
                 p.dedent();
@@ -434,12 +476,9 @@ impl WriteIDL for crate::ZngurTrait {
 impl WriteIDL for crate::ZngurExternCppFn {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::ExternFn) {
-            p.write_indent()?;
-            if !self.is_safe {
-                write!(p, "unsafe ")?;
-            }
+            let safety = if self.is_safe { "safe" } else { "unsafe" };
             let name = &self.name;
-            write!(p, "fn {name}(")?;
+            write!(p, "{safety} fn {name}(")?;
             p.write_idl(&self.inputs)?;
             write!(p, ")")?;
             if self.output != crate::RustType::UNIT {
@@ -455,15 +494,20 @@ impl WriteIDL for crate::ZngurExternCppFn {
 impl WriteIDL for crate::ZngurExternCppImpl {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::ExternImpl) {
-            p.write_indent()?;
             write!(p, "impl ")?;
-            p.write_idl(&self.tr)?;
-            write!(p, " for ")?;
+            if self.tr.is_some() {
+                p.write_idl(&self.tr)?;
+                write!(p, " for ")?;
+            }
             p.write_idl(&self.ty)?;
             writeln!(p, " {{")?;
             p.indent();
             for method in &self.methods {
+                p.write_indent()?;
+                let safety = if method.is_safe { "safe" } else { "unsafe" };
+                write!(p, "{safety} ")?;
                 p.write_idl(method)?;
+                writeln!(p, ";")?;
             }
             p.dedent();
             p.write_indent()?;
@@ -476,7 +520,6 @@ impl WriteIDL for crate::ZngurExternCppImpl {
 impl WriteIDL for crate::LayoutPolicy {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeLayout) {
-            p.write_indent()?;
             write!(p, "#")?;
             match self {
                 Self::StackAllocated { size, align } => {
@@ -500,7 +543,6 @@ impl WriteIDL for crate::LayoutPolicy {
 impl WriteIDL for crate::CppStackOwned {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeLayout) {
-            p.write_indent()?;
             let CppStackOwned {
                 cpp_type: ty,
                 size,
@@ -517,9 +559,8 @@ impl WriteIDL for crate::CppStackOwned {
 impl WriteIDL for crate::CppHeapAllocated {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeLayout) {
-            p.write_indent()?;
             let ty = &self.0;
-            writeln!(p, r#"#cpp_heap_allocated "{ty}""#)?;
+            writeln!(p, r#"#cpp_heap_allocated "{ty}";"#)?;
         }
         Ok(())
     }
@@ -527,9 +568,8 @@ impl WriteIDL for crate::CppHeapAllocated {
 impl WriteIDL for crate::CppRef {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeLayout) {
-            p.write_indent()?;
             let ty = &self.0;
-            writeln!(p, r#"#cpp_ref "{ty}""#)?;
+            writeln!(p, r#"#cpp_ref "{ty}";"#)?;
         }
         Ok(())
     }
@@ -549,7 +589,6 @@ impl WriteIDL for crate::ZngurWellknownTrait {
 impl WriteIDL for crate::ZngurConstructor {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeConstructor) {
-            p.write_indent()?;
             let valid_tuple_repr = self
                 .inputs
                 .iter()
@@ -561,8 +600,8 @@ impl WriteIDL for crate::ZngurConstructor {
             };
             write!(p, "constructor {open}")?;
             for (i, (name, input)) in self.inputs.iter().enumerate() {
-                if i > 0 {
-                    write!(p, " ,")?;
+                if i > 0 && i < self.inputs.len() {
+                    write!(p, ", ")?;
                 }
                 if !valid_tuple_repr {
                     write!(p, "{name}: ")?;
@@ -578,8 +617,6 @@ impl WriteIDL for crate::ZngurConstructor {
 impl WriteIDL for crate::ZngurVariant {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeVariant) {
-            p.write_indent()?;
-
             let name = &self.name;
             write!(p, "variant {name} {{")?;
             let print_fields = !self.fields.is_empty() && p.enabled(&IDLItem::TypeVariantField);
@@ -599,7 +636,9 @@ impl WriteIDL for crate::ZngurVariant {
                 }
             }
             p.dedent();
-            p.write_indent()?;
+            if print_fields || !self.exhaustive {
+                p.write_indent()?;
+            }
             writeln!(p, "}}")?;
         }
         Ok(())
@@ -609,7 +648,6 @@ impl WriteIDL for crate::ZngurVariant {
 impl WriteIDL for crate::ZngurField {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeField) {
-            p.write_indent()?;
             let name = &self.name;
             let offset = self
                 .offset
@@ -625,7 +663,8 @@ impl WriteIDL for crate::ZngurField {
 impl WriteIDL for crate::ZngurMethodDetails {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeMethod) {
-            p.write_indent()?;
+            let safety = if self.data.is_safe { "" } else { "unsafe " };
+            write!(p, "{safety}")?;
             p.write_idl(&self.data)?;
             if let Some(use_path) = &self.use_path {
                 let path = use_path.iter().join("::");
@@ -663,12 +702,11 @@ impl WriteIDL for crate::ZngurMethod {
         let rec_sep = if self.inputs.len() > 0
             && !matches!(self.receiver, crate::ZngurMethodReceiver::Static)
         {
-            ","
+            ", "
         } else {
             ""
         };
-        let safety = if self.is_safe { "" } else { "unsafe " };
-        write!(p, "{safety}fn {name}")?;
+        write!(p, "fn {name}")?;
         if self.generics.len() > 0 {
             write!(p, "<")?;
             for (i, generic) in self.generics.iter().enumerate() {
@@ -681,10 +719,10 @@ impl WriteIDL for crate::ZngurMethod {
         }
         write!(p, "({receiver}{rec_sep}")?;
         for (i, input) in self.inputs.iter().enumerate() {
-            p.write_idl(input)?;
-            if i < self.inputs.len() {
+            if i > 0 && i < self.inputs.len() {
                 write!(p, ", ")?;
             }
+            p.write_idl(input)?;
         }
         write!(p, ")")?;
         if self.output != crate::RustType::UNIT {

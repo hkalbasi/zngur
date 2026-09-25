@@ -7,7 +7,7 @@ use itertools::Itertools;
 pub mod printing;
 
 mod merge;
-pub use merge::{Merge, MergeFailure, MergeResult};
+pub use merge::{ConflictSource, Merge, MergeFailure, MergeResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mutability {
@@ -173,7 +173,7 @@ impl Display for CppRef {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ZngurType {
     pub ty: RustType,
     pub layout: Option<LayoutPolicy>,
@@ -188,7 +188,7 @@ pub struct ZngurType {
     pub cpp_stack_owned: Option<CppStackOwned>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ZngurTrait {
     pub tr: RustTrait,
     pub methods: Vec<ZngurMethod>,
