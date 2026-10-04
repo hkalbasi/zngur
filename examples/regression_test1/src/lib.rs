@@ -57,6 +57,43 @@ struct ConservativeLayoutType {
 }
 
 #[allow(unused)]
+#[derive(Debug, Copy, Clone)]
+/// bool field + Copy struct field, to test Ref/RefMut/FieldOwned<T> conversion on
+/// specialized (non-primitive) field types
+struct BoolHolder {
+    pub flag: bool,
+    pub data: FieldTypeC,
+}
+
+#[allow(unused)]
+#[derive(Debug, Copy, Clone)]
+/// Option fields, to test Field* conversion for Copy generic instantiations
+/// (`Option<&T>` and `Option<T: Copy>` are both `Copy`)
+struct OptionHolder<'a> {
+    pub opt_ref: Option<&'a i32>,
+    pub opt_copy: Option<FieldTypeC>,
+}
+
+fn make_option_holder() -> OptionHolder<'static> {
+    let leaked: &'static i32 = Box::leak(Box::new(1234));
+    OptionHolder {
+        opt_ref: Some(leaked),
+        opt_copy: Some(FieldTypeC {
+            buzz_1: 11,
+            buzz_2: 22,
+            buzz_3: 33,
+        }),
+    }
+}
+
+fn make_empty_option_holder() -> OptionHolder<'static> {
+    OptionHolder {
+        opt_ref: None,
+        opt_copy: None,
+    }
+}
+
+#[allow(unused)]
 impl ConservativeLayoutType {
     pub fn mem_size(&self) -> usize {
         std::mem::size_of::<Self>()
