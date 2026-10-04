@@ -17,5 +17,5 @@ url = "https://github.com/emscripten-core/emsdk/archive/refs/tags/{{version}}.ta
 
 [env]
 WASI_SDK_PATH = { value = '{{ tools["github:WebAssembly/wasi-sdk"].path }}', tools = true }
-EMSDK_PATH = { value = '{{ [tools["http:emsdk"].path] | concat(with= ["emsdk-", tools["http:emsdk"].version] | join ) | join_path }}', tools = true }
+EMSDK_PATH = { value = '{{ tools["http:emsdk"].path }}/emsdk-{{ tools["http:emsdk"].version }}', tools = true }
 RUST_BACKTRACE = { value = "0" }

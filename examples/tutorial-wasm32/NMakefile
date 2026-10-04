@@ -13,7 +13,7 @@ WASIFLAGS = -std=c++17 \
 CXX = $(WASI_SDK_PATH)\bin\clang++
 
 # Default target
-all: run a.bat
+all: a.bat
 
 # Run the example with wasmtime (installs all deps automatically)
 run: main.wasm

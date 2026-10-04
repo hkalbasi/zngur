@@ -17,7 +17,7 @@ endif
 CXX = $(WASI_SDK_PATH)/bin/clang++
 
 # Default target
-all: run a.out
+all: a.out
 
 # Run the example with wasmtime (installs all deps automatically)
 run: main.wasm
