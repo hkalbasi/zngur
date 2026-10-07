@@ -33,38 +33,6 @@ jobs:
       - name: Run `cargo xtask ci`
         run: CC=$(brew --prefix llvm@19)/bin/clang CXX=$(brew --prefix llvm@19)/bin/clang++ cargo xtask ci
 
-  build:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        cpp_compiler:
-          - clang++
-          - g++
-        cargo_profile:
-          - debug
-          - release
-    env:
-      CXX: ${{ matrix.cpp_compiler }}
-      EXAMPLES_CARGO_PROFILE: ${{ matrix.cargo_profile }}
-    steps:
-      - uses: actions/checkout@v3
-      - uses: jdx/mise-action@v3
-      - name: Install Rust stable
-        run: |
-          rustup toolchain install stable
-          rustup target add wasm32-wasip1
-          rustup component add rustfmt
-      - name: Install LLD for clang++
-        if: matrix.cpp_compiler == 'clang++'
-        run: sudo apt-get update && sudo apt-get install -y lld
-      - name: Run CI (clang++)
-        if: matrix.cpp_compiler == 'clang++'
-        run: CC=clang cargo xtask ci
-      - name: Run CI (g++)
-        if: matrix.cpp_compiler == 'g++'
-        run: cargo xtask ci
-
   build-nightly:
     runs-on: ubuntu-latest
     strategy:
@@ -116,3 +84,26 @@ jobs:
           rustup component add rustfmt
       - name: Run `cargo xtask ci`
         run: cargo xtask ci
+
+  build-nix:
+    name: build-nix (ubuntu-latest, ${{ matrix.shell_name }}, ${{ matrix.cargo_profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell_name:
+          - clang
+          - gcc
+        cargo_profile:
+          - debug
+          - release
+    env:
+      EXAMPLES_CARGO_PROFILE: ${{ matrix.cargo_profile }}
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        
+      - name: Run `cargo xtask ci`
+        run: nix develop .#${{ matrix.shell_name }} -c cargo xtask ci

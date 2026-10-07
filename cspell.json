@@ -19,6 +19,8 @@
         "*.svg",
         "examples/**/Makefile",
         "examples/**/NMakefile",
-        "actual_output.txt"
+        "actual_output.txt",
+        "/flake.*",
+        "*.dSYM/"
     ]
 }
