@@ -387,24 +387,29 @@ namespace {{ self.namespace }} {
       {% endif %}
 
       {% if let Some(cpp_stack_owned) = td.cpp_stack_owned %}
-          static_assert(sizeof({{ cpp_stack_owned.cpp_type }}) == {{ cpp_stack_owned.size }}, "Size mismatch");
-          static_assert(alignof({{ cpp_stack_owned.cpp_type }}) == {{ cpp_stack_owned.align }}, "Alignment mismatch");
-          static_assert(::{{ self.namespace }}::is_trivially_relocatable< {{ cpp_stack_owned.cpp_type }} >::value, "Type must be trivially relocatable");
+          {% if td.is_layout_conservative %}
+          static_assert(sizeof({{ cpp_stack_owned.0 }}) <= {{ td.layout_size }}, "Size mismatch");
+          static_assert(alignof({{ cpp_stack_owned.0 }}) <= {{ td.layout_align }}, "Alignment mismatch");
+          {% else %}
+          static_assert(sizeof({{ cpp_stack_owned.0 }}) == {{ td.layout_size }}, "Size mismatch");
+          static_assert(alignof({{ cpp_stack_owned.0 }}) == {{ td.layout_align }}, "Alignment mismatch");
+          {% endif %}
+          static_assert(::{{ self.namespace }}::is_trivially_relocatable< {{ cpp_stack_owned.0 }} >::value, "Type must be trivially relocatable");
 
-          inline {{ cpp_stack_owned.cpp_type }}& cpp() & {
-              return *reinterpret_cast< {{ cpp_stack_owned.cpp_type }}* >(__zngur_data.data());
+          inline {{ cpp_stack_owned.0 }}& cpp() & {
+              return *reinterpret_cast< {{ cpp_stack_owned.0 }}* >(__zngur_data.data());
           }
-          inline const {{ cpp_stack_owned.cpp_type }}& cpp() const & {
-              return *reinterpret_cast< const {{ cpp_stack_owned.cpp_type }}* >(__zngur_data.data());
+          inline const {{ cpp_stack_owned.0 }}& cpp() const & {
+              return *reinterpret_cast< const {{ cpp_stack_owned.0 }}* >(__zngur_data.data());
           }
-          inline {{ cpp_stack_owned.cpp_type }}&& cpp() && {
-              return ::std::move(*reinterpret_cast< {{ cpp_stack_owned.cpp_type }}* >(__zngur_data.data()));
+          inline {{ cpp_stack_owned.0 }}&& cpp() && {
+              return ::std::move(*reinterpret_cast< {{ cpp_stack_owned.0 }}* >(__zngur_data.data()));
           }
 
           template<typename... Args>
           static inline {{ name }} build(Args&&... args) {
               {{ name }} w;
-              new (&w.cpp()) {{ cpp_stack_owned.cpp_type }}(::std::forward<Args>(args)...);
+              new (&w.cpp()) {{ cpp_stack_owned.0 }}(::std::forward<Args>(args)...);
               ::{{ self.namespace }}::__zngur_internal< {{ name }} >::assume_init(w);
               return w;
           }
@@ -718,8 +723,8 @@ namespace {{ self.namespace }} {
     {% endif %}
 
     {% if let Some(cpp_stack_owned) = td.cpp_stack_owned %}
-      inline {{ cpp_stack_owned.cpp_type }}& cpp() {
-          return *reinterpret_cast< {{ cpp_stack_owned.cpp_type }}* >(__zngur_data);
+      inline {{ cpp_stack_owned.0 }}& cpp() {
+          return *reinterpret_cast< {{ cpp_stack_owned.0 }}* >(__zngur_data);
       }
     {% endif %}
 
@@ -942,11 +947,11 @@ namespace {{ self.namespace }} {
     {% endif %}
 
     {% if let Some(cpp_stack_owned) = td.cpp_stack_owned %}
-      inline const {{ cpp_stack_owned.cpp_type }}& cpp() const {
-        return *reinterpret_cast< const {{ cpp_stack_owned.cpp_type }}* >(__zngur_data);
+      inline const {{ cpp_stack_owned.0 }}& cpp() const {
+        return *reinterpret_cast< const {{ cpp_stack_owned.0 }}* >(__zngur_data);
       }
-      inline {{ cpp_stack_owned.cpp_type }}& cpp() {
-        return *reinterpret_cast< {{ cpp_stack_owned.cpp_type }}* >(__zngur_data);
+      inline {{ cpp_stack_owned.0 }}& cpp() {
+        return *reinterpret_cast< {{ cpp_stack_owned.0 }}* >(__zngur_data);
       }
     {% endif %}
 

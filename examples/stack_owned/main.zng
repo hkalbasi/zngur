@@ -3,12 +3,23 @@
 "
 
 type crate::MyCppWrapper {
-    #cpp_stack_owned "::CppType" (size = 8, align = 4);
+    #cpp_stack_owned "::CppType";
+    #layout(size = 8, align = 4);
+}
+
+type crate::MyConservativeWrapper {
+    #cpp_stack_owned "::CppConservativeType";
+    #layout_conservative(size = 32, align = 16);
 }
 
 extern "C++" {
     impl crate::MyCppWrapper {
         safe fn new(i32, i32) -> crate::MyCppWrapper;
+        safe fn print(&self);
+    }
+
+    impl crate::MyConservativeWrapper {
+        safe fn new(i64, i32) -> crate::MyConservativeWrapper;
         safe fn print(&self);
     }
 }

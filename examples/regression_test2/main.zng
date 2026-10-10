@@ -3,11 +3,13 @@
 "
 
 type crate::CppTask {
-    #cpp_stack_owned "task::CppTaskForRust" (size = 8, align = 8);
+    #cpp_stack_owned "task::CppTaskForRust";
+    #layout(size = 8, align = 8);
 }
 
 type crate::Dispatcher {
-    #cpp_stack_owned "task::Dispatcher" (size = 1, align = 1);
+    #cpp_stack_owned "task::Dispatcher";
+    #layout(size = 1, align = 1);
 }
 
 type ::core::task::Poll<()> {

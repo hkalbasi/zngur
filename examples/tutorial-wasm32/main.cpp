@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <iostream>
 #include <vector>
 
@@ -32,6 +33,8 @@ public:
 };
 
 int main() {
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+
   // You can call Rust functions that return things by value, and store that
   // value in your stack.
   auto s = Vec<int32_t>::new_();
@@ -65,6 +68,8 @@ int main() {
       VectorIterator<int32_t>>(std::move(vec));
   // Then use it like a normal Rust value.
   auto t = vec_as_iter.collect();
+  std::cout.flush();
+  std::fflush(stdout);
   // Some utilities are also provided. For example, `zngur_dbg` is the
   // equivalent of `dbg!` macro.
   zngur_dbg(t);

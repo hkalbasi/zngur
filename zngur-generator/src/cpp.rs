@@ -519,6 +519,9 @@ impl CppLayoutPolicy {
 pub struct CppTypeDefinition {
     pub ty: CppType,
     pub layout: CppLayoutPolicy,
+    pub layout_size: usize,
+    pub layout_align: usize,
+    pub is_layout_conservative: bool,
     pub methods: Vec<CppMethod>,
     pub constructor: Option<CppFnSig>,
     pub variants: Vec<CppVariant>,
@@ -539,7 +542,7 @@ impl CppTypeDefinition {
 
     pub fn cpp_short_name(&self) -> String {
         if let Some(c) = &self.cpp_stack_owned {
-            c.cpp_type.split("::").last().unwrap().to_string()
+            c.0.split("::").last().unwrap().to_string()
         } else {
             "".to_string()
         }
@@ -653,6 +656,9 @@ impl Default for CppTypeDefinition {
         Self {
             ty: CppType::from("fill::me::you::forgot::it"),
             layout: CppLayoutPolicy::OnlyByRef,
+            layout_size: 0,
+            layout_align: 1,
+            is_layout_conservative: false,
             methods: vec![],
             constructor: None,
             variants: vec![],

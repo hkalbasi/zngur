@@ -161,10 +161,12 @@ pub struct CppHeapAllocatedData {
 pub struct CppRef(pub String);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CppStackOwned {
-    pub cpp_type: String,
-    pub size: usize,
-    pub align: usize,
+pub struct CppStackOwned(pub String);
+
+impl Display for CppStackOwned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 impl Display for CppRef {

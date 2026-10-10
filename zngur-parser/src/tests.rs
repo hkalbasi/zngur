@@ -1,7 +1,9 @@
 use std::panic::catch_unwind;
 
 use expect_test::{Expect, expect};
-use zngur_def::{CppHeapAllocated, LayoutPolicy, RustPathAndGenerics, RustType, ZngurSpec};
+use zngur_def::{
+    CppHeapAllocated, CppStackOwned, LayoutPolicy, RustPathAndGenerics, RustType, ZngurSpec,
+};
 
 use crate::{
     DefaultImportResolver, ImportResolver, ParsedZngFile, ReportSink,
@@ -282,6 +284,168 @@ type crate::Way {
     assert_eq!(
         ty.cpp_heap_allocated,
         Some(CppHeapAllocated("::osmium::Way".to_owned())),
+    );
+}
+
+#[test]
+fn cpp_stack_owned_valid_exact_layout() {
+    let result = parse_str(
+        r#"
+type crate::Way {
+    #layout(size = 16, align = 8);
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = result.spec.types.first().expect("no type parsed");
+    assert_eq!(
+        ty.cpp_stack_owned,
+        Some(CppStackOwned("::osmium::Way".to_owned()))
+    );
+    assert_eq!(
+        ty.layout,
+        Some(LayoutPolicy::StackAllocated { size: 16, align: 8 })
+    );
+}
+
+#[test]
+fn cpp_stack_owned_valid_conservative_layout() {
+    let result = parse_str(
+        r#"
+type crate::Way {
+    #layout_conservative(size = 32, align = 16);
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = result.spec.types.first().expect("no type parsed");
+    assert_eq!(
+        ty.cpp_stack_owned,
+        Some(CppStackOwned("::osmium::Way".to_owned()))
+    );
+    assert_eq!(
+        ty.layout,
+        Some(LayoutPolicy::Conservative {
+            size: 32,
+            align: 16
+        })
+    );
+}
+
+#[test]
+fn cpp_stack_owned_error_with_heap_allocated() {
+    check_fail(
+        r#"
+type crate::Way {
+    #heap_allocated;
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        expect![[r#"
+            Error: `#cpp_stack_owned` cannot be used with `#heap_allocated` for type crate::Way.
+               ╭─[ test.zng:4:5 ]
+               │
+             4 │     #cpp_stack_owned "::osmium::Way";
+               │     ────────────────┬────────────────  
+               │                     ╰────────────────── `#cpp_stack_owned` declared here
+               │
+               ├─[ test.zng:4:5 ]
+               │
+             3 │     #heap_allocated;
+               │     ───────┬───────  
+               │            ╰───────── `#heap_allocated` declared here
+               │ 
+               │ Note: `#cpp_stack_owned` types must use `#layout` or `#layout_conservative`.
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_stack_owned_error_with_only_by_ref() {
+    check_fail(
+        r#"
+type crate::Way {
+    #only_by_ref;
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        expect![[r#"
+            Error: `#cpp_stack_owned` cannot be used with `#only_by_ref` for type crate::Way.
+               ╭─[ test.zng:4:5 ]
+               │
+             4 │     #cpp_stack_owned "::osmium::Way";
+               │     ────────────────┬────────────────  
+               │                     ╰────────────────── `#cpp_stack_owned` declared here
+               │
+               ├─[ test.zng:4:5 ]
+               │
+             3 │     #only_by_ref;
+               │     ──────┬─────  
+               │           ╰─────── `#only_by_ref` declared here
+               │ 
+               │ Note: `#cpp_stack_owned` types must use `#layout` or `#layout_conservative`.
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_stack_owned_error_with_no_layout() {
+    check_fail(
+        r#"
+type crate::Way {
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        expect![[r#"
+            Error: No layout policy found for type crate::Way.
+               ╭─[ test.zng:1:1 ]
+               │
+             2 │ type crate::Way {
+               │      ─────┬────  
+               │           ╰────── Type first declared here.
+               │ 
+               │ Note 1: Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.
+               │ 
+               │ Note 2: Type is declared with `#cpp_stack_owned` which requires a layout directive like `#layout(size = X, align = Y)` or `#layout_conservative(size = X, align = Y)`.
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_stack_owned_old_syntax_error_with_help() {
+    check_fail(
+        r#"
+type crate::Way {
+    #cpp_stack_owned "::osmium::Way" (size = 16, align = 8);
+}
+    "#,
+        expect![[r#"
+            Error: Old syntax `#cpp_stack_owned` with layout properties is no longer supported.
+               ╭─[ test.zng:3:5 ]
+               │
+             3 │     #cpp_stack_owned "::osmium::Way" (size = 16, align = 8);
+               │     ────────────────────────────┬───────────────────────────  
+               │                                 ╰───────────────────────────── layout parameters no longer accepted here
+               │ 
+               │ Help: layout moved to its own directive: `#cpp_stack_owned "::osmium::Way"; #layout(size = 16, align = 8);`
+            ───╯
+            Error: No layout policy found for type crate::Way.
+               ╭─[ test.zng:1:1 ]
+               │
+             2 │ type crate::Way {
+               │      ─────┬────  
+               │           ╰────── Type first declared here.
+               │ 
+               │ Note: Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.
+            ───╯
+        "#]],
     );
 }
 

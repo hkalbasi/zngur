@@ -152,14 +152,35 @@ object meets the trivial relocatability guarantees. Let's go over an example
 "
 
 type crate::MyCppWrapper {
-    #cpp_stack_owned "::CppType" (size = 8, align = 4);
+    #cpp_stack_owned "::CppType";
+    #layout(size = 8, align = 4);
 }
 ```
 
-Similarly to how we can define opaque C++ objects with `#cpp_ref`, we instead
-use `#cpp_stack_owned` which instructs `zngur` that this type will be stored
-directly in the Rust stack. This requires telling `zngur` the layout information
-of the type.
+Similarly to how we can define opaque C++ objects with `#cpp_ref` and `#cpp_heap_allocated`,
+`#cpp_stack_owned` only names the backing C++ type and instructs `zngur` that this type will be
+stored directly in the Rust stack. The memory layout is specified separately using the `#layout`
+or `#layout_conservative` directives.
+
+> **NOTE**: The legacy syntax `#cpp_stack_owned "::CppType" (size = ..., align = ...);` where layout
+> parameters were embedded directly in the `#cpp_stack_owned` directive is no longer supported and
+> will emit a parse error with a suggested rewrite.
+
+#### Conservative Layout
+
+When exact type size or alignment is not known ahead of time (e.g. across platforms or compiler
+versions), you can specify an upper bound using `#layout_conservative`:
+
+```zng
+type crate::MyConservativeWrapper {
+    #cpp_stack_owned "::CppConservativeType";
+    #layout_conservative(size = 32, align = 16);
+}
+```
+
+With `#layout_conservative`, `zngur` generates compile-time static assertions ensuring that
+`sizeof(T) <= size` and `alignof(T) <= align`, while allocating the specified upper-bound size and
+alignment in the Rust wrapper.
 
 Just like with C++ opaque objects, we can define functions on an `extern C++` block
 

@@ -2,8 +2,6 @@ use std::io::Write;
 
 use itertools::Itertools;
 
-use crate::CppStackOwned;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IDLItem {
     Function,
@@ -543,15 +541,8 @@ impl WriteIDL for crate::LayoutPolicy {
 impl WriteIDL for crate::CppStackOwned {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeLayout) {
-            let CppStackOwned {
-                cpp_type: ty,
-                size,
-                align,
-            } = self;
-            writeln!(
-                p,
-                r#"#cpp_stack_owned "{ty}" (size = {size}, align = {align});"#
-            )?;
+            let ty = &self.0;
+            writeln!(p, r#"#cpp_stack_owned "{ty}";"#)?;
         }
         Ok(())
     }

@@ -1,2 +1,5 @@
 Constructed CppType 5 6
 CppType 5 6
+Constructed CppConservativeType 10 20
+CppConservativeType 10 20
+Destructed CppConservativeType 10 20

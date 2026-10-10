@@ -117,7 +117,7 @@ impl ZngurGenerator {
             if is_copy {
                 rust_file.add_static_is_copy_assert(&ty);
             }
-            if let Some(cpp_stack_owned) = &ty_def.cpp_stack_owned {
+            if let Some(_cpp_stack_owned) = &ty_def.cpp_stack_owned {
                 let type_name = ty.to_string().split("::").last().unwrap().to_string();
                 let destructor_name = format!("_zngur_crate_{type_name}_destructor");
                 let mangled_name = rust_file.add_extern_cpp_function(
@@ -126,8 +126,13 @@ impl ZngurGenerator {
                     &RustType::Tuple(vec![]),
                     true,
                 );
-                let size = cpp_stack_owned.size;
-                let align = cpp_stack_owned.align;
+                let (size, align) = match layout {
+                    LayoutPolicy::StackAllocated { size, align }
+                    | LayoutPolicy::Conservative { size, align } => (size, align),
+                    _ => unreachable!(
+                        "Validation ensures cpp_stack_owned has StackAllocated or Conservative layout"
+                    ),
+                };
                 cpp_mod_content.push_str(&format!(
                     r#"
     #[repr(C)]
@@ -319,9 +324,17 @@ impl ZngurGenerator {
                     sig,
                 });
             }
+            let (layout_size, layout_align, is_layout_conservative) = match layout {
+                LayoutPolicy::StackAllocated { size, align } => (size, align, false),
+                LayoutPolicy::Conservative { size, align } => (size, align, true),
+                _ => (0, 1, false),
+            };
             cpp_file.type_defs.push(CppTypeDefinition {
                 ty: ty.into_cpp(default_ns, &sanitized_crate_name),
                 layout: rust_file.add_layout_policy_shim(&ty, layout),
+                layout_size,
+                layout_align,
+                is_layout_conservative,
                 constructor,
                 variants,
                 discriminant,
