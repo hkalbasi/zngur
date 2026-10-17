@@ -7,7 +7,7 @@ mod traits;
 mod ty;
 mod vis;
 
-pub(crate) use adt::AdtDefExt;
+pub(crate) use adt::{AdtDefExt, FieldDefExt, VariantDefExt};
 pub(crate) use convert::RustcInternalEx;
 pub(crate) use funcs::GetFnInfoExt;
 pub(crate) use generics::{ClausesOfExt, GenericClauses};

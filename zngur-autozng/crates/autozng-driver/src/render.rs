@@ -18,18 +18,22 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use rustc_errors::DiagMessage;
-use rustc_public::ty::{AdtDef, AssocKind, FnDef, RigidTy, Ty, TyKind};
-use rustc_public::{CrateDef, DefId};
+use rustc_public::abi::FieldsShape;
+use rustc_public::ty::{AdtDef, AssocKind, FieldDef, FnDef, RigidTy, Ty, TyKind};
+use rustc_public::{CrateDef, CrateDefType, DefId};
 use zngur_def::printing::IDLPrinter;
 use zngur_def::{
-    LayoutPolicy, RustPathAndGenerics, RustType, ZngurFn, ZngurMethod, ZngurMethodDetails,
-    ZngurMethodReceiver, ZngurSpec, ZngurType, ZngurWellknownTrait,
+    LayoutPolicy, RustPathAndGenerics, ZngurField, ZngurFn, ZngurMethod, ZngurMethodDetails,
+    ZngurMethodReceiver, ZngurSpec, ZngurType, ZngurVariant, ZngurWellknownTrait,
 };
 
 use crate::ctx::{AutozngContext, FnRecord, TyRecord};
 use crate::driver::with_ctxt;
-use crate::error::emit_warning_for_rustc_public_span;
-use crate::rustc_ext::{AdtDefExt, WellKownTraitsExt, WellKnownTrait};
+use crate::error::{
+    emit_warning_for_rustc_public_span, with_struct_warning_for_rustc_public_span,
+};
+use crate::metadata::IntoMetadataKey;
+use crate::rustc_ext::{AdtDefExt, VariantDefExt, WellKownTraitsExt, WellKnownTrait};
 use crate::type_map::map_rustc_public_ty_to_zngur;
 
 /// Build the [`ZngurSpec`] from everything the analysis pass recorded into `ctx`.
@@ -37,9 +41,9 @@ use crate::type_map::map_rustc_public_ty_to_zngur;
 /// Must be called inside the `after_analysis` callback (the context borrows the `TyCtxt`).
 ///
 /// Emits one `type ... { .. }` block per recorded ADT (with its layout, well-known traits,
-/// non-exhaustiveness and recorded methods) plus one `fn` entry per recorded free function.
-/// Fields, variants, constructors and trait emission depend on analysis work that is not
-/// wired up yet.
+/// non-exhaustiveness, fields/variants and recorded methods) plus one `fn` entry per recorded
+/// free function. Constructors and trait emission depend on analysis work that is not wired up
+/// yet (see `build_type`).
 pub fn build_spec(ctx: &AutozngContext) -> ZngurSpec {
     let mut types: Vec<ZngurType> = ctx
         .ty_records()
@@ -80,7 +84,17 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
             return None;
         }
     };
-    let rust_ty = apply_export_name(ctx, &adt, rust_ty);
+
+    // The IDL can only rename associated methods and free functions (`fn ... as <name>`).
+    // `rename`/`rename_all` on a type is accepted but ignored.
+    warn_unsupported_rename(ctx, &adt, adt.def_id(), &format!("type `{}`", adt.name()));
+
+    // Enums carry their fields per variant; every other ADT is a single struct/union "variant".
+    let (fields, variants) = if adt.kind().is_enum() {
+        (Vec::new(), build_variants(ctx, record, &adt))
+    } else {
+        (build_fields(ctx, record, &adt), Vec::new())
+    };
 
     Some(ZngurType {
         ty: rust_ty,
@@ -88,16 +102,102 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
         wellknown_traits: wellknown_traits(record.ty),
         exhaustive: adt.is_exhaustive(),
         methods: build_methods(ctx, record),
-        // TODO(render): fields/variants/constructor and the well-known-trait data payloads
-        // (pretty_print/debug_print/drop_in_place) require the analysis pass to record
-        // per-field/variant information.
+        // TODO(render): constructors and the well-known-trait data payloads
+        // (pretty_print/debug_print/drop_in_place) still need analysis work.
         constructor: None,
-        variants: Vec::new(),
-        fields: Vec::new(),
+        variants,
+        fields,
         cpp_heap_allocated: None,
         cpp_ref: None,
         cpp_stack_owned: None,
     })
+}
+
+/// Build the `field` entries for a struct/union.
+///
+/// `record.fields` holds the fields the analysis pass selected (visibility + `emit`/`skip`);
+/// the ADT's single variant supplies their declaration order and the layout their offsets.
+/// Fields whose type cannot be represented are warned about and omitted.
+fn build_fields(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<ZngurField> {
+    let offsets = struct_field_offsets(record);
+    let Some(variant) = adt.variants().into_iter().next() else {
+        return Vec::new();
+    };
+    variant
+        .fields()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, field)| record.fields.contains_key(&field.def_id()))
+        .filter_map(|(index, field)| {
+            let offset = offsets
+                .as_ref()
+                .and_then(|offsets| offsets.get(index).copied());
+            build_field(ctx, adt, &field, offset)
+        })
+        .collect()
+}
+
+/// Build the `variant` entries for an enum.
+///
+/// Every variant is emitted; each carries the fields the analysis pass selected. Variant field
+/// offsets are left to Zngur (`auto`) because they are variant-relative.
+fn build_variants(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<ZngurVariant> {
+    adt.variants()
+        .into_iter()
+        .map(|variant| ZngurVariant {
+            name: variant.name().to_string(),
+            fields: variant
+                .fields()
+                .into_iter()
+                .filter(|field| record.fields.contains_key(&field.def_id()))
+                .filter_map(|field| build_field(ctx, adt, &field, None))
+                .collect(),
+            exhaustive: variant.is_exhaustive(),
+        })
+        .collect()
+}
+
+/// Map one selected field to the `.zng` IR, warning (and returning `None`) when its type cannot
+/// be represented so only that field is dropped.
+fn build_field(
+    ctx: &AutozngContext,
+    adt: &AdtDef,
+    field: &FieldDef,
+    offset: Option<usize>,
+) -> Option<ZngurField> {
+    // Fields are never renamed: the IDL only supports `fn ... as <name>`.
+    let name = field.name.to_string();
+    warn_unsupported_rename(
+        ctx,
+        field,
+        field.def_id(),
+        &format!("field `{name}` of `{}`", adt.name()),
+    );
+    let field_ty = field.ty();
+    match with_ctxt(|driver| map_rustc_public_ty_to_zngur(field_ty, driver.tcx)) {
+        Ok(ty) => Some(ZngurField { name, ty, offset }),
+        Err(msg) => {
+            warn(
+                field.def_id(),
+                format!("autozng: skipping field `{name}` of `{}`: {msg}", adt.name()),
+            );
+            None
+        }
+    }
+}
+
+/// Field offsets for a struct/union, in declaration order.
+///
+/// Returns `None` when the layout has no precomputed per-field offsets (unions) or none is
+/// available (e.g. a generic ADT); Zngur then computes the offsets itself (`auto`).
+fn struct_field_offsets(record: &TyRecord) -> Option<Vec<usize>> {
+    let layout = record.layout?;
+    match layout.shape().fields {
+        FieldsShape::Arbitrary { offsets } => {
+            Some(offsets.iter().map(|offset| offset.bytes()).collect())
+        }
+        FieldsShape::Union(_) | FieldsShape::Primitive | FieldsShape::Array { .. } => None,
+    }
 }
 
 /// Map a type's in-memory layout to a Zngur layout policy.
@@ -128,23 +228,30 @@ fn wellknown_traits(ty: Ty) -> Vec<ZngurWellknownTrait> {
         .collect()
 }
 
-/// Apply a recorded `#[autozng::rename]` to an ADT type.
+/// Warn when a recorded `#[autozng::rename]` targets an item the IDL cannot rename.
 ///
-/// `rename` only changes the item's own name, so just the last path segment is replaced; the
-/// crate/module path produced by the type mapper is left intact for discoverability.
-fn apply_export_name(ctx: &AutozngContext, adt: &AdtDef, rust_ty: RustType) -> RustType {
-    let Some(export_name) = ctx.export_name_for(adt) else {
-        return rust_ty;
+/// The `.zng` syntax only renames associated methods, through `ZngurMethodDetails::cpp_name`
+/// (`fn <rust_name>(...) -> ... as <cpp_name>`). A `rename`/`rename_all` on anything else
+/// (type, variant, field, trait, free function) is accepted but has no effect, so the rendered
+/// name is left untouched. The warning points at the item and adds a `renamed here` note at the
+/// attribute that caused it.
+fn warn_unsupported_rename<T: IntoMetadataKey + ?Sized>(
+    ctx: &AutozngContext,
+    key: &T,
+    def_id: DefId,
+    item: &str,
+) {
+    let Some(export) = ctx.export_name_for(key) else {
+        return;
     };
-    match rust_ty {
-        RustType::Adt(mut path) => {
-            if let Some(last) = path.path.last_mut() {
-                *last = export_name;
-            }
-            RustType::Adt(path)
-        }
-        other => other,
-    }
+    with_struct_warning_for_rustc_public_span(
+        def_id.span(),
+        format!("autozng: ignoring `rename` on {item}: only associated methods can be renamed"),
+        |mut diag, _tcx| {
+            diag.span_note(export.span, "renamed here");
+            diag.emit()
+        },
+    );
 }
 
 /// Build the methods recorded for a type (from its inherent impl blocks).
@@ -167,8 +274,10 @@ fn build_method(
     let AssocKind::Fn { name, has_self } = &assoc_item.kind else {
         return None;
     };
-    // `rename` only changes the method's own name; the receiver type path is unchanged.
-    let name = ctx.export_name_for(&assoc_item).unwrap_or_else(|| name.to_string());
+    // The IDL keeps the original Rust name (needed to construct the bindings); a `rename` goes
+    // into `cpp_name` as the `fn ... as <name>` suffix.
+    let name = name.to_string();
+    let cpp_name = ctx.export_name_for(&assoc_item).map(|export| export.name);
 
     let signature = def.fn_sig().skip_binder();
     let self_ty = record.ty;
@@ -236,14 +345,24 @@ fn build_method(
         },
         use_path: None,
         deref: None,
-        cpp_name: None,
+        cpp_name,
     })
 }
 
 /// Build a free function into a [`ZngurFn`], or `None` if it cannot be represented (with a
 /// warning emitted).
+///
+/// Free functions named through `FnDef` cannot carry a `rename`: the IDL's `ZngurFn` has no
+/// `cpp_name` slot, so a recorded `rename` is ignored with a warning.
 fn build_fn(ctx: &AutozngContext, fn_def: &FnDef) -> Option<ZngurFn> {
     let signature = fn_def.fn_sig().skip_binder();
+
+    warn_unsupported_rename(
+        ctx,
+        fn_def,
+        fn_def.def_id(),
+        &format!("fn `{}`", fn_def.name()),
+    );
 
     let inputs = with_ctxt(|driver| {
         signature
@@ -279,12 +398,6 @@ fn build_fn(ctx: &AutozngContext, fn_def: &FnDef) -> Option<ZngurFn> {
     if fn_def.krate().is_local && !path.is_empty() {
         // Local paths are marked with a leading `crate` segment (see `type_map`).
         path[0] = "crate".to_string();
-    }
-    // `rename` only changes the function's own name (the last path segment).
-    if let Some(export_name) = ctx.export_name_for(fn_def)
-        && let Some(last) = path.last_mut()
-    {
-        *last = export_name;
     }
 
     Some(ZngurFn {

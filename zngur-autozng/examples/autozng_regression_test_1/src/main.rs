@@ -27,8 +27,8 @@ pub mod submod;
 #[cfg_attr(autozng, autozng::rename(case = "Ada"))]
 #[derive(Default, Debug, Clone)]
 pub struct Example {
-    /// autozng::rename(inner)
-    #[cfg_attr(autozng, autozng::rename(inner))]
+    /// autozng::rename("inner")
+    #[cfg_attr(autozng, autozng::rename("inner"))]
     pub first: String,
     second: i32,
     third: u32,
@@ -40,6 +40,18 @@ impl std::fmt::Display for Example {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, r#""{}" + "{}""#, self.first, self.second)
     }
+}
+
+impl Example {
+    #[cfg_attr(autozng, autozng::rename(case = "Pascal"))]
+    pub fn a_long_fn_that_will_be_renamed(&self) {}
+}
+
+/// A free function: unlike an associated method it has no `cpp_name` slot in the IDL, so
+/// `rename` is ignored (with a warning).
+#[cfg_attr(autozng, autozng::rename(case = "Pascal"))]
+pub fn a_free_fn_that_will_not_be_renamed(value: i32) -> i32 {
+    value
 }
 
 /// Alias of Example
@@ -219,7 +231,7 @@ impl Example {
     }
 }
 
-#[cfg_attr(autozng, autozng::emit_on_implementors)]
+#[cfg_attr(autozng, autozng::emit_on_implementers)]
 trait YarrExt {
     fn yarrrr(&self) -> String;
 }
@@ -244,9 +256,9 @@ const _: Option<(
 #[autozng::emit_items]
 #[allow(unused_doc_comments)]
 const _: () = {
-    #[autozng::rename(in_tuple_with_u8)]
+    #[autozng::rename("in_tuple_with_u8")]
     let _ = Example::second_in_tuple_with::<u8>;
-    ///  #[autozng::rename(in_tuple_with_u32)]
+    ///  #[autozng::rename("in_tuple_with_u32")]
     let _ = Example::second_in_tuple_with::<u32>;
     let _ = Example::to_string;
     let _ = <Example as YarrExt>::yarrrr;

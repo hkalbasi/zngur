@@ -59,3 +59,9 @@ impl VisibilityExt for rustc_public::ty::FnDef {
         with_ctxt(|ctx| visibility(ctx.tcx, internal(ctx.tcx, self.def_id())))
     }
 }
+
+impl VisibilityExt for rustc_public::ty::FieldDef {
+    fn visibility(&self) -> Visibility {
+        with_ctxt(|ctx| visibility(ctx.tcx, internal(ctx.tcx, self.def_id())))
+    }
+}

@@ -11,7 +11,7 @@ use crate::{
         },
     },
     ctx::AutozngContext,
-    metadata::IntoMetadataKey,
+    metadata::{ExportName, IntoMetadataKey},
 };
 
 pub trait RenameTarget: IntoMetadataKey {
@@ -64,6 +64,9 @@ pub struct Rename {
     path: AttrPath,
     actions: Vec<RenameAction>,
     target: RenameTargetType,
+    /// Span of the `#[autozng::rename(...)]` attribute, kept so it can be recorded alongside the
+    /// export name and used for a `renamed here` diagnostic.
+    span: Span,
 }
 
 impl Attr for Rename {
@@ -81,6 +84,7 @@ impl Attr for Rename {
                 path: self.path.clone(),
                 actions: self.actions.clone(),
                 target: RenameTargetType::This,
+                span: self.span,
             })
         } else {
             None
@@ -95,9 +99,12 @@ impl Attr for Rename {
                 .actions
                 .iter()
                 .fold(item.item_name(), |name, action| action.apply(&name));
-            // set the new name
+            // set the new name, remembering the attribute that produced it
             ctx.with_metadata_mut(item, |mut metadata| {
-                metadata.export_name = Some(export_name);
+                metadata.export_name = Some(ExportName {
+                    name: export_name,
+                    span: self.span,
+                });
             });
         }
     }
@@ -108,6 +115,7 @@ pub struct RenameParser {
     path: Option<AttrPath>,
     actions: Option<Vec<RenameAction>>,
     target: Option<RenameTargetType>,
+    span: Option<Span>,
 }
 
 const RENAME_PATH: AttrPath = AttrPath::from_static(&[AUTOZNG_NAMESPACE, "rename"]);
@@ -153,12 +161,14 @@ impl AttrtibuteParser for RenameParser {
             path: Some(path),
             actions: Some(actions),
             target: Some(target),
+            span: Some(span),
         } = self
         {
             Some(Rename {
                 path,
                 actions,
                 target,
+                span,
             })
         } else {
             None
@@ -247,6 +257,7 @@ impl RenameParser {
 
         self.path = Some(path.clone());
         self.target = Some(target);
+        self.span = Some(cx.span);
 
         let Some(args) = cx.expect_list(args, cx.span) else {
             return;
