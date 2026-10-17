@@ -1,17 +1,31 @@
 [workspace]
+resolver = "3"
+members = [
+    "crates/cargo-autozng", "crates/autozng-driver",
+    "examples/autozng_regression_test_1"
+]
 
-[package]
-name = "zngur-autozng"
-description = "Generating Zngur zng files automatically for a Rust crate"
-version = "0.11.0"
-edition.workspace = true
-license.workspace = true
+[workspace.package]
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+edition = "2024"
+rust-version = "1.98"
+repository = "https://github.com/hkalbasi/zngur/tree/main/zngur-autozng"
+authors = ["Rachel Powers <powers.e.rachel@gmail.com>"]
+keywords = ["zngur", "zng"]
 
-[dependencies]
-zngur-def = { version = " 0.10.0", path = "../zngur-def" }
+
+[workspace.dependencies]
+zngur-def = { version = " 0.11.0", path = "../zngur-def" }
+indexmap = "2.13.0"
+itertools = "0.11"
+thiserror = "2.0.19"
+bitflags = "2.13.1"
+convert_case = "0.11.0"
+semver = "1.0.28"
+rustc-hash = "2.1.3"
+scoped-tls = "1.0.1"
 
 
-[package.metadata.rust-analyzer]
-# This crate uses #[feature(rustc_private)].
-# See https://github.com/rust-analyzer/rust-analyzer/pull/7891
-rustc_private = true
+[profile.dev]
+opt-level = 3

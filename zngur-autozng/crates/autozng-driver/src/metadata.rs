@@ -1,0 +1,88 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
+
+use rustc_hash::FxHashMap;
+use rustc_public::{CrateDef, DefId, rustc_internal::stable};
+
+use crate::driver::with_ctxt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MetadataKey(u64);
+
+impl MetadataKey {
+    pub fn from_public_def_id(def_id: DefId) -> Self {
+        let mut hasher = DefaultHasher::default();
+        def_id.hash(&mut hasher);
+        MetadataKey(hasher.finish())
+    }
+}
+
+pub trait IntoMetadataKey {
+    fn to_metadata_key(&self) -> MetadataKey;
+}
+
+impl IntoMetadataKey for MetadataKey {
+    fn to_metadata_key(&self) -> MetadataKey {
+        *self
+    }
+}
+
+impl IntoMetadataKey for rustc_hir::OwnerId {
+    #[inline(always)]
+    fn to_metadata_key(&self) -> MetadataKey {
+        MetadataKey::from_public_def_id(stable(self.to_def_id()))
+    }
+}
+
+impl IntoMetadataKey for rustc_hir::def_id::ModId {
+    #[inline(always)]
+    fn to_metadata_key(&self) -> MetadataKey {
+        MetadataKey::from_public_def_id(stable(self.to_def_id()))
+    }
+}
+
+impl IntoMetadataKey for rustc_hir::def_id::LocalModId {
+    #[inline(always)]
+    fn to_metadata_key(&self) -> MetadataKey {
+        MetadataKey::from_public_def_id(stable(self.to_def_id()))
+    }
+}
+
+impl IntoMetadataKey for rustc_public::ty::AssocItem {
+    #[inline(always)]
+    fn to_metadata_key(&self) -> MetadataKey {
+        MetadataKey::from_public_def_id(self.def_id.def_id())
+    }
+}
+impl IntoMetadataKey for rustc_public::ty::TraitDef {
+    #[inline(always)]
+    fn to_metadata_key(&self) -> MetadataKey {
+        MetadataKey::from_public_def_id(self.def_id())
+    }
+}
+impl IntoMetadataKey for rustc_public::ty::AdtDef {
+    #[inline(always)]
+    fn to_metadata_key(&self) -> MetadataKey {
+        MetadataKey::from_public_def_id(self.def_id())
+    }
+}
+
+impl IntoMetadataKey for rustc_public::Crate {
+    fn to_metadata_key(&self) -> MetadataKey {
+        let def_id = with_ctxt(|ctx| {
+            rustc_public::rustc_internal::stable(
+                rustc_public::rustc_internal::internal(ctx.tcx, self.id)
+                    .as_mod_id()
+                    .to_def_id(),
+            )
+        });
+        MetadataKey::from_public_def_id(def_id)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct MetadataRecord {
+    pub export_name: Option<String>,
+}
+
+pub type MetadataMap = FxHashMap<MetadataKey, MetadataRecord>;
+pub type MetadataRecordRefMut<'a> = std::cell::RefMut<'a, MetadataRecord>;

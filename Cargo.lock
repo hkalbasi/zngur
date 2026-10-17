@@ -549,6 +549,10 @@ name = "example-overloaded-trait"
 version = "0.11.0"
 
 [[package]]
+name = "example-overloaded-trait"
+version = "0.10.0"
+
+[[package]]
 name = "example-raw-pointer"
 version = "0.11.0"
 

@@ -1,0 +1,70 @@
+///! implementations for rustc_public types
+use rustc_public::CrateDef;
+
+use crate::{
+    attrs::{
+        attributes::{
+            emit::{EmitAction, EmitTarget},
+            policy::PolicyTarget,
+            rename::RenameTarget,
+        },
+        macros::impl_attr_target,
+    },
+    ctx::AutozngContext,
+    rustc_ext::VisibilityExt,
+};
+
+impl PolicyTarget for rustc_public::Crate {}
+
+impl_attr_target!(rustc_public::Crate, PolicyTarget);
+
+impl EmitTarget for rustc_public::ty::AdtDef {
+    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+        let vis = self.visibility();
+        if !action.emit_for_visibility(vis, ctx.config().default_emit_policy) {
+            return false;
+        }
+        ctx.record_adt(self);
+        true
+    }
+
+    fn name(&self) -> String {
+        self.def_id().name()
+    }
+
+    fn implicit_action(&self) -> Option<EmitAction> {
+        Some(EmitAction::Default)
+    }
+}
+
+impl RenameTarget for rustc_public::ty::AdtDef {
+    fn item_name(&self) -> String {
+        CrateDef::name(self)
+    }
+}
+
+impl_attr_target!(rustc_public::ty::AdtDef, EmitTarget, RenameTarget);
+
+impl EmitTarget for rustc_public::ty::TraitDef {
+    fn emit(&self, _action: EmitAction, _ctx: &AutozngContext) -> bool {
+        false
+    }
+
+    fn name(&self) -> String {
+        self.def_id().name()
+    }
+}
+
+impl_attr_target!(rustc_public::ty::TraitDef, EmitTarget);
+
+impl EmitTarget for rustc_public::ty::AssocItem {
+    fn emit(&self, _action: EmitAction, _ctx: &AutozngContext) -> bool {
+        false
+    }
+
+    fn name(&self) -> String {
+        self.def_id.def_id().name()
+    }
+}
+
+impl_attr_target!(rustc_public::ty::AssocItem, EmitTarget);

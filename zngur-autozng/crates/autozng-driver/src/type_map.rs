@@ -1,0 +1,251 @@
+use rustc_middle::ty::TyCtxt;
+use rustc_public::{
+    CrateDef,
+    mir::Mutability,
+    ty::{
+        Binder, BoundTyKind, BoundVariableKind, ExistentialPredicate, FloatTy, GenericArgKind,
+        IntTy, RigidTy, TermKind, Ty, TyKind, UintTy,
+    },
+};
+use zngur_def::{PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType};
+
+const PATH_SEP: &str = "::";
+
+pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, String> {
+    match ty.kind() {
+        TyKind::RigidTy(rty) => match rty {
+            RigidTy::Bool => Ok(RustType::Primitive(PrimitiveRustType::Bool)),
+            RigidTy::Char => Ok(RustType::Primitive(PrimitiveRustType::Char)),
+            RigidTy::Int(int_ty) => Ok(RustType::Primitive(PrimitiveRustType::Int(match int_ty {
+                IntTy::I8 => 8,
+                IntTy::I16 => 16,
+                IntTy::I32 => 32,
+                IntTy::I64 => 64,
+                IntTy::I128 => 128,
+                IntTy::Isize => rustc_public::target::MachineInfo::target()
+                    .pointer_width
+                    .bits() as u32,
+            }))),
+            RigidTy::Uint(uint_ty) => match uint_ty {
+                UintTy::Usize => Ok(RustType::Primitive(PrimitiveRustType::Usize)),
+                _ => Ok(RustType::Primitive(PrimitiveRustType::Uint(
+                    match uint_ty {
+                        UintTy::U8 => 8,
+                        UintTy::U16 => 16,
+                        UintTy::U32 => 32,
+                        UintTy::U64 => 64,
+                        UintTy::U128 => 128,
+                        UintTy::Usize => unreachable!(),
+                    },
+                ))),
+            },
+            RigidTy::Float(float_ty) => Ok(RustType::Primitive(PrimitiveRustType::Float(
+                match float_ty {
+                    FloatTy::F16 => 16,
+                    FloatTy::F32 => 32,
+                    FloatTy::F64 => 64,
+                    FloatTy::F128 => 128,
+                },
+            ))),
+            RigidTy::Adt(adt_def, generics_args) => {
+                let adt_generics = adt_def.generics_of();
+
+                if adt_generics.parent_count > 0 {
+                    Err("types with nested generics are not currently supported in a zngur interface".to_string())
+                } else {
+                    let path = adt_def.name().split(PATH_SEP).map(Into::into).collect();
+
+                    let rustc_generic_args =
+                        rustc_public::rustc_internal::internal(tcx, &generics_args);
+                    let rustc_adt_def = rustc_public::rustc_internal::internal(tcx, adt_def);
+                    let rustc_adt_generics = tcx.generics_of(rustc_adt_def.did());
+
+                    let generics = generics_args
+                        .0
+                        .iter()
+                        .zip(rustc_generic_args.iter())
+                        .zip(&rustc_adt_generics.own_params)
+                        .filter_map(|((arg, rustc_arg), arg_def)| {
+                            if arg_def.default_value(tcx).is_some_and(|default_arg| {
+                                default_arg.skip_binder() == rustc_arg
+                            }) {
+                                // arg and it's default are the same (ie. a global allocator on Vec<T >):
+                                // don't blindly require the type to be exported
+                                None
+                            } else {
+                                match arg {
+                                    GenericArgKind::Lifetime(_) => None, // don't need to preserve lifetimes, re-inferred by rustc
+                                    GenericArgKind::Const(_) => Some(Err("types with const generics are not currently supported in a zngur interface".to_string())),
+                                    GenericArgKind::Type(param_ty) => Some(map_rustc_public_ty_to_zngur(*param_ty, tcx)),
+                                }
+                            }
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(RustType::Adt(RustPathAndGenerics {
+                        path,
+                        generics,
+                        named_generics: Vec::new(),
+                    }))
+                }
+            }
+            RigidTy::Str => Ok(RustType::Primitive(PrimitiveRustType::Str)),
+            RigidTy::Slice(slice_ty) => Ok(RustType::Slice(Box::new(
+                map_rustc_public_ty_to_zngur(slice_ty, tcx)?,
+            ))),
+            RigidTy::RawPtr(ptr_ty, mutability) => Ok(RustType::Raw(
+                match mutability {
+                    Mutability::Mut => zngur_def::Mutability::Mut,
+                    Mutability::Not => zngur_def::Mutability::Not,
+                },
+                Box::new(map_rustc_public_ty_to_zngur(ptr_ty, tcx)?),
+            )),
+            RigidTy::Ref(_region, ref_ty, mutability) => Ok(RustType::Ref(
+                match mutability {
+                    Mutability::Mut => zngur_def::Mutability::Mut,
+                    Mutability::Not => zngur_def::Mutability::Not,
+                },
+                Box::new(map_rustc_public_ty_to_zngur(ref_ty, tcx)?),
+            )),
+            RigidTy::Dynamic(predicates, _region) => {
+                let mut pred_iter = predicates.into_iter();
+                if let Some(Binder {
+                    value: ExistentialPredicate::Trait(trait_ref),
+                    bound_vars,
+                }) = pred_iter.next()
+                {
+                    let mut named_generics: Vec<(String, RustType)> = Vec::new();
+                    let mut auto_traits = Vec::new();
+
+                    let path: Vec<String> = trait_ref
+                        .def_id
+                        .name()
+                        .as_str()
+                        .split(PATH_SEP)
+                        .map(Into::into)
+                        .collect();
+                    let generics = bound_vars
+                        .into_iter()
+                        .filter_map(|bound_var| match bound_var {
+                            BoundVariableKind::Ty(bound_ty) => match bound_ty {
+                                BoundTyKind::Anon => {
+                                    Some(Err("can not use anonymous bounds in a zngur interface"
+                                        .to_string()))
+                                }
+                                BoundTyKind::Param(param_def, _) => {
+                                    let rustc_def_id = rustc_public::rustc_internal::internal(
+                                        tcx,
+                                        param_def.def_id(),
+                                    );
+                                    let rustc_ty = tcx.type_of(rustc_def_id);
+                                    let bound_ty_def = rustc_public::rustc_internal::stable(
+                                        rustc_ty.skip_binder(),
+                                    );
+                                    Some(map_rustc_public_ty_to_zngur(bound_ty_def, tcx))
+                                }
+                            },
+                            BoundVariableKind::Region(_) => None, // filter out lifetime bounds
+                            BoundVariableKind::Const => {
+                                Some(Err("const generics are not supported in zngur interfaces"
+                                    .to_string()))
+                            }
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    for pred in pred_iter {
+                        match pred.value {
+                            ExistentialPredicate::Projection(projection) => {
+                                named_generics.push((
+                                    projection
+                                        .def_id
+                                        .name()
+                                        .split(PATH_SEP)
+                                        .last()
+                                        .unwrap()
+                                        .to_string(),
+                                        map_rustc_public_ty_to_zngur(match projection.term {
+                                            TermKind::Type(term_ty) => Ok(term_ty),
+                                            TermKind::Const(_) => Err("const generics are not supported in zngur interfaces")
+                                        }?, tcx)?,
+                                ));
+                            }
+                            ExistentialPredicate::AutoTrait(auto_trait_def) => {
+                                // full path to auto trait
+                                auto_traits.push(format!("::{}", auto_trait_def.name()));
+                            }
+                            _ => {
+                                // only autotraits and projected terms should be after the first trait def
+                                tcx.dcx()
+                                    .bug("malformed dynamic object definition with multiple non-auto traits")
+                            }
+                        }
+                    }
+
+                    let rust_trait = match path.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+                        ["std", "ops", name @ ("Fn" | "FnMut" | "FnOnce")] => RustTrait::Fn {
+                            name: name.to_string(),
+                            inputs: generics,
+                            output: named_generics
+                                .into_iter()
+                                .find_map(|(name, out_ty)| {
+                                    if name == "Output" {
+                                        Some(Box::new(out_ty))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_else(|| {
+                                    tcx.dcx()
+                                        .bug("Fn() style trait without associated Output type");
+                                }),
+                        },
+                        _ => RustTrait::Normal(RustPathAndGenerics {
+                            path,
+                            generics,
+                            named_generics,
+                        }),
+                    };
+
+                    Ok(RustType::Dyn(rust_trait, auto_traits))
+                } else {
+                    tcx.dcx()
+                        .bug("malformed dynamic object definition without primary trait");
+                }
+            }
+            RigidTy::Tuple(tys) => Ok(RustType::Tuple(
+                tys.into_iter()
+                    .map(|ty| map_rustc_public_ty_to_zngur(ty, tcx))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            RigidTy::FnDef(_fn_def, _generics) => {
+                Err("function definition types are not supported in a zngur interface".to_string())
+            }
+            RigidTy::FnPtr(_fn_sig) => {
+                Err("function pointer types are not supported in a zngur interface".to_string())
+            }
+            RigidTy::Closure(_closure_def, _generics) => {
+                Err("closure types are not supported in a zngur interface".to_string())
+            }
+            RigidTy::Never => {
+                Err("the `never` type is not supported in a zngur interface".to_string())
+            }
+            RigidTy::Foreign(_) => {
+                Err("foreign types are not supported in a zngur interface".to_string())
+            }
+            RigidTy::Array(_, _) => {
+                Err("array types are not supported in a zngur interface".to_string())
+            }
+            RigidTy::Pat(_, _) => {
+                Err("pattern types are not supported in a zngur interface".to_string())
+            }
+            RigidTy::Coroutine(_, _)
+            | RigidTy::CoroutineClosure(_, _)
+            | RigidTy::CoroutineWitness(_, _) => {
+                Err("coroutine types are not supported in a zngur interface".to_string())
+            }
+        },
+        TyKind::Param(_ty_param) => {
+            Err("type parameters are not supported in a zngur interface".to_string())
+        }
+        _ => Err(format!("{ty} is not a supported type in a zngur interface")),
+    }
+}
