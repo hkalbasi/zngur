@@ -1,4 +1,8 @@
-//! implementations for rustc_hir types / crate::rustc_ext::hir wrappers
+//! `EmitTarget`/`EmitItemsTarget` implementations for HIR-backed wrappers.
+//!
+//! `HirConstItem` (via `emit_items`) records enumerated inner types and walks `let`
+//! bindings; `HirLetBindStmt` records its own type. `HirTyAlias::emit` is a **stub
+//! returning `false`** — `ty` aliases are visited but not emitted.
 
 use rustc_public::rustc_internal::stable;
 
@@ -71,6 +75,7 @@ impl_attr_target!(crate::rustc_ext::HirLetBindStmt, EmitTarget);
 
 // impl_attributable!(rustc_hir::Stmt<'_>, EmitVisitable);
 
+// TODO: `ty` alias emission is unimplemented; always returns `false`.
 impl EmitTarget for crate::rustc_ext::HirTyAlias {
     fn emit(&self, _action: EmitAction, _ctx: &AutozngContext) -> bool {
         false

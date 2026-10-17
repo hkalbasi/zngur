@@ -1,4 +1,8 @@
-//! Small utility that print some information about a crate.
+//! `autozng`: a `rustc` compiler-driver that generates Zngur `.zng` interface files from the
+//! public API of a Rust crate.
+//!
+//! Start with the `analyze` and `render` modules for the pipeline, and `attrs` for the
+//! attribute semantics.
 
 #![feature(rustc_private)]
 

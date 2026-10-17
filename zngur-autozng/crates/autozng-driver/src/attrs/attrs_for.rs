@@ -1,3 +1,12 @@
+//! Attribute collection and caching, keyed per item `DefId`.
+//!
+//! [`AttrsFor::collect`] gathers tool attributes for an item (optionally including
+//! doc-comment pseudo-attrs) and caches the parsed result by `attr_key`, then
+//! [`AutozngAttrsExt::autozng_attrs`] chains in parent attributes.
+//!
+//! Note the key chosen for `HirLetBindStmt` below: it is the *enclosing item's* `DefId`,
+//! not the `let` statement, so attributes on individual `let` bindings are not collected.
+
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc};
 
 use rustc_public::{CrateDef, rustc_internal::stable};
@@ -70,6 +79,7 @@ impl_has_attrs! {
         })
     }},
     crate::rustc_ext::HirConstItem { WithAttrKey |&self| { self.owner_id.to_def_id() } },
+    // Pitfall: resolves to the enclosing item, not the `let` binding (see module docs).
     crate::rustc_ext::HirLetBindStmt { WithAttrKey |&self| { self.hir_id.owner.to_def_id() } },
     crate::rustc_ext::HirTyAlias { WithAttrKey |&self| { self.owner_id.to_def_id() } }
 }

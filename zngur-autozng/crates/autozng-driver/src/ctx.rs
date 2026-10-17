@@ -1,3 +1,13 @@
+//! The accumulation target for the analysis passes.
+//!
+//! [`AutozngContext`] collects one [`TyRecord`] per visited type (keyed by `Ty`) plus a
+//! [`MetadataMap`] of per-item tool attributes keyed by `MetadataKey`. Both passes in
+//! `analyze.rs` (the HIR pass and the `rustc_public` pass) write into the same context.
+//!
+//! Note: [`AutozngContext::record_impl_method`] is defined but currently **never called**,
+//! so every [`TyRecord::impls`] is empty and no methods/constructors reach the render step.
+//! Populating it is part of wiring up rendering.
+
 use indexmap::{IndexMap, IndexSet};
 
 use rustc_hash::FxHashMap;
@@ -51,6 +61,7 @@ impl Hash for ImplRecord {
     }
 }
 
+/// One analyzed type: its layout/clauses plus the impls discovered for it.
 #[derive(Debug)]
 pub struct TyRecord {
     pub ty: Ty,
@@ -58,6 +69,7 @@ pub struct TyRecord {
     pub layout: Option<Layout>,
     pub clauses: GenericClauses,
     pub is_concrete: bool,
+    /// Keyed by the impl's `DefId`. Empty until `record_impl_method` is called (it isn't, yet).
     pub impls: IndexMap<DefId, ImplRecord>,
 }
 
@@ -128,6 +140,11 @@ impl AutozngContext {
         }
     }
 
+    /// Record a concrete associated fn as belonging to `ty`.
+    ///
+    /// **Not currently called from anywhere** (see module docs). `partial_args` is the
+    /// partially-applied generic args for methods on generic types; the `clauses` on the
+    /// inserted [`ImplRecord`] are the impl's clauses.
     pub fn record_impl_method(
         &self,
         ty: Ty,

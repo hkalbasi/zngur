@@ -1,3 +1,15 @@
+//! The two crate-walking visitors plus the `rustc_public` visit trait they share.
+//!
+//! - [`HirVisitor`] walks the HIR to find `const`/`ty`/`let` items (things the
+//!   `rustc_public` API exposes poorly).
+//! - [`CrateAnalysisVisitor`](crate::analyze) (defined in `analyze.rs`) walks the local
+//!   crate's ADTs, traits and trait impls via [`RustcPublicVisitor`].
+//!
+//! Trait handling is **stubbed**: the `TraitDef`/`ImplDef` `super_visit` impls below are
+//! no-ops, and `CrateAnalysisVisitor` has no `visit_trait`/`visit_impl`, so traits and
+//! impls are currently not analyzed. The large commented block in the `AdtDef` impl is an
+//! earlier sketch of the intended field/method/well-known-trait emission.
+
 use rustc_middle::ty::TyCtxt;
 
 use std::ops::ControlFlow;
@@ -474,12 +486,14 @@ impl RustcPublicVisitable for rustc_public::ty::AdtDef {
 }
 
 impl RustcPublicVisitable for rustc_public::ty::TraitDef {
+    // TODO: stubbed — trait decls are visited but produce nothing.
     fn super_visit<V: RustcPublicVisitor>(&self, _visitor: &mut V) -> ControlFlow<V::Break> {
         ControlFlow::Continue(())
     }
 }
 
 impl RustcPublicVisitable for rustc_public::ty::ImplDef {
+    // TODO: stubbed — trait impls are visited but produce nothing.
     fn super_visit<V: RustcPublicVisitor>(&self, _visitor: &mut V) -> ControlFlow<V::Break> {
         ControlFlow::Continue(())
     }

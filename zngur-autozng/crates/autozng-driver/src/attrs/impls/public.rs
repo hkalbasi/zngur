@@ -1,4 +1,9 @@
-///! implementations for rustc_public types
+//! `EmitTarget`/`RenameTarget`/`PolicyTarget` implementations for `rustc_public` types.
+//!
+//! Only ADTs do real work (`EmitTarget::emit` records the type). `TraitDef` and `AssocItem`
+//! `emit` are **stubs returning `false`**, which is why trait-related and method/field
+//! emission never reach the context yet.
+
 use rustc_public::CrateDef;
 
 use crate::{
@@ -45,6 +50,8 @@ impl RenameTarget for rustc_public::ty::AdtDef {
 
 impl_attr_target!(rustc_public::ty::AdtDef, EmitTarget, RenameTarget);
 
+// TODO: trait emission is unimplemented; always returns `false` (even for `emit`-tagged
+// public traits, which per spec should be emitted).
 impl EmitTarget for rustc_public::ty::TraitDef {
     fn emit(&self, _action: EmitAction, _ctx: &AutozngContext) -> bool {
         false
@@ -57,6 +64,8 @@ impl EmitTarget for rustc_public::ty::TraitDef {
 
 impl_attr_target!(rustc_public::ty::TraitDef, EmitTarget);
 
+// TODO: associated-item emission is unimplemented; always returns `false`, so no methods
+// or fields are ever recorded.
 impl EmitTarget for rustc_public::ty::AssocItem {
     fn emit(&self, _action: EmitAction, _ctx: &AutozngContext) -> bool {
         false

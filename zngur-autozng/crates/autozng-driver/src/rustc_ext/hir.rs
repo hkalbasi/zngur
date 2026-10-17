@@ -22,6 +22,12 @@ impl IntoMetadataKey for HirConstItem {
     }
 }
 
+/// Per-`let` binding discovered inside a `const` block (used for `emit_items`).
+///
+/// **Pitfall:** its metadata/attr key resolves to `hir_id.owner`, i.e. the enclosing item
+/// (the `const`), not the `let` statement itself (see `metadata::IntoMetadataKey` impl and
+/// `attrs/attrs_for.rs`). As a result, tool attributes placed on a `let` binding are not
+/// currently collected/distinguished.
 #[derive(Debug, Clone)]
 pub struct HirLetBindStmt {
     pub parent: rustc_hir::OwnerId,
@@ -85,6 +91,11 @@ impl HirConstItem {
         }).unwrap_or_default()
     }
 
+    /// The types directly enumerated inside a `const` tagged `emit_items`.
+    ///
+    /// **Narrow:** only recognizes an array or slice whose element type is a tuple, e.g.
+    /// `const _: [(A, B); N] = ...`. Other shapes (a bare tuple, `Option<(A, B)>`, a `let`
+    /// binding in the const body, ...) are not handled — see `body_let_bind_stmts`.
     pub fn inner_emit_types(&self) -> Vec<rustc_public::ty::Ty> {
         use rustc_public::ty::{RigidTy, TyKind};
         match self.ty.kind() {

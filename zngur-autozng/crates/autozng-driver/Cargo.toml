@@ -14,7 +14,7 @@ name = "autozng-driver"
 path = "bin/autozng-driver.rs"
 
 [dependencies]
-zngur-def = { workspace = true }
+zngur-def = { workspace = true, features = ["printing"] }
 indexmap = { workspace = true }
 itertools = { workspace = true }
 thiserror = { workspace = true }

@@ -18,10 +18,10 @@ keywords = ["zngur", "zng"]
 [workspace.dependencies]
 zngur-def = { version = " 0.11.0", path = "../zngur-def" }
 indexmap = "2.13.0"
-itertools = "0.11"
+itertools = "0.15"
 thiserror = "2.0.19"
 bitflags = "2.13.1"
-convert_case = "0.11.0"
+convert_case = "0.12.0"
 semver = "1.0.28"
 rustc-hash = "2.1.3"
 scoped-tls = "1.0.1"

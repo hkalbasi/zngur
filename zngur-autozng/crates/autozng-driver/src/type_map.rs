@@ -1,3 +1,14 @@
+//! Bridge from `rustc_public` types to `zngur_def` IR types.
+//!
+//! [`map_rustc_public_ty_to_zngur`] recursively converts a `Ty` into a
+//! [`zngur_def::RustType`], returning a human-readable `Err` for every unsupported shape
+//! (arrays, fn pointers, closures, const generics, opaque params, ...).
+//!
+//! It is **not called yet**: it will be used by the render step (`render.rs`) to build the
+//! `ZngurSpec`. Callers are expected to follow the project policy for unsupported types:
+//! warn at the offending span and skip only that item, preserving the rest of the output.
+//! (`visit.rs` contains commented-out call sites that sketched exactly this.)
+
 use rustc_middle::ty::TyCtxt;
 use rustc_public::{
     CrateDef,
