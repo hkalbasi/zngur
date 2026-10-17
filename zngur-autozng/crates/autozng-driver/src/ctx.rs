@@ -134,16 +134,56 @@ pub struct ExportedTraitRecord {
     pub clauses: GenericClauses,
     /// The trait's associated functions (methods), in declaration order.
     pub fns: IndexSet<TraitFnRecord>,
-    /// Whether `#[autozng::emit_on_implementers]` was set on the trait.
-    ///
-    /// TODO: the attribute is not parsed onto a trait yet and the behavior is not implemented;
-    /// the field is recorded for that work (see `render`/`visit`).
-    pub emit_on_implementers: bool,
     /// The concrete `Self: Trait<Args>` reference when the trait was selected as a *concrete*
     /// instantiation by `#[autozng::emit_items(emit_traits = true)]` naming e.g.
     /// `&dyn GenericTrait<u32>`. `None` for a declaration selected by `#[autozng::emit]`, which
     /// renders with its own type parameters as `.zng` type variables.
     pub concrete: Option<TraitRef>,
+}
+
+/// A trait (or a trait impl) tagged `#[autozng::emit_on_implementers]`.
+///
+/// The trait's functions are emitted on every type that implements the trait and satisfies
+/// `clauses`, without the type having to enumerate them in an `emit_items` const. The record is
+/// produced by [`AutozngContext::record_emit_for_trait`] (a trait declaration) or
+/// [`AutozngContext::record_emit_for_impl`] (an impl block), and consumed while rendering a type
+/// (see `render::build_emit_for_methods`).
+#[derive(Debug)]
+pub struct EmitForRecord {
+    /// The trait whose functions should be emitted on implementers.
+    pub trait_def: TraitDef,
+    /// The impl block the attribute was attached to, if any (`None` for a trait declaration).
+    /// Used to resolve the concrete `Self: Trait<..>` reference and the impl's clauses.
+    pub impl_def: Option<ImplDef>,
+    /// The clauses a candidate type must satisfy: the trait's own clauses (declaration case) or
+    /// the impl block's clauses (impl case).
+    pub clauses: GenericClauses,
+    /// The span responsible for this record (the declaration / impl block that was tagged).
+    pub span: Span,
+    /// The trait's associated functions, with their identity generic arguments (`Self` first).
+    pub fns: IndexSet<TraitFnRecord>,
+}
+
+/// The trait's associated functions as [`TraitFnRecord`]s with their identity generic arguments.
+///
+/// Shared by the `emit_on_implementers` trait-declaration and impl-block records: both record the
+/// trait *declaration*'s functions (the impl supplies the clauses, not a different signature).
+fn trait_fn_records(trait_def: TraitDef, span: Span) -> IndexSet<TraitFnRecord> {
+    trait_def
+        .associated_items()
+        .into_iter()
+        .filter_map(|assoc_item| {
+            let (fn_def, generics) = assoc_item.opt_fn_def()?;
+            Some(TraitFnRecord {
+                def: fn_def,
+                trait_def,
+                trait_ref: None,
+                generics,
+                clauses: fn_def.clauses_of(),
+                span,
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -205,6 +245,9 @@ struct AutozngContextData {
     funcs: RefCell<IndexSet<FnRecord>>,
     /// Trait declarations selected for emission, in discovery order.
     traits: RefCell<Vec<ExportedTraitRecord>>,
+    /// Traits / trait impls tagged `#[autozng::emit_on_implementers]`, in discovery order. Their
+    /// functions are emitted on every implementing type (see [`EmitForRecord`]).
+    emit_for: RefCell<Vec<EmitForRecord>>,
 }
 
 impl AutozngContextData {
@@ -274,6 +317,14 @@ impl AutozngContext {
     /// dropped before calling any method that records more items.
     pub fn trait_records(&self) -> std::cell::Ref<'_, Vec<ExportedTraitRecord>> {
         self.data.traits.borrow()
+    }
+
+    /// The `#[autozng::emit_on_implementers]` records (discovery order).
+    ///
+    /// While rendering a type, each record is checked against the type; when it applies, its
+    /// functions are emitted on that type (see `render::build_emit_for_methods`).
+    pub fn emit_for_records(&self) -> std::cell::Ref<'_, Vec<EmitForRecord>> {
+        self.data.emit_for.borrow()
     }
 
     /// The export name recorded for `key` (`#[autozng::rename]`), if any, along with the span of
@@ -473,8 +524,59 @@ impl AutozngContext {
             source_span: span_of_def(def.def_id()),
             clauses: def.clauses_of(),
             fns,
-            emit_on_implementers: false,
             concrete: Some(trait_ref),
+        });
+    }
+
+    /// Record a `#[autozng::emit_on_implementers]` trait declaration.
+    ///
+    /// The trait's own clauses are remembered; while rendering a type, the trait is checked
+    /// against it and its functions are emitted when it applies (see [`EmitForRecord`]).
+    /// Recording is idempotent per trait declaration.
+    pub fn record_emit_for_trait(&self, trait_def: TraitDef, span: Span) {
+        if self
+            .data
+            .emit_for
+            .borrow()
+            .iter()
+            .any(|record| record.trait_def == trait_def && record.impl_def.is_none())
+        {
+            return;
+        }
+        let fns = trait_fn_records(trait_def, span);
+        self.data.emit_for.borrow_mut().push(EmitForRecord {
+            trait_def,
+            impl_def: None,
+            clauses: trait_def.clauses_of(),
+            span,
+            fns,
+        });
+    }
+
+    /// Record a `#[autozng::emit_on_implementers]` trait impl block.
+    ///
+    /// The impl block's clauses are remembered (the trait's *declaration* functions are stored,
+    /// since the impl only supplies the clauses and a matching `Self` type). While rendering a
+    /// type, the impl is matched against it and, when it applies, the trait's functions are
+    /// emitted on that type. Recording is idempotent per impl block.
+    pub fn record_emit_for_impl(&self, impl_def: ImplDef, trait_ref: TraitRef, span: Span) {
+        if self
+            .data
+            .emit_for
+            .borrow()
+            .iter()
+            .any(|record| record.impl_def.map(|def| def.def_id()) == Some(impl_def.def_id()))
+        {
+            return;
+        }
+        let trait_def = trait_ref.def_id;
+        let fns = trait_fn_records(trait_def, span);
+        self.data.emit_for.borrow_mut().push(EmitForRecord {
+            trait_def,
+            impl_def: Some(impl_def),
+            clauses: impl_def.clauses_of(),
+            span,
+            fns,
         });
     }
 
@@ -496,8 +598,6 @@ impl AutozngContext {
             source_span: span_of_def(def.def_id()),
             clauses: def.clauses_of(),
             fns: IndexSet::default(),
-            // TODO: detect `#[autozng::emit_on_implementers]` once its behavior lands.
-            emit_on_implementers: false,
             concrete: None,
         });
     }

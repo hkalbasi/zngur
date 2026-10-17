@@ -21,7 +21,8 @@ use crate::{
     },
     ctx::AutozngContext,
     driver::with_ctxt,
-    rustc_ext::{FnDefExt, RustcPublicTyExt, VisibilityExt},
+    error::warn_private_item_skipped,
+    rustc_ext::{FnDefExt, RustcPublicTyExt, Visibility, VisibilityExt},
 };
 
 impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
@@ -37,11 +38,14 @@ impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
             // itself is not a usable `.zng` type, so it is not recorded as one.
             if emit_traits && let Some(trait_ref) = ty.concrete_trait_ref() {
                 // A trait is only exportable when it is `pub`/`pub(crate)`, mirroring
-                // `#[autozng::emit]` (a private trait is skipped; the error is not implemented).
+                // `#[autozng::emit]`. A private trait is skipped, but not silently: the
+                // `emit_items` item is warned about.
                 let vis = trait_ref.def_id.visibility();
                 if EmitAction::Emit.emit_for_visibility(vis, crate::config::DefaultEmitPolicy::None)
                 {
                     ctx.record_concrete_trait(trait_ref, span);
+                } else {
+                    warn_private_item_skipped(span);
                 }
                 continue;
             }
@@ -67,7 +71,7 @@ impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
 impl_attr_target!(crate::rustc_ext::HirConstItem, EmitItemsTarget);
 
 impl EmitTarget for crate::rustc_ext::HirLetBindStmt {
-    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+    fn emit(&self, action: EmitAction, _span: Span, ctx: &AutozngContext) -> bool {
         if !action.emit_visibility_na() {
             return false;
         }
@@ -96,6 +100,13 @@ impl EmitTarget for crate::rustc_ext::HirLetBindStmt {
         } else if let Some((self_ty, impl_def)) = fn_def.impl_of() {
             ctx.record_impl_method(self_ty, impl_def, fn_def, partial_args.clone(), span);
         } else if let Some(tref) = tref {
+            // A method of a private trait is not exportable (the trait's path would not be
+            // visible to the generated interface), so it is skipped — but not silently: the
+            // `let` binding that named it is warned about.
+            if matches!(tref.def_id.visibility(), Visibility::PrivateAPI) {
+                warn_private_item_skipped(span);
+                return false;
+            }
             ctx.record_trait_type_fn(fn_def, tref, generics, span);
         } else {
             ctx.record_fn(fn_def, partial_args, span);
@@ -159,7 +170,7 @@ impl_attr_target!(crate::rustc_ext::HirLetBindStmt, EmitTarget, RenameTarget);
 
 // TODO: `ty` alias emission is unimplemented; always returns `false`.
 impl EmitTarget for crate::rustc_ext::HirTyAlias {
-    fn emit(&self, _action: EmitAction, _ctx: &AutozngContext) -> bool {
+    fn emit(&self, _action: EmitAction, _span: Span, _ctx: &AutozngContext) -> bool {
         false
     }
     fn name(&self) -> String {

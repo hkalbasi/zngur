@@ -14,7 +14,7 @@ use crate::{
     attrs::{
         AttrCollectionExt, AutozngAttrsExt,
         attributes::{
-            emit::{EmitAction, EmitTarget},
+            emit::{EmitAction, EmitOnImplTarget, EmitTarget},
             policy::PolicyTarget,
             rename::RenameTarget,
         },
@@ -22,8 +22,8 @@ use crate::{
     },
     ctx::AutozngContext,
     driver::with_ctxt,
-    error::span_of_def,
-    rustc_ext::{FieldDefExt, RustcPublicTyExt, VisibilityExt},
+    error::{span_of_def, warn_private_item_skipped},
+    rustc_ext::{FieldDefExt, ImplDefExt, RustcPublicTyExt, VisibilityExt},
 };
 
 /// The simple (last path segment) name of a definition, used both for child `emit(name)`
@@ -37,9 +37,9 @@ impl PolicyTarget for rustc_public::Crate {}
 impl_attr_target!(rustc_public::Crate, PolicyTarget);
 
 impl EmitTarget for rustc_public::ty::AdtDef {
-    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+    fn emit(&self, action: EmitAction, span: Span, ctx: &AutozngContext) -> bool {
         let vis = self.visibility();
-        if !action.emit_for_visibility(vis, ctx.config().default_emit_policy) {
+        if !action.emit_for_visibility_or_warn(vis, ctx.config().default_emit_policy, span) {
             return false;
         }
         ctx.record_adt(self, self.emit_span());
@@ -71,14 +71,14 @@ impl_attr_target!(rustc_public::ty::AdtDef, EmitTarget, RenameTarget);
 
 /// A free (non-associated) function in the crate, emitted as a `fn` entry in the `.zng` spec.
 impl EmitTarget for rustc_public::ty::FnDef {
-    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+    fn emit(&self, action: EmitAction, span: Span, ctx: &AutozngContext) -> bool {
         // Associated functions are recorded through their impl block (`ImplDef`); only free
         // functions are recorded here.
         if self.associated_item().is_some() {
             return false;
         }
         let vis = self.visibility();
-        if !action.emit_for_visibility(vis, ctx.config().default_emit_policy) {
+        if !action.emit_for_visibility_or_warn(vis, ctx.config().default_emit_policy, span) {
             return false;
         }
         ctx.record_fn(*self, None, self.emit_span());
@@ -109,9 +109,16 @@ impl_attr_target!(rustc_public::ty::FnDef, EmitTarget, RenameTarget);
 /// An ADT inherent impl block: emitting it walks its associated functions, each of which is
 /// recorded (or skipped) according to its own attributes.
 impl EmitTarget for rustc_public::ty::ImplDef {
-    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+    fn emit(&self, action: EmitAction, _span: Span, ctx: &AutozngContext) -> bool {
         // An impl block has no visibility of its own; `skip` suppresses all its methods.
         if !action.emit_visibility_na() {
+            return false;
+        }
+        // Only an *inherent* impl records its methods directly (it is reached from `visit_adt`).
+        // A trait impl's methods are reached through the trait (`emit` / `emit_items` /
+        // `emit_on_implementers`); `visit_impl` walks trait impls only for the latter, so its
+        // methods must not be recorded here as if they were inherent.
+        if self.opt_trait_ref().is_some() {
             return false;
         }
         for assoc_item in self.associated_items() {
@@ -137,19 +144,30 @@ impl EmitTarget for rustc_public::ty::ImplDef {
     }
 }
 
-impl_attr_target!(rustc_public::ty::ImplDef, EmitTarget);
+/// `#[autozng::emit_on_implementers]` on a trait impl block: record the impl's clauses so the
+/// trait's functions are emitted on every type the impl applies to.
+impl EmitOnImplTarget for rustc_public::ty::ImplDef {
+    fn emit_on_impl(&self, _span: Span, ctx: &AutozngContext) {
+        let Some(trait_ref) = self.opt_trait_ref() else {
+            return;
+        };
+        ctx.record_emit_for_impl(*self, trait_ref, self.emit_span());
+    }
+}
+
+impl_attr_target!(rustc_public::ty::ImplDef, EmitTarget, EmitOnImplTarget);
 
 /// A method (associated function) of an impl block, recorded onto the type's [`TyRecord`].
 ///
 /// [`TyRecord`]: crate::ctx::TyRecord
 impl EmitTarget for rustc_public::ty::AssocItem {
-    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+    fn emit(&self, action: EmitAction, span: Span, ctx: &AutozngContext) -> bool {
         // Only methods are handled; associated constants/types are not emitted yet.
         if !matches!(self.kind, AssocKind::Fn { .. }) {
             return false;
         }
         let vis = self.visibility();
-        if !action.emit_for_visibility(vis, ctx.config().default_emit_policy) {
+        if !action.emit_for_visibility_or_warn(vis, ctx.config().default_emit_policy, span) {
             return false;
         }
         with_ctxt(|driver| {
@@ -197,9 +215,9 @@ impl_attr_target!(rustc_public::ty::AssocItem, EmitTarget, RenameTarget);
 ///
 /// [`TyRecord`]: crate::ctx::TyRecord
 impl EmitTarget for rustc_public::ty::FieldDef {
-    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+    fn emit(&self, action: EmitAction, span: Span, ctx: &AutozngContext) -> bool {
         let vis = self.visibility();
-        if !action.emit_for_visibility(vis, ctx.config().default_emit_policy) {
+        if !action.emit_for_visibility_or_warn(vis, ctx.config().default_emit_policy, span) {
             return false;
         }
         let Some(adt) = self.adt_def() else {
@@ -237,9 +255,9 @@ impl_attr_target!(rustc_public::ty::FieldDef, EmitTarget, RenameTarget);
 /// `CrateAnalysisVisitor::visit_trait`); the functions themselves are recorded with
 /// [`AutozngContext::record_trait_method`].
 impl EmitTarget for rustc_public::ty::TraitDef {
-    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+    fn emit(&self, action: EmitAction, span: Span, ctx: &AutozngContext) -> bool {
         let vis = self.visibility();
-        if !action.emit_for_visibility(vis, crate::config::DefaultEmitPolicy::None) {
+        if !action.emit_for_visibility_or_warn(vis, crate::config::DefaultEmitPolicy::None, span) {
             return false;
         }
         ctx.record_trait(*self, self.emit_span());
@@ -261,4 +279,20 @@ impl EmitTarget for rustc_public::ty::TraitDef {
     }
 }
 
-impl_attr_target!(rustc_public::ty::TraitDef, EmitTarget);
+/// `#[autozng::emit_on_implementers]` on a `pub`/`pub(crate)` trait declaration: record the trait
+/// so its functions are emitted on every implementing type.
+///
+/// A private trait is not exportable (its path would not be visible to the generated interface),
+/// so it is skipped — but not silently: the attribute is warned about.
+impl EmitOnImplTarget for rustc_public::ty::TraitDef {
+    fn emit_on_impl(&self, span: Span, ctx: &AutozngContext) {
+        let vis = self.visibility();
+        if !EmitAction::Emit.emit_for_visibility(vis, crate::config::DefaultEmitPolicy::None) {
+            warn_private_item_skipped(span);
+            return;
+        }
+        ctx.record_emit_for_trait(*self, self.emit_span());
+    }
+}
+
+impl_attr_target!(rustc_public::ty::TraitDef, EmitTarget, EmitOnImplTarget);

@@ -258,6 +258,7 @@ where
         format!("yarrrr {}", self.trait_fn())
     }
 }
+
 #[cfg(autozng)]
 #[autozng::emit_items]
 const _: Option<(

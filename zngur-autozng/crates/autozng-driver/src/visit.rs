@@ -81,6 +81,10 @@ pub trait RustcPublicVisitor: Sized {
         trait_def.super_visit(self)
     }
 
+    fn visit_impl(&mut self, impl_def: &rustc_public::ty::ImplDef) -> ControlFlow<Self::Break> {
+        impl_def.super_visit(self)
+    }
+
     fn visit_static(&mut self, st: &StaticDef) -> ControlFlow<Self::Break> {
         st.super_visit(self)
     }
@@ -499,7 +503,11 @@ impl RustcPublicVisitable for rustc_public::ty::TraitDef {
 }
 
 impl RustcPublicVisitable for rustc_public::ty::ImplDef {
-    // TODO: stubbed — trait impls are visited but produce nothing.
+    fn visit<V: RustcPublicVisitor>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_impl(self)
+    }
+    /// The descent into an impl's associated items is done by `visit_impl` / `visit_adt`; the
+    /// default traversal is a no-op.
     fn super_visit<V: RustcPublicVisitor>(&self, _visitor: &mut V) -> ControlFlow<V::Break> {
         ControlFlow::Continue(())
     }

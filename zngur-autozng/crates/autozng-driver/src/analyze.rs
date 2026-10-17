@@ -44,7 +44,6 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
     type Break = AnalyzeReport;
 
     fn visit_crate(&mut self, krate: &rustc_public::Crate) -> ControlFlow<Self::Break> {
-        eprintln!("VISIT CRATE {}", krate.name);
         let attrs = krate.autozng_attrs();
         attrs.visit(krate, self.ctx);
 
@@ -108,6 +107,17 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
         }
 
         trait_def.super_visit(self)
+    }
+
+    fn visit_impl(
+        &mut self,
+        impl_def: &rustc_public::ty::ImplDef,
+    ) -> std::ops::ControlFlow<Self::Break> {
+        // Trait impls are visited here (inherent impls are walked from `visit_adt`); only an
+        // `#[autozng::emit_on_implementers]` impl does anything (see `EmitOnImplTarget`).
+        let attrs = impl_def.autozng_attrs();
+        attrs.visit(impl_def, self.ctx);
+        impl_def.super_visit(self)
     }
 
     fn visit_fn(&mut self, fn_def: &rustc_public::ty::FnDef) -> std::ops::ControlFlow<Self::Break> {

@@ -19,6 +19,7 @@ use std::path::Path;
 
 use indexmap::IndexMap;
 use rustc_errors::DiagMessage;
+use rustc_hash::FxHashSet;
 use rustc_public::abi::FieldsShape;
 use rustc_public::ty::{
     AdtDef, AssocKind, FieldDef, FnDef, GenericArgKind, GenericArgs, GenericParamDefKind, RigidTy,
@@ -40,7 +41,8 @@ use crate::driver::with_ctxt;
 use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_rustc_public_span};
 use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
 use crate::rustc_ext::{
-    AdtDefExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKnownTrait, WellKownTraitsExt,
+    AdtDefExt, EmitForExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKnownTrait,
+    WellKownTraitsExt,
 };
 use crate::type_map::{MapTypeError, map_rustc_public_ty_to_zngur};
 
@@ -376,13 +378,18 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
         None => (Vec::new(), Vec::new()),
     };
 
+    let mut methods = build_methods(ctx, record);
+    // `#[autozng::emit_on_implementers]` traits/impls contribute their functions to every type
+    // they apply to, as if the functions had been enumerated in an `emit_items` const.
+    methods.extend(build_emit_for_methods(ctx, record));
+
     Some(ZngurType {
         ty: rust_ty,
         layout: record.layout.and_then(layout_policy),
         wellknown_traits: wellknown_traits(record.ty),
         // Only ADTs can be `#[non_exhaustive]`; every other type is exhaustive.
         exhaustive: adt.is_none_or(|adt| adt.is_exhaustive()),
-        methods: build_methods(ctx, record),
+        methods,
         // TODO(render): constructors and the well-known-trait data payloads
         // (pretty_print/debug_print/drop_in_place) still need analysis work.
         constructor: None,
@@ -875,6 +882,54 @@ fn build_trait_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurMeth
         .iter()
         .filter_map(|trait_fn| build_trait_method(ctx, record, trait_fn))
         .collect()
+}
+
+/// Build the functions contributed to `record` by `#[autozng::emit_on_implementers]` records.
+///
+/// Each recorded trait / impl is resolved against the type: when the type implements the trait
+/// and the record's clauses hold, the trait's functions are emitted on the type (with the trait
+/// as their `use_path`), exactly as if they had been named in an `emit_items` const.
+///
+/// A function already emitted on the type (because it was explicitly enumerated in an
+/// `emit_items` const, or contributed by another record) is skipped, so an explicit enumeration
+/// and `emit_on_implementers` do not produce duplicate entries.
+fn build_emit_for_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurMethodDetails> {
+    let mut seen: FxHashSet<FnDef> = record
+        .trait_fns
+        .iter()
+        .map(|trait_fn| trait_fn.def)
+        .collect();
+    let mut methods = Vec::new();
+
+    for emit_for in ctx.emit_for_records().iter() {
+        let Some(trait_ref) =
+            record
+                .ty
+                .resolve_emit_for(emit_for.trait_def, emit_for.impl_def, &emit_for.clauses)
+        else {
+            continue;
+        };
+        for trait_fn in emit_for.fns.iter() {
+            if !seen.insert(trait_fn.def) {
+                continue;
+            }
+            // Instantiate the trait function with the concrete `Self: Trait<..>` arguments, so
+            // `Self` becomes the type and any trait arguments are concrete.
+            let instantiated = TraitFnRecord {
+                def: trait_fn.def,
+                trait_def: emit_for.trait_def,
+                trait_ref: Some(trait_ref.clone()),
+                generics: trait_ref.args().clone(),
+                clauses: trait_fn.clauses.clone(),
+                span: emit_for.span,
+            };
+            if let Some(method) = build_trait_method(ctx, record, &instantiated) {
+                methods.push(method);
+            }
+        }
+    }
+
+    methods
 }
 
 /// Build one trait method into a [`ZngurMethodDetails`], or `None` if it cannot be represented

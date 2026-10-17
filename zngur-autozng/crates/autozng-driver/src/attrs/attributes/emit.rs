@@ -68,6 +68,24 @@ impl EmitAction {
         }
     }
 
+    /// [`EmitAction::emit_for_visibility`], warning at `span` when the item was explicitly tagged
+    /// `emit` yet is not visible from the crate root (so the generated code cannot see it).
+    ///
+    /// An item that is only *implicitly* selected (the `Default` action) is skipped silently —
+    /// only an explicit `emit` on an unreachable item is surprising enough to warn about.
+    pub fn emit_for_visibility_or_warn(
+        &self,
+        vis: Visibility,
+        policy: DefaultEmitPolicy,
+        span: Span,
+    ) -> bool {
+        if matches!(self, EmitAction::Emit) && vis == Visibility::PrivateAPI {
+            crate::error::warn_private_item_skipped(span);
+            return false;
+        }
+        self.emit_for_visibility(vis, policy)
+    }
+
     /// should emit for this action when visibility is not applicable for the item (statements etc.)
     pub fn emit_visibility_na(&self) -> bool {
         match self {
@@ -96,9 +114,13 @@ impl core::ops::BitOrAssign for EmitAction {
 pub trait EmitTarget {
     /// Process the item with the given emit action.
     ///
-    /// Recording uses [`EmitTarget::span`] (the item's own span) so render diagnostics can
-    /// point back at the item that was selected.
-    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool;
+    /// Process the item with the given emit action.
+    ///
+    /// `span` is the span of the `#[autozng::emit]` / `#[autozng::skip]` attribute that selected
+    /// the item (or the item's own span for an implicit emit), used to report an unreachable item
+    /// that was explicitly tagged `emit`. Recording uses [`EmitTarget::emit_span`] (the item's own
+    /// span) so render diagnostics can point back at the item that was selected.
+    fn emit(&self, action: EmitAction, span: Span, ctx: &AutozngContext) -> bool;
 
     fn name(&self) -> String;
 
@@ -174,6 +196,10 @@ impl Attr for Emit {
     }
 
     fn merge(&mut self, other: Self) {
+        // An explicit `#[autozng::emit(...)]` / `#[autozng::skip(...)]` is merged into the
+        // implicit emit; its own span (the attribute) is more precise than the implicit emit's
+        // (the item's own span), so it is the one reported.
+        self.span = other.span;
         // downcast then unwrap or clone the inner EmitAttr to merge the path list
         for (item, action) in other.items {
             let entry = self.items.entry(item).or_insert(action);
@@ -183,7 +209,7 @@ impl Attr for Emit {
 
     fn visit(&self, item: &dyn EmitTarget, ctx: &AutozngContext) {
         if let Some(action) = self.items.get(&EmitItem::This) {
-            item.emit(*action, ctx);
+            item.emit(*action, self.span, ctx);
         }
     }
 }
@@ -278,12 +304,22 @@ const EMIT_ON_IMPL_PATH: AttrPath =
 
 /// Target for `#[autozng::emit_on_implementers]`: traits and trait impl blocks.
 ///
-/// Semantics: emit the eligible (public or `emit`-tagged) methods of this trait / impl for
-/// every implementing type found. Parsing works; [`EmitOnImpl::visit`] is still a stub.
-pub trait EmitOnImplTarget {}
+/// Semantics: record the trait's functions so they are emitted on every type that implements the
+/// trait (and satisfies the trait's / impl's clauses), without the type having to enumerate them
+/// in an `emit_items` const.
+pub trait EmitOnImplTarget {
+    /// Record this trait / impl into `AutozngContextData::emit_for`.
+    ///
+    /// `span` is the span of the `#[autozng::emit_on_implementers]` attribute, used to report a
+    /// private trait that has to be skipped.
+    fn emit_on_impl(&self, span: Span, ctx: &AutozngContext);
+}
 
 #[derive(Debug, Copy, Clone)]
-pub struct EmitOnImpl;
+pub struct EmitOnImpl {
+    /// Span of the `#[autozng::emit_on_implementers]` attribute.
+    span: Span,
+}
 
 impl Attr for EmitOnImpl {
     type Target = dyn EmitOnImplTarget;
@@ -292,19 +328,21 @@ impl Attr for EmitOnImpl {
         EMIT_ON_IMPL_PATH
     }
 
-    fn visit(&self, _item: &Self::Target, _ctx: &AutozngContext) {
-        // TODO: emit the trait's / impl's eligible methods onto each implementing type.
+    fn visit(&self, item: &Self::Target, ctx: &AutozngContext) {
+        item.emit_on_impl(self.span, ctx);
     }
 }
 
 #[derive(Debug, Default)]
 pub struct EmitOnImplParser {
     valid: bool,
+    span: Option<Span>,
 }
 
 impl EmitOnImplParser {
     fn parse(&mut self, cx: &mut AcceptContext, args: &ArgParser) {
         self.valid = cx.expect_no_args(args).is_some();
+        self.span = Some(cx.span);
     }
 }
 
@@ -317,6 +355,9 @@ impl AttrtibuteParser for EmitOnImplParser {
     )];
 
     fn finalize(self, _target: &dyn EmitOnImplTarget) -> Option<Self::Attr> {
-        self.valid.then_some(EmitOnImpl)
+        if !self.valid {
+            return None;
+        }
+        Some(EmitOnImpl { span: self.span? })
     }
 }
