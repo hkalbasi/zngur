@@ -30,17 +30,120 @@ mod inner {
 }
 
 #[test]
-fn public_items_inside_private_modules_are_emitted() {
+fn public_items_inside_private_modules_are_treated_as_private() {
     let out = run(r#"
 mod inner {
     pub struct Inner;
 }
 "#);
+    // A `pub` item whose module chain is not `pub` is not reachable from the crate root's public
+    // interface: it is treated as private and not emitted by default.
+    out.assert_zng(expect![[r#""#]]);
+}
+
+#[test]
+fn emit_on_a_private_item_warns() {
+    let out = run(r#"
+mod inner {
+    #[cfg_attr(autozng, autozng::emit)]
+    pub struct Inner;
+}
+"#);
+    // `pub struct Inner` behind a private module is not visible from the crate root, so the
+    // explicit `emit` cannot expose it; the attribute is warned about rather than skipped
+    // silently.
+    out.assert_zng(expect![[r#""#]]);
+    out.assert_diagnostics(expect![[r#"
+        warning: autozng: private traits and functions can be exposed in a zngur interface
+         --> src/lib.rs:5:25
+          |
+        5 |     #[cfg_attr(autozng, autozng::emit)]
+          |                         ^^^^^^^^^^^^^
+    "#]]);
+}
+
+#[test]
+fn a_method_using_a_private_type_is_skipped() {
+    let out = run(r#"
+pub struct Public {
+    pub value: u32,
+}
+
+mod inner {
+    pub struct Hidden;
+}
+
+impl Public {
+    pub fn take_hidden(&self, h: inner::Hidden) {}
+    pub fn give(&self) -> u32 {
+        0
+    }
+}
+"#);
+    // `inner::Hidden` is not visible from the crate root, so `take_hidden` cannot be emitted: the
+    // method is skipped with a warning while `give` is emitted normally.
     out.assert_zng(expect![[r#"
-        type crate::inner::Inner {
-            #layout(size = 0, align = 1);
+        type crate::Public {
+            #layout(size = 4, align = 4);
+
+            field value (offset = 0, type = u32);
+
+            fn give(&self) -> u32;
         }
     "#]]);
+    out.assert_diagnostics(expect![[r#"
+        warning: autozng: skipping method `take_hidden`: type `scratch_crate::inner::Hidden` is not visible from the crate root
+          --> src/lib.rs:13:5
+           |
+        13 |     pub fn take_hidden(&self, h: inner::Hidden) {}
+           |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    "#]]);
+}
+
+#[test]
+fn a_field_using_a_private_type_is_skipped() {
+    let out = run(r#"
+mod inner {
+    pub struct Hidden;
+}
+
+pub struct Public {
+    pub value: u32,
+    pub hidden: inner::Hidden,
+}
+"#);
+    // The field whose type is not visible from the crate root is skipped with a warning; the
+    // public field is kept.
+    out.assert_zng(expect![[r#"
+        type crate::Public {
+            #layout(size = 4, align = 4);
+
+            field value (offset = 0, type = u32);
+        }
+    "#]]);
+    out.assert_diagnostics(expect![[r#"
+        warning: autozng: skipping field `hidden` of `scratch_crate::Public`: type `scratch_crate::inner::Hidden` is not visible from the crate root
+          --> src/lib.rs:10:5
+           |
+        10 |     pub hidden: inner::Hidden,
+           |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+    "#]]);
+}
+
+#[test]
+fn items_not_reachable_from_the_crate_root_are_private() {
+    let out = run(r#"
+mod top {
+    pub mod inner {
+        struct NotVisibleToRoot;
+        pub struct PubInInner;
+    }
+    struct NotVisibleToRoot2;
+}
+"#);
+    // `top` is private, so nothing below it is visible from the crate root: a private item in a
+    // nested module and a `pub` item behind a non-`pub` module alike are treated as private.
+    out.assert_zng(expect![[r#""#]]);
 }
 
 #[test]

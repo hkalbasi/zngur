@@ -22,6 +22,8 @@ use rustc_public::{
 };
 use zngur_def::{PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType};
 
+use crate::rustc_ext::{Visibility, VisibilityExt};
+
 const PATH_SEP: &str = "::";
 
 /// Why [`map_rustc_public_ty_to_zngur`] could not map a type.
@@ -95,6 +97,17 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                 },
             ))),
             RigidTy::Adt(adt_def, generics_args) => {
+                // A local type that is not visible from the crate root has no usable `.zng`
+                // path: an emitted interface must not mention it.
+                if adt_def.krate().is_local
+                    && matches!(adt_def.visibility(), Visibility::PrivateAPI)
+                {
+                    return Err(MapTypeError::unsupported(format!(
+                        "type `{}` is not visible from the crate root",
+                        adt_def.name()
+                    )));
+                }
+
                 let adt_generics = adt_def.generics_of();
 
                 if adt_generics.parent_count > 0 {

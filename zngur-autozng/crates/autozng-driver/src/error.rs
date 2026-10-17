@@ -139,6 +139,19 @@ pub fn emit_warning_for_span(span: Span, msg: impl Into<DiagMessage>) {
     })
 }
 
+/// Warn that a private item (or one of its functions) was selected for the interface.
+///
+/// `#[autozng::emit]`, `#[autozng::emit_on_implementers]` and `#[autozng::emit_items]` may name an
+/// item that is not visible from the crate root (see [`crate::rustc_ext::Visibility`]). Such an
+/// item is skipped (its path would not be visible to the generated interface), but not silently:
+/// `span` is the attribute / item that selected it.
+pub fn warn_private_item_skipped(span: Span) {
+    emit_warning_for_span(
+        span,
+        "autozng: private traits and functions can be exposed in a zngur interface",
+    );
+}
+
 #[allow(dead_code)] // counterpart to `with_struct_warning_for_rustc_public_span`
 pub fn with_struct_error_for_rustc_public_span<R>(
     span: RustcPublicSpan,
