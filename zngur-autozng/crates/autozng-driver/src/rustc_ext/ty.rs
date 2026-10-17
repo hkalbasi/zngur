@@ -17,6 +17,14 @@ pub trait RustcPublicTyExt {
     /// the type contains no generic params or unevaluated constants
     fn is_concrete(&self) -> bool;
     fn adt_def(&self) -> Option<rustc_public::ty::AdtDef>;
+
+    /// If the type is a trait object (`dyn Trait<ConcreteArgs>`, optionally behind a reference or
+    /// raw pointer), the object's primary trait reference.
+    ///
+    /// Used by `#[autozng::emit_items(emit_traits = true)]` to name a concrete trait instantiation
+    /// as an export target: a generic trait is only representable in `.zng` once all of its type
+    /// parameters are known, so the user enumerates e.g. `&dyn GenericTrait<u32>`.
+    fn concrete_trait_ref(&self) -> Option<rustc_public::ty::TraitRef>;
 }
 
 impl RustcPublicTyExt for rustc_public::ty::Ty {
@@ -90,6 +98,22 @@ impl RustcPublicTyExt for rustc_public::ty::Ty {
             Some(adt_def)
         } else {
             None
+        }
+    }
+
+    fn concrete_trait_ref(&self) -> Option<rustc_public::ty::TraitRef> {
+        use rustc_public::ty::{Binder, ExistentialPredicate};
+
+        let base = self.base_ty();
+        let TyKind::RigidTy(RigidTy::Dynamic(predicates, _)) = base.kind() else {
+            return None;
+        };
+        match predicates.into_iter().next() {
+            Some(Binder {
+                value: ExistentialPredicate::Trait(trait_ref),
+                ..
+            }) => Some(trait_ref.with_self_ty(base)),
+            _ => None,
         }
     }
 }

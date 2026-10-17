@@ -31,7 +31,7 @@ use crate::metadata::{
     ExportName, IntoMetadataKey, MetadataKey, MetadataMap, MetadataRecordRefMut,
 };
 use crate::rustc_ext::{
-    ClausesOfExt, GenericClauses, RustcInternalEx, RustcPublicTyExt, stable_trait,
+    ClausesOfExt, GenericClauses, GetAssocInfoExt, RustcInternalEx, RustcPublicTyExt, stable_trait,
 };
 
 #[derive(Debug)]
@@ -139,6 +139,11 @@ pub struct ExportedTraitRecord {
     /// TODO: the attribute is not parsed onto a trait yet and the behavior is not implemented;
     /// the field is recorded for that work (see `render`/`visit`).
     pub emit_on_implementers: bool,
+    /// The concrete `Self: Trait<Args>` reference when the trait was selected as a *concrete*
+    /// instantiation by `#[autozng::emit_items(emit_traits = true)]` naming e.g.
+    /// `&dyn GenericTrait<u32>`. `None` for a declaration selected by `#[autozng::emit]`, which
+    /// renders with its own type parameters as `.zng` type variables.
+    pub concrete: Option<TraitRef>,
 }
 
 #[derive(Debug)]
@@ -406,6 +411,73 @@ impl AutozngContext {
             .any(|record| record.decl.def_id == *trait_def)
     }
 
+    /// Whether the trait was recorded as a *concrete* instantiation (rather than a declaration).
+    ///
+    /// A concrete record already carries its associated functions (with the concrete arguments),
+    /// so the declaration walk in `CrateAnalysisVisitor::visit_trait` must not record them again
+    /// with their identity signatures.
+    pub fn is_trait_concretely_recorded(&self, trait_def: &TraitDef) -> bool {
+        self.data
+            .traits
+            .borrow()
+            .iter()
+            .any(|record| record.decl.def_id == *trait_def && record.concrete.is_some())
+    }
+
+    /// Record a *concrete* trait instantiation (`dyn Trait<ConcreteArgs>`) selected by
+    /// `#[autozng::emit_items(emit_traits = true)]`.
+    ///
+    /// Unlike [`AutozngContext::record_trait`] (a declaration, whose methods keep their identity
+    /// signature), the concrete `Self: Trait<...>` reference is remembered and each associated
+    /// function is recorded with the trait reference's concrete arguments, so `render` can emit
+    /// the trait as e.g. `crate::GenericTrait<u32>` with instantiated method signatures. Recording
+    /// is idempotent per trait.
+    pub fn record_concrete_trait(&self, trait_ref: TraitRef, span: Span) {
+        let def = trait_ref.def_id;
+        // Deduplicate per instantiation: the same trait may be enumerated with different concrete
+        // arguments (e.g. `GenericTrait<u32>` and `GenericTrait<u8>`), each becoming its own entry.
+        if self
+            .data
+            .traits
+            .borrow()
+            .iter()
+            .any(|record| record.concrete.as_ref() == Some(&trait_ref))
+        {
+            return;
+        }
+
+        let decl = with_ctxt(|ctx| stable_trait(def.internal(ctx.tcx)));
+
+        // A concrete instantiation records every associated function with the trait reference's
+        // concrete arguments (`Self` first), so the method signatures can be instantiated. The
+        // functions are built directly rather than through `record_trait_method` so they land on
+        // *this* instantiation's record and not on the first record for the same trait.
+        let generics = trait_ref.args().clone();
+        let mut fns = IndexSet::default();
+        for assoc_item in def.associated_items() {
+            if let Some((fn_def, _identity_generics)) = assoc_item.opt_fn_def() {
+                fns.insert(TraitFnRecord {
+                    def: fn_def,
+                    trait_def: def,
+                    trait_ref: Some(trait_ref.clone()),
+                    generics: generics.clone(),
+                    clauses: fn_def.clauses_of(),
+                    span,
+                });
+            }
+        }
+
+        self.data.traits.borrow_mut().push(ExportedTraitRecord {
+            decl,
+            span,
+            source_span: span_of_def(def.def_id()),
+            clauses: def.clauses_of(),
+            fns,
+            emit_on_implementers: false,
+            concrete: Some(trait_ref),
+        });
+    }
+
     /// Record a trait declaration as selected for emission (see [`ExportedTraitRecord`]).
     ///
     /// `span` is the span of the `#[autozng::emit]` that selected the trait; the declaration's
@@ -426,6 +498,7 @@ impl AutozngContext {
             fns: IndexSet::default(),
             // TODO: detect `#[autozng::emit_on_implementers]` once its behavior lands.
             emit_on_implementers: false,
+            concrete: None,
         });
     }
 

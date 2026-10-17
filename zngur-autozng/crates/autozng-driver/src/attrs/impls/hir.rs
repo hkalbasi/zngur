@@ -21,16 +21,30 @@ use crate::{
     },
     ctx::AutozngContext,
     driver::with_ctxt,
-    rustc_ext::FnDefExt,
+    rustc_ext::{FnDefExt, RustcPublicTyExt, VisibilityExt},
 };
 
 impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
-    fn emit(&self, ctx: &AutozngContext) {
+    fn emit(&self, emit_traits: bool, ctx: &AutozngContext) {
         // The recorded span is the `const` item itself (the item tagged by `emit_items`): the
         // enumerated types have no source span of their own.
         let span = self.span();
         // record any relevant inner type in the `const`
         for ty in self.inner_emit_types() {
+            // With `emit_traits = true` an enumerated `dyn Trait<ConcreteArgs>` names a concrete
+            // trait instantiation to export rather than a type: a generic trait is only
+            // representable in `.zng` once all of its type parameters are known. The `dyn` object
+            // itself is not a usable `.zng` type, so it is not recorded as one.
+            if emit_traits && let Some(trait_ref) = ty.concrete_trait_ref() {
+                // A trait is only exportable when it is `pub`/`pub(crate)`, mirroring
+                // `#[autozng::emit]` (a private trait is skipped; the error is not implemented).
+                let vis = trait_ref.def_id.visibility();
+                if EmitAction::Emit.emit_for_visibility(vis, crate::config::DefaultEmitPolicy::None)
+                {
+                    ctx.record_concrete_trait(trait_ref, span);
+                }
+                continue;
+            }
             ctx.record_ty(&ty, span);
         }
 

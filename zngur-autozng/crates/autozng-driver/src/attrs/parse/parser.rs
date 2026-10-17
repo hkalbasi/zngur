@@ -1,6 +1,8 @@
 use std::{marker::PhantomData, rc::Rc};
 
-use rustc_ast::{MetaItem, MetaItemInner, MetaItemKind, MetaItemLit, tokenstream::TokenStream};
+use rustc_ast::{
+    LitKind, MetaItem, MetaItemInner, MetaItemKind, MetaItemLit, tokenstream::TokenStream,
+};
 use rustc_attr_parsing::AttributeTemplate;
 use rustc_session::parse::ParseSess;
 use rustc_span::{ErrorGuaranteed, Span, Symbol};
@@ -339,6 +341,29 @@ impl ExpectStringLiteral for MetaItemLit {
         };
 
         Some(respan(self.span, value))
+    }
+}
+
+pub trait ExpectBoolLiteral {
+    fn expect_bool_literal<'f, 'sess>(
+        &self,
+        cx: &mut AcceptContext<'f, 'sess>,
+    ) -> Option<Spanned<bool>>;
+}
+
+impl ExpectBoolLiteral for NameValueParser {
+    fn expect_bool_literal<'f, 'sess>(
+        &self,
+        cx: &mut AcceptContext<'f, 'sess>,
+    ) -> Option<Spanned<bool>> {
+        let lit = self.value_as_lit();
+        match lit.kind {
+            LitKind::Bool(value) => Some(respan(lit.span, value)),
+            _ => {
+                cx.expected_bool_literal(lit.span);
+                None
+            }
+        }
     }
 }
 

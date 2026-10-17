@@ -93,10 +93,11 @@ pub fn build_spec(ctx: &AutozngContext) -> ZngurSpec {
 /// Returns `None` when the trait cannot be represented (e.g. a const generic parameter).
 fn build_trait(record: &ExportedTraitRecord) -> Option<(RustTrait, ZngurTrait)> {
     let key = rust_trait_for(record)?;
+    let concrete = record.concrete.is_some();
     let methods = record
         .fns
         .iter()
-        .filter_map(build_trait_decl_method)
+        .filter_map(|trait_fn| build_trait_decl_method(trait_fn, concrete))
         .collect();
     let trt = ZngurTrait {
         tr: key.clone(),
@@ -110,17 +111,47 @@ fn build_trait(record: &ExportedTraitRecord) -> Option<(RustTrait, ZngurTrait)> 
 ///
 /// Most traits are just their full path ([`RustTrait::Normal`]). The `Fn`/`FnMut`/`FnOnce`
 /// family is collapsed to [`RustTrait::Fn`] (its call signature) so codegen can build a
-/// `std::function`-style bridge instead of a vtable.
+/// `std::function`-style bridge instead of a vtable. A concrete instantiation
+/// (`emit_items(emit_traits = true)`) carries its concrete type arguments instead of type
+/// variables.
 fn rust_trait_for(record: &ExportedTraitRecord) -> Option<RustTrait> {
     let path = trait_path(record.decl.def_id);
     match fn_trait_name(&path) {
         Some(name) => Some(fn_trait_rust_trait(record, name)),
-        None => Some(RustTrait::Normal(RustPathAndGenerics {
-            path,
-            generics: trait_decl_generics(&record.decl)?,
-            named_generics: Vec::new(),
-        })),
+        None => {
+            let generics = match &record.concrete {
+                Some(trait_ref) => concrete_trait_generics(trait_ref)?,
+                None => trait_decl_generics(&record.decl)?,
+            };
+            Some(RustTrait::Normal(RustPathAndGenerics {
+                path,
+                generics,
+                named_generics: Vec::new(),
+            }))
+        }
     }
+}
+
+/// The concrete type arguments of a trait instantiation (`dyn GenericTrait<u32>` -> `[u32]`),
+/// taken from the trait reference's arguments with the leading `Self` argument dropped.
+///
+/// Returns `None` when an argument cannot be mapped to a concrete `.zng` type (the whole trait is
+/// then dropped by [`rust_trait_for`]).
+fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec<RustType>> {
+    let mut generics = Vec::new();
+    for arg in trait_ref.args().0.iter().skip(1) {
+        match arg {
+            // Lifetimes are dropped (rustc re-infers them); a const argument has no `.zng`
+            // spelling, so the whole trait is dropped.
+            GenericArgKind::Lifetime(_) => {}
+            GenericArgKind::Type(ty) => {
+                generics
+                    .push(with_ctxt(|driver| map_rustc_public_ty_to_zngur(*ty, driver.tcx)).ok()?);
+            }
+            GenericArgKind::Const(_) => return None,
+        }
+    }
+    Some(generics)
 }
 
 /// The trait's full path as `.zng` path segments: the local crate is spelled `crate`, external
@@ -212,22 +243,40 @@ fn fn_trait_rust_trait(record: &ExportedTraitRecord, name: String) -> RustTrait 
 
 /// Build one of a trait declaration's associated functions into a `.zng` [`ZngurMethod`].
 ///
-/// The declaration has no concrete `Self`, so the method's identity signature is used: `Self`
-/// (and any other generic parameter) appears as itself, and a method whose signature mentions one
-/// is warn-and-skipped (the `.zng` IR has no type parameters).
-fn build_trait_decl_method(trait_fn: &TraitFnRecord) -> Option<ZngurMethod> {
+/// For a declaration (`concrete == false`) there is no concrete `Self`, so the method's identity
+/// signature is used: `Self` (and any other generic parameter) appears as itself, and a method
+/// whose signature mentions one is warn-and-skipped (the `.zng` IR has no type parameters). For a
+/// concrete instantiation the method is instantiated with the trait reference's concrete
+/// arguments, so `T` becomes the concrete type.
+fn build_trait_decl_method(trait_fn: &TraitFnRecord, concrete: bool) -> Option<ZngurMethod> {
     let def = trait_fn.def;
     let assoc_item = def.associated_item()?;
     let AssocKind::Fn { name, has_self } = &assoc_item.kind else {
         return None;
     };
     let name = name.to_string();
-    // The receiver is the trait's own `Self` parameter: the first identity argument.
+    // The receiver is the trait's own `Self` parameter: the first argument.
     let self_ty = match trait_fn.generics.0.first() {
         Some(GenericArgKind::Type(ty)) => *ty,
         _ => return None,
     };
-    let signature = def.fn_sig().skip_binder();
+
+    // A concrete instantiation is only valid when the recorded arguments cover every generic
+    // parameter of the method (the trait's own and the method's); otherwise its identity
+    // signature is used and the method is skipped as an unsupported type parameter.
+    let args = concrete
+        .then_some(&trait_fn.generics)
+        .filter(|args| args.0.len() == fn_generics_len(&def));
+    if let Some(args) = args
+        && !trait_fn.clauses.clone().instantiate(args).all_hold()
+    {
+        return None;
+    }
+
+    let signature = match args {
+        Some(args) => def.instantiate_sig(args),
+        None => def.fn_sig().skip_binder(),
+    };
     let (receiver, inputs, output) = method_signature_parts(
         def,
         &name,

@@ -16,8 +16,8 @@ use rustc_public::{
     CrateDef,
     mir::Mutability,
     ty::{
-        Binder, BoundTyKind, BoundVariableKind, ExistentialPredicate, FloatTy, GenericArgKind,
-        IntTy, RigidTy, TermKind, Ty, TyKind, UintTy,
+        Binder, ExistentialPredicate, FloatTy, GenericArgKind, IntTy, RigidTy, TermKind, Ty,
+        TyKind, UintTy,
     },
 };
 use zngur_def::{PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType};
@@ -170,7 +170,7 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                 let mut pred_iter = predicates.into_iter();
                 if let Some(Binder {
                     value: ExistentialPredicate::Trait(trait_ref),
-                    bound_vars,
+                    ..
                 }) = pred_iter.next()
                 {
                     let mut named_generics: Vec<(String, RustType)> = Vec::new();
@@ -183,29 +183,20 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                         .split(PATH_SEP)
                         .map(Into::into)
                         .collect();
-                    let generics = bound_vars
-                        .into_iter()
-                        .filter_map(|bound_var| match bound_var {
-                            BoundVariableKind::Ty(bound_ty) => match bound_ty {
-                                BoundTyKind::Anon => Some(Err(MapTypeError::unsupported(
-                                    "can not use anonymous bounds in a zngur interface",
-                                ))),
-                                BoundTyKind::Param(param_def, _) => {
-                                    let rustc_def_id = rustc_public::rustc_internal::internal(
-                                        tcx,
-                                        param_def.def_id(),
-                                    );
-                                    let rustc_ty = tcx.type_of(rustc_def_id);
-                                    let bound_ty_def = rustc_public::rustc_internal::stable(
-                                        rustc_ty.skip_binder(),
-                                    );
-                                    Some(map_rustc_public_ty_to_zngur(bound_ty_def, tcx))
-                                }
-                            },
-                            BoundVariableKind::Region(_) => None, // filter out lifetime bounds
-                            BoundVariableKind::Const => Some(Err(MapTypeError::unsupported(
+                    // The trait's own generic arguments. `ExistentialTraitRef::generic_args`
+                    // excludes `Self` (the object type), which is not a `.zng` argument.
+                    let generics = trait_ref
+                        .generic_args
+                        .0
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            GenericArgKind::Lifetime(_) => None,
+                            GenericArgKind::Const(_) => Some(Err(MapTypeError::unsupported(
                                 "const generics are not supported in zngur interfaces",
                             ))),
+                            GenericArgKind::Type(ty) => {
+                                Some(map_rustc_public_ty_to_zngur(*ty, tcx))
+                            }
                         })
                         .collect::<Result<Vec<_>, _>>()?;
 
@@ -239,23 +230,32 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                     }
 
                     let rust_trait = match path.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-                        ["std", "ops", name @ ("Fn" | "FnMut" | "FnOnce")] => RustTrait::Fn {
-                            name: name.to_string(),
-                            inputs: generics,
-                            output: named_generics
-                                .into_iter()
-                                .find_map(|(name, out_ty)| {
-                                    if name == "Output" {
-                                        Some(Box::new(out_ty))
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or_else(|| {
-                                    tcx.dcx()
-                                        .bug("Fn() style trait without associated Output type");
-                                }),
-                        },
+                        ["std", "ops", name @ ("Fn" | "FnMut" | "FnOnce")] => {
+                            // The `Fn*` traits take their arguments as a single tuple parameter
+                            // (`Args`), so `dyn Fn(u32, u8)` has one generic argument `(u32, u8)`.
+                            // The `.zng` `Fn` representation lists the tuple's elements directly.
+                            let inputs = match generics.as_slice() {
+                                [RustType::Tuple(args)] => args.clone(),
+                                _ => generics.clone(),
+                            };
+                            RustTrait::Fn {
+                                name: name.to_string(),
+                                inputs,
+                                output: named_generics
+                                    .into_iter()
+                                    .find_map(|(name, out_ty)| {
+                                        if name == "Output" {
+                                            Some(Box::new(out_ty))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_else(|| {
+                                        tcx.dcx()
+                                            .bug("Fn() style trait without associated Output type");
+                                    }),
+                            }
+                        }
                         _ => RustTrait::Normal(RustPathAndGenerics {
                             path,
                             generics,
