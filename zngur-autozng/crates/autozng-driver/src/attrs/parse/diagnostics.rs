@@ -14,6 +14,7 @@ pub enum AttributeParseErrorReason<'a> {
     ExpectedStringLiteral {
         byte_string: Option<Span>,
     },
+    ExpectedBoolLiteral,
     ExpectedIntegerLiteral,
     ExpectedIntegerLiteralInRange {
         lower_bound: isize,
@@ -173,6 +174,9 @@ impl<'a, G: rustc_errors::EmissionGuarantee> Diagnostic<'a, G> for AttributePars
                         return diag;
                     }
                     diag.span_label(self.span, "expected a string literal here");
+                }
+                ExpectedBoolLiteral => {
+                    diag.span_label(self.span, "expected a boolean literal here");
                 }
                 ExpectedIntegerLiteral => {
                     diag.span_label(self.span, "expected an integer literal here");

@@ -375,3 +375,77 @@ impl S {
         }
     "#]]);
 }
+
+#[test]
+fn emit_traits_emits_a_concrete_generic_trait() {
+    let out = run(r#"
+pub trait GenericTrait<T> {
+    fn get_value(&self) -> T;
+    fn count(&self) -> u32;
+}
+
+#[cfg(autozng)]
+#[autozng::emit_items(emit_traits = true)]
+const _: [&dyn GenericTrait<u32>; 0] = [];
+"#);
+    // A generic trait is not representable in `.zng` on its own, but a concrete instantiation is:
+    // `emit_traits = true` makes the enumerated `dyn GenericTrait<u32>` name the trait as an
+    // export target. The method signatures are instantiated with the concrete argument.
+    out.assert_zng(expect![[r#"
+        trait crate::GenericTrait<u32> {
+            fn get_value(&self) -> u32;
+            fn count(&self) -> u32;
+        }
+    "#]]);
+    out.assert_diagnostics(expect![[r#""#]]);
+}
+
+#[test]
+fn emit_traits_records_each_concrete_instantiation_separately() {
+    let out = run(r#"
+pub trait GenericTrait<T> {
+    fn get_value(&self) -> T;
+}
+
+#[cfg(autozng)]
+#[autozng::emit_items(emit_traits = true)]
+const _: [&dyn GenericTrait<u32>; 0] = [];
+
+#[cfg(autozng)]
+#[autozng::emit_items(emit_traits = true)]
+const _: [&dyn GenericTrait<u8>; 0] = [];
+"#);
+    // Each concrete instantiation becomes its own `trait` block, with its own instantiated
+    // methods; the deduplication key includes the concrete arguments.
+    out.assert_zng(expect![[r#"
+        trait crate::GenericTrait<u32> {
+            fn get_value(&self) -> u32;
+        }
+
+        trait crate::GenericTrait<u8> {
+            fn get_value(&self) -> u8;
+        }
+    "#]]);
+    out.assert_diagnostics(expect![[r#""#]]);
+}
+
+#[test]
+fn emit_traits_defaults_to_false() {
+    let out = run(r#"
+pub struct Container<T> {
+    pub value: T,
+}
+
+#[cfg(autozng)]
+#[autozng::emit_items(emit_traits = false)]
+const _: [Container<u8>; 0] = [];
+"#);
+    // With `emit_traits = false` (the default) the enumerated items are ordinary types, not trait
+    // export targets.
+    out.assert_zng(expect![[r#"
+        type crate::Container<u8> {
+            #layout(size = 1, align = 1);
+        }
+    "#]]);
+    out.assert_diagnostics(expect![[r#""#]]);
+}

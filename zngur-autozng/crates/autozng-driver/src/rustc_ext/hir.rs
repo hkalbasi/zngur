@@ -148,7 +148,9 @@ impl HirConstItem {
     /// The const's type is a list of the types to emit, written as a tuple and optionally
     /// wrapped in a reference / array / slice: `(A, B)`, `[(A, B); 0]` and `&[(A, B)]` all
     /// enumerate `A` and `B`. References (and raw pointers) are peeled with `base_ty`, then
-    /// the array/slice element (or the tuple itself) supplies the elements.
+    /// the array/slice element (or the tuple itself) supplies the elements. An array/slice whose
+    /// element is not a tuple enumerates that element itself (`[T; 0]` -> `T`), so a single item
+    /// need not be wrapped in a one-element tuple.
     ///
     /// Other shapes (a bare non-tuple type, `Option<(A, B)>`, ...) are not recognized; the
     /// `let`-binding form is handled separately by [`Self::body_let_bind_stmts`].
@@ -157,12 +159,16 @@ impl HirConstItem {
 
         // Peel `&`/`*const`/`*mut` wrappers, e.g. `&[(A, B)]` -> `[(A, B)]`.
         let ty = self.ty.base_ty();
-        let tuple = match ty.kind() {
-            TyKind::RigidTy(RigidTy::Array(element, _) | RigidTy::Slice(element)) => element,
-            TyKind::RigidTy(RigidTy::Tuple(_)) => ty,
-            _ => return Vec::new(),
-        };
-        match tuple.kind() {
+        match ty.kind() {
+            // An array/slice enumerates its element: the tuple's fields when it is a tuple, the
+            // element itself otherwise.
+            TyKind::RigidTy(RigidTy::Array(element, _) | RigidTy::Slice(element)) => {
+                match element.kind() {
+                    TyKind::RigidTy(RigidTy::Tuple(tys)) => tys,
+                    _ => vec![element],
+                }
+            }
+            // A bare tuple enumerates its fields.
             TyKind::RigidTy(RigidTy::Tuple(tys)) => tys,
             _ => Vec::new(),
         }

@@ -12,8 +12,8 @@ use crate::{
         parse::{
             diagnostics::{AttributeParseError, AttributeParseErrorReason},
             parser::{
-                ArgParser, ExpectNameValue, ExpectStringLiteral, MetaItemListParser,
-                MetaItemOrLitParser,
+                ArgParser, ExpectBoolLiteral, ExpectNameValue, ExpectStringLiteral,
+                MetaItemListParser, MetaItemOrLitParser,
             },
         },
     },
@@ -98,6 +98,13 @@ impl<'f, 'sess> AcceptContext<'f, 'sess> {
         Arg: ExpectStringLiteral,
     {
         arg.expect_string_literal(self)
+    }
+
+    pub fn expect_bool_literal<Arg>(&mut self, arg: &Arg) -> Option<Spanned<bool>>
+    where
+        Arg: ExpectBoolLiteral,
+    {
+        arg.expect_bool_literal(self)
     }
 }
 
@@ -254,6 +261,10 @@ impl<'f, 'sess> AcceptContext<'f, 'sess> {
 
     pub(crate) fn expected_integer_literal(&mut self, span: Span) -> ErrorGuaranteed {
         self.emit_parse_error(span, AttributeParseErrorReason::ExpectedIntegerLiteral)
+    }
+
+    pub fn expected_bool_literal(&mut self, span: Span) -> ErrorGuaranteed {
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedBoolLiteral)
     }
 }
 

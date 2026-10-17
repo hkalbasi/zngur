@@ -111,3 +111,37 @@ impl Args {
         }
     "#]]);
 }
+
+#[test]
+fn boxed_fn_traits_keep_their_input_parameters() {
+    let out = run(r#"
+pub struct Callbacks;
+
+impl Callbacks {
+    pub fn set_once(&mut self, cb: Box<dyn FnOnce(u32) -> bool>) {
+        let _ = cb;
+    }
+
+    pub fn set_mut(&mut self, cb: Box<dyn FnMut(&str) -> bool>) {
+        let _ = cb;
+    }
+
+    pub fn set_ref(&mut self, cb: Box<dyn Fn()>) {
+        let _ = cb;
+    }
+}
+"#);
+    // A `dyn Fn*(..)` object is rendered as the `.zng` `Fn` form. The `Fn*` traits take their
+    // arguments as a single `Args` tuple, so it must be unwrapped: otherwise the input parameters
+    // are silently dropped (`FnOnce(u32) -> bool` would print as `FnOnce() -> bool`).
+    out.assert_zng(expect![[r#"
+        type crate::Callbacks {
+            #layout(size = 0, align = 1);
+
+            fn set_once(&mut self, ::std::boxed::Box<dyn FnOnce(u32) -> bool>);
+            fn set_mut(&mut self, ::std::boxed::Box<dyn FnMut(&str) -> bool>);
+            fn set_ref(&mut self, ::std::boxed::Box<dyn Fn()>);
+        }
+    "#]]);
+    out.assert_diagnostics(expect![[r#""#]]);
+}

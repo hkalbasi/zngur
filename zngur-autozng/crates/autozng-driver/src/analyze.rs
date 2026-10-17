@@ -88,8 +88,12 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
         // `None`); when it is, record every associated function. A trait's functions are at most
         // as visible as the trait itself, so there is nothing further to filter. Only descend
         // once the trait is recorded: recording a method implicitly records its trait, so
-        // walking a `skip`-ed trait's methods would leak it into the output.
-        if self.ctx.is_trait_recorded(trait_def) {
+        // walking a `skip`-ed trait's methods would leak it into the output. A trait recorded as a
+        // concrete instantiation (`emit_items(emit_traits = true)`) already has its functions
+        // recorded with concrete arguments, so it is not walked again here.
+        if self.ctx.is_trait_recorded(trait_def)
+            && !self.ctx.is_trait_concretely_recorded(trait_def)
+        {
             for assoc_item in trait_def.associated_items() {
                 if let Some((fn_def, generics)) = assoc_item.opt_fn_def() {
                     self.ctx.record_trait_method(

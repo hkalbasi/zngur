@@ -245,6 +245,7 @@ impl Example {
 }
 
 #[cfg_attr(autozng, autozng::emit_on_implementers)]
+#[cfg_attr(autozng, autozng::emit)]
 trait YarrExt {
     fn yarrrr(&self) -> String;
 }
@@ -276,6 +277,38 @@ const _: () = {
     let _ = Example::to_string;
     let _ = <Example as YarrExt>::yarrrr;
 };
+
+pub trait GenericTrait<T> {
+    fn get_value(&self) -> T;
+}
+
+#[cfg(autozng)]
+#[autozng::emit_items(emit_traits = true)]
+const _: [(&dyn GenericTrait<Vec<u32>>, &dyn GenericTrait<u64>); 0] = [];
+
+#[derive(Default)]
+#[allow(clippy::type_complexity)]
+pub struct TyWithCallbacks {
+    cb1: Option<Box<dyn FnOnce() -> bool>>,
+    cb2: Option<Box<dyn FnOnce(u32) -> bool>>,
+    cb3: Option<Box<dyn FnMut(&str) -> bool>>,
+    cb4: Option<Box<dyn Fn(&Self)>>,
+}
+
+impl TyWithCallbacks {
+    pub fn set_cb1(&mut self, cb: Box<dyn FnOnce() -> bool>) {
+        self.cb1 = Some(cb)
+    }
+    pub fn set_cb2(&mut self, cb: Box<dyn FnOnce(u32) -> bool>) {
+        self.cb2 = Some(cb)
+    }
+    pub fn set_cb3(&mut self, cb: Box<dyn FnMut(&str) -> bool>) {
+        self.cb3 = Some(cb)
+    }
+    pub fn set_cb4(&mut self, cb: Box<dyn Fn(&Self)>) {
+        self.cb4 = Some(cb)
+    }
+}
 
 /// main entry fn
 fn main() {
