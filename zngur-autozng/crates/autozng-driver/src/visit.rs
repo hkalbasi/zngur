@@ -3,12 +3,13 @@
 //! - [`HirVisitor`] walks the HIR to find `const`/`ty`/`let` items (things the
 //!   `rustc_public` API exposes poorly).
 //! - [`CrateAnalysisVisitor`](crate::analyze) (defined in `analyze.rs`) walks the local
-//!   crate's ADTs, traits and trait impls via [`RustcPublicVisitor`].
+//!   crate's ADTs, free functions and ADT inherent impl blocks via [`RustcPublicVisitor`].
 //!
 //! Trait handling is **stubbed**: the `TraitDef`/`ImplDef` `super_visit` impls below are
-//! no-ops, and `CrateAnalysisVisitor` has no `visit_trait`/`visit_impl`, so traits and
-//! impls are currently not analyzed. The large commented block in the `AdtDef` impl is an
-//! earlier sketch of the intended field/method/well-known-trait emission.
+//! no-ops, and `CrateAnalysisVisitor` has no `visit_trait`/`visit_impl`, so trait decls and
+//! trait impls are currently not analyzed. (ADT *inherent* impls are walked directly from
+//! `visit_adt`.) The large commented block in the `AdtDef` impl is an earlier sketch of the
+//! intended field/method/well-known-trait emission.
 
 use rustc_middle::ty::TyCtxt;
 

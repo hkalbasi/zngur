@@ -113,14 +113,12 @@ pub trait EmitTarget {
 
 #[derive(Debug, Clone)]
 pub struct Emit {
-    path: AttrPath,
     items: HashMap<EmitItem, EmitAction>,
 }
 
 impl Emit {
     fn new_implicit_emit(action: EmitAction) -> Self {
         Emit {
-            path: EMIT_PATH,
             items: HashMap::from([(EmitItem::This, action)]),
         }
     }
@@ -130,7 +128,10 @@ impl Attr for Emit {
     type Target = dyn EmitTarget;
 
     fn path(&self) -> AttrPath {
-        self.path.clone()
+        // `emit` and `skip` share a single canonical path so that `process_attrs` merges
+        // them (together with the implicit `Default` action) into one attribute. The actual
+        // action per item is carried in `items`, and `EmitAction`'s `|` decides which wins.
+        EMIT_PATH
     }
 
     fn for_child(&self, item: &dyn EmitTarget) -> Option<Self> {
@@ -140,7 +141,6 @@ impl Attr for Emit {
             .any(|(item, _)| matches!(item, EmitItem::Name(_)))
         {
             Some(Emit {
-                path: self.path.clone(),
                 items: self
                     .items
                     .iter()
@@ -176,7 +176,6 @@ impl Attr for Emit {
 
 #[derive(Debug, Clone, Default)]
 pub struct EmitParser {
-    path: Option<AttrPath>,
     items: Option<Vec<(EmitItem, EmitAction)>>,
 }
 
@@ -197,12 +196,10 @@ impl AttrtibuteParser for EmitParser {
 
     fn finalize(self, target: &dyn EmitTarget) -> Option<Self::Attr> {
         if let EmitParser {
-            path: Some(path),
             items: Some(items),
         } = self
         {
             return Some(Emit {
-                path,
                 items: items.into_iter().collect(),
             });
         }
@@ -231,7 +228,6 @@ impl EmitParser {
                 .emit();
             return;
         };
-        self.path = Some(ac.attr_path.clone());
         self.items = match args {
             ArgParser::NoArgs => Some(vec![(EmitItem::This, action)]),
             ArgParser::List(args) => {

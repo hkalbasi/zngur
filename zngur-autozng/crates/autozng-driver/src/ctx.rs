@@ -1,12 +1,13 @@
 //! The accumulation target for the analysis passes.
 //!
-//! [`AutozngContext`] collects one [`TyRecord`] per visited type (keyed by `Ty`) plus a
-//! [`MetadataMap`] of per-item tool attributes keyed by `MetadataKey`. Both passes in
-//! `analyze.rs` (the HIR pass and the `rustc_public` pass) write into the same context.
+//! [`AutozngContext`] collects one [`TyRecord`] per visited type (keyed by `Ty`), the set of
+//! free functions selected for emission, plus a [`MetadataMap`] of per-item tool attributes
+//! keyed by `MetadataKey`. Both passes in `analyze.rs` (the HIR pass and the
+//! `rustc_public` pass) write into the same context.
 //!
-//! Note: [`AutozngContext::record_impl_method`] is defined but currently **never called**,
-//! so every [`TyRecord::impls`] is empty and no methods/constructors reach the render step.
-//! Populating it is part of wiring up rendering.
+//! Methods reach a type through [`AutozngContext::record_impl_method`] (called while walking
+//! an ADT's inherent impl blocks in `analyze.rs`); free functions through
+//! [`AutozngContext::record_fn`].
 
 use indexmap::{IndexMap, IndexSet};
 
@@ -69,7 +70,7 @@ pub struct TyRecord {
     pub layout: Option<Layout>,
     pub clauses: GenericClauses,
     pub is_concrete: bool,
-    /// Keyed by the impl's `DefId`. Empty until `record_impl_method` is called (it isn't, yet).
+    /// Keyed by the impl's `DefId`; populated by [`AutozngContext::record_impl_method`].
     pub impls: IndexMap<DefId, ImplRecord>,
 }
 
@@ -77,6 +78,8 @@ pub struct TyRecord {
 struct AutozngContextData {
     tys: RefCell<FxHashMap<Ty, TyRecord>>,
     metadata: RefCell<MetadataMap>,
+    /// Free functions selected for emission, in discovery order.
+    funcs: RefCell<IndexSet<FnDef>>,
 }
 
 impl AutozngContextData {
@@ -132,6 +135,11 @@ impl AutozngContext {
         self.data.tys.borrow()
     }
 
+    /// The free functions recorded for emission (deduplicated, discovery order).
+    pub fn fn_records(&self) -> std::cell::Ref<'_, IndexSet<FnDef>> {
+        self.data.funcs.borrow()
+    }
+
     /// The export name recorded for `key` (`#[autozng::rename]`), if any.
     pub fn export_name_for<T: IntoMetadataKey + ?Sized>(&self, key: &T) -> Option<String> {
         self.data
@@ -165,10 +173,22 @@ impl AutozngContext {
         }
     }
 
+    /// Whether a type has already been recorded (i.e. selected for emission). Used to gate
+    /// per-type work (like walking impl blocks) so it never implicitly emits a type that the
+    /// `emit`/`skip` attributes left out.
+    pub fn is_ty_recorded(&self, ty: &Ty) -> bool {
+        self.data.have_ty(&ty.base_ty())
+    }
+
+    /// Record a free function for emission (as a `fn` entry in the `.zng` spec).
+    pub fn record_fn(&self, fn_def: FnDef) {
+        self.data.funcs.borrow_mut().insert(fn_def);
+    }
+
     /// Record a concrete associated fn as belonging to `ty`.
     ///
-    /// **Not currently called from anywhere** (see module docs). `partial_args` is the
-    /// partially-applied generic args for methods on generic types; the `clauses` on the
+    /// Called while walking an ADT's inherent impl blocks (`analyze.rs`). `partial_args` is
+    /// the partially-applied generic args for methods on generic types; the `clauses` on the
     /// inserted [`ImplRecord`] are the impl's clauses.
     pub fn record_impl_method(
         &self,

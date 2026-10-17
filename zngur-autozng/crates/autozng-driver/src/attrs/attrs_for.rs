@@ -56,6 +56,8 @@ impl<ID: HasAttrs> AttrsFor<ID> {
 impl_has_attrs! {
     rustc_public::Crate { WithAttrKey |&self| { self.id.attr_key() } },
     rustc_public::ty::AdtDef { UseCrateDef },
+    rustc_public::ty::FnDef { UseCrateDef },
+    rustc_public::ty::ImplDef { UseCrateDef },
     rustc_public::ty::TraitDef { UseCrateDef },
     rustc_public::ty::AssocItem {
        WithAttrKey |&self| { self.def_id.def_id().attr_key() },

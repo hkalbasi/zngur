@@ -18,12 +18,12 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use rustc_errors::DiagMessage;
-use rustc_public::ty::{AdtDef, AssocKind, RigidTy, Ty, TyKind};
+use rustc_public::ty::{AdtDef, AssocKind, FnDef, RigidTy, Ty, TyKind};
 use rustc_public::{CrateDef, DefId};
 use zngur_def::printing::IDLPrinter;
 use zngur_def::{
-    LayoutPolicy, RustType, ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver, ZngurSpec,
-    ZngurType, ZngurWellknownTrait,
+    LayoutPolicy, RustPathAndGenerics, RustType, ZngurFn, ZngurMethod, ZngurMethodDetails,
+    ZngurMethodReceiver, ZngurSpec, ZngurType, ZngurWellknownTrait,
 };
 
 use crate::ctx::{AutozngContext, FnRecord, TyRecord};
@@ -36,10 +36,10 @@ use crate::type_map::map_rustc_public_ty_to_zngur;
 ///
 /// Must be called inside the `after_analysis` callback (the context borrows the `TyCtxt`).
 ///
-/// Currently only type-level information is emitted: the type path, layout, well-known
-/// traits and non-exhaustiveness, plus any methods recorded in [`TyRecord::impls`]. Fields,
-/// variants, constructors and trait emission depend on analysis work that is not wired up
-/// yet.
+/// Emits one `type ... { .. }` block per recorded ADT (with its layout, well-known traits,
+/// non-exhaustiveness and recorded methods) plus one `fn` entry per recorded free function.
+/// Fields, variants, constructors and trait emission depend on analysis work that is not
+/// wired up yet.
 pub fn build_spec(ctx: &AutozngContext) -> ZngurSpec {
     let mut types: Vec<ZngurType> = ctx
         .ty_records()
@@ -50,8 +50,18 @@ pub fn build_spec(ctx: &AutozngContext) -> ZngurSpec {
     // `ty_records` is a hash map; sort for stable output.
     types.sort_by_cached_key(|ty| ty.ty.to_string());
 
+    let mut funcs: Vec<ZngurFn> = ctx
+        .fn_records()
+        .iter()
+        .filter_map(|fn_def| build_fn(ctx, fn_def))
+        .collect();
+
+    // `fn_records` preserves discovery order; sort for stable output.
+    funcs.sort_by_cached_key(|func| func.path.to_string());
+
     ZngurSpec {
         types,
+        funcs,
         ..ZngurSpec::default()
     }
 }
@@ -77,10 +87,10 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
         layout: record.layout.and_then(layout_policy),
         wellknown_traits: wellknown_traits(record.ty),
         exhaustive: adt.is_exhaustive(),
-        methods: build_methods(record),
+        methods: build_methods(ctx, record),
         // TODO(render): fields/variants/constructor and the well-known-trait data payloads
         // (pretty_print/debug_print/drop_in_place) require the analysis pass to record
-        // per-field/variant information and to call `record_impl_method`.
+        // per-field/variant information.
         constructor: None,
         variants: Vec::new(),
         fields: Vec::new(),
@@ -137,23 +147,28 @@ fn apply_export_name(ctx: &AutozngContext, adt: &AdtDef, rust_ty: RustType) -> R
     }
 }
 
-/// Build the methods recorded for a type (currently always empty; see
-/// [`AutozngContext::record_impl_method`]).
-fn build_methods(record: &TyRecord) -> Vec<ZngurMethodDetails> {
+/// Build the methods recorded for a type (from its inherent impl blocks).
+fn build_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurMethodDetails> {
     record
         .impls
         .values()
         .flat_map(|impl_record| impl_record.methods.iter())
-        .filter_map(|method| build_method(record, method))
+        .filter_map(|method| build_method(ctx, record, method))
         .collect()
 }
 
-fn build_method(record: &TyRecord, method: &FnRecord) -> Option<ZngurMethodDetails> {
+fn build_method(
+    ctx: &AutozngContext,
+    record: &TyRecord,
+    method: &FnRecord,
+) -> Option<ZngurMethodDetails> {
     let def = method.def;
     let assoc_item = def.associated_item()?;
     let AssocKind::Fn { name, has_self } = &assoc_item.kind else {
         return None;
     };
+    // `rename` only changes the method's own name; the receiver type path is unchanged.
+    let name = ctx.export_name_for(&assoc_item).unwrap_or_else(|| name.to_string());
 
     let signature = def.fn_sig().skip_binder();
     let self_ty = record.ty;
@@ -211,7 +226,7 @@ fn build_method(record: &TyRecord, method: &FnRecord) -> Option<ZngurMethodDetai
 
     Some(ZngurMethodDetails {
         data: ZngurMethod {
-            name: name.to_string(),
+            name,
             // TODO(render): generic methods (`partial_args`) are not handled yet.
             generics: Vec::new(),
             receiver,
@@ -222,6 +237,64 @@ fn build_method(record: &TyRecord, method: &FnRecord) -> Option<ZngurMethodDetai
         use_path: None,
         deref: None,
         cpp_name: None,
+    })
+}
+
+/// Build a free function into a [`ZngurFn`], or `None` if it cannot be represented (with a
+/// warning emitted).
+fn build_fn(ctx: &AutozngContext, fn_def: &FnDef) -> Option<ZngurFn> {
+    let signature = fn_def.fn_sig().skip_binder();
+
+    let inputs = with_ctxt(|driver| {
+        signature
+            .inputs()
+            .iter()
+            .map(|input| map_rustc_public_ty_to_zngur(*input, driver.tcx))
+            .collect::<Result<Vec<_>, _>>()
+    });
+    let inputs = match inputs {
+        Ok(inputs) => inputs,
+        Err(msg) => {
+            warn(
+                fn_def.def_id(),
+                format!("autozng: skipping fn `{}`: {msg}", fn_def.name()),
+            );
+            return None;
+        }
+    };
+
+    let output =
+        match with_ctxt(|driver| map_rustc_public_ty_to_zngur(signature.output(), driver.tcx)) {
+            Ok(output) => output,
+            Err(msg) => {
+                warn(
+                    fn_def.def_id(),
+                    format!("autozng: skipping fn `{}`: {msg}", fn_def.name()),
+                );
+                return None;
+            }
+        };
+
+    let mut path: Vec<String> = fn_def.name().split("::").map(Into::into).collect();
+    if fn_def.krate().is_local && !path.is_empty() {
+        // Local paths are marked with a leading `crate` segment (see `type_map`).
+        path[0] = "crate".to_string();
+    }
+    // `rename` only changes the function's own name (the last path segment).
+    if let Some(export_name) = ctx.export_name_for(fn_def)
+        && let Some(last) = path.last_mut()
+    {
+        *last = export_name;
+    }
+
+    Some(ZngurFn {
+        path: RustPathAndGenerics {
+            path,
+            generics: Vec::new(),
+            named_generics: Vec::new(),
+        },
+        inputs,
+        output,
     })
 }
 

@@ -65,6 +65,18 @@ impl IntoMetadataKey for rustc_public::ty::AdtDef {
         MetadataKey::from_public_def_id(self.def_id())
     }
 }
+impl IntoMetadataKey for rustc_public::ty::FnDef {
+    #[inline(always)]
+    fn to_metadata_key(&self) -> MetadataKey {
+        MetadataKey::from_public_def_id(self.def_id())
+    }
+}
+impl IntoMetadataKey for rustc_public::ty::ImplDef {
+    #[inline(always)]
+    fn to_metadata_key(&self) -> MetadataKey {
+        MetadataKey::from_public_def_id(self.def_id())
+    }
+}
 
 impl IntoMetadataKey for rustc_public::Crate {
     fn to_metadata_key(&self) -> MetadataKey {
