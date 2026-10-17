@@ -120,8 +120,7 @@ impl Hash for TraitFnRecord {
 ///
 /// A `TraitRef` (i.e. `Self: Trait<...>`) is a function-level notion and lives on each
 /// [`TraitFnRecord`], not here.
-// The recorded spans/clauses are consumed by the upcoming trait rendering; only `decl` and `fns`
-// are read during analysis today.
+// `decl`/`fns` drive rendering; the recorded spans/clauses are not consumed yet.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct ExportedTraitRecord {
@@ -262,6 +261,14 @@ impl AutozngContext {
     /// The free functions recorded for emission (deduplicated, discovery order).
     pub fn fn_records(&self) -> std::cell::Ref<'_, IndexSet<FnRecord>> {
         self.data.funcs.borrow()
+    }
+
+    /// The trait declarations recorded for emission (discovery order).
+    ///
+    /// Used by the render step to build the `ZngurSpec::traits` mapping. The borrow must be
+    /// dropped before calling any method that records more items.
+    pub fn trait_records(&self) -> std::cell::Ref<'_, Vec<ExportedTraitRecord>> {
+        self.data.traits.borrow()
     }
 
     /// The export name recorded for `key` (`#[autozng::rename]`), if any, along with the span of
