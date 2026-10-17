@@ -156,3 +156,35 @@ impl S {
            |         ^^^^^^^^^^^^^^^^^^^^^^^^^
     "#]]);
 }
+
+#[test]
+fn a_rename_on_a_free_fn_let_binding_is_ignored() {
+    let out = run(r#"
+fn twice<T: Clone>(value: T) -> (T, T) {
+    (value.clone(), value)
+}
+
+#[cfg(autozng)]
+#[autozng::emit_items]
+const _: () = {
+    #[autozng::rename("Twice")]
+    let _ = twice::<u8>;
+};
+"#);
+    // The `rename` on the `let` binding *is* collected (it is not silently dropped), but a free
+    // function has no `cpp_name` slot in the IDL, so it is ignored with a warning whose note
+    // points at the binding's attribute.
+    out.assert_diagnostics(expect![[r#"
+        warning: autozng: ignoring `rename` on fn `scratch_crate::twice`: only associated methods can be renamed
+          --> src/lib.rs:4:1
+           |
+         4 | fn twice<T: Clone>(value: T) -> (T, T) {
+           | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+           |
+        note: renamed here
+          --> src/lib.rs:11:5
+           |
+        11 |     #[autozng::rename("Twice")]
+           |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    "#]]);
+}

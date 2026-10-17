@@ -1,4 +1,4 @@
-//! Attribute collection and caching, keyed per item `DefId`.
+//! Attribute collection and caching, keyed per item ([`AttrKey`]).
 //!
 //! [`AttrsFor::collect`] gathers tool attributes for an item (optionally including
 //! doc-comment pseudo-attrs) and caches the parsed result by `attr_key`. Then
@@ -7,20 +7,20 @@
 //! merges them with the item's own attributes, so a child sees its parent's attributes and
 //! can still override them.
 //!
-//! Note the key chosen for `HirLetBindStmt` below: it is the *enclosing item's* `DefId`,
-//! not the `let` statement, so attributes on individual `let` bindings are not collected.
+//! Note the key chosen for `HirLetBindStmt` below: it is the `let` statement's own `HirId`
+//! (rustc stores statement attributes on the statement, not on the enclosing item), so a
+//! `#[autozng::rename]` on an individual binding is collected.
 
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc};
 
 use indexmap::IndexMap;
 use rustc_public::{CrateDef, rustc_internal::stable};
-use rustc_span::def_id::DefId as RustcDefId;
 
 use crate::{
     attrs::{
         Attr, AttrCollectionExt, AttrPath, AttrTarget, DynAttr,
         macros::impl_has_attrs,
-        parse::storage::{HasAttrs, HasParentAttrs, ToolStorage},
+        parse::storage::{AttrKey, HasAttrs, HasParentAttrs, ToolStorage},
         process_attrs,
     },
     driver::with_ctxt,
@@ -29,7 +29,7 @@ use crate::{
 };
 
 thread_local! {
-    static ATTRCACHE: RefCell<HashMap<RustcDefId, Box<[Rc<dyn DynAttr>]>>> = RefCell::new(HashMap::new());
+    static ATTRCACHE: RefCell<HashMap<AttrKey, Box<[Rc<dyn DynAttr>]>>> = RefCell::new(HashMap::new());
 }
 
 pub struct AttrsFor<ID: HasAttrs>(PhantomData<ID>);
@@ -79,6 +79,8 @@ impl_has_attrs! {
         with_ctxt(|ctx|{
             use rustc_hir::def::DefKind;
             let tcx = ctx.tcx;
+            // An associated item is always addressed by its `DefId`.
+            let key = key.as_def_id()?;
             // For an impl item this is the impl block, for a trait item the trait declaration.
             let (parent_id, parent_kind) = tcx.assoc_parent(key)?;
             let mut attrs = Vec::new();
@@ -106,10 +108,12 @@ impl_has_attrs! {
             (!attrs.is_empty()).then_some(attrs)
         })
     }},
-    crate::rustc_ext::HirConstItem { WithAttrKey |&self| { self.owner_id.to_def_id() } },
-    // Pitfall: resolves to the enclosing item, not the `let` binding (see module docs).
-    crate::rustc_ext::HirLetBindStmt { WithAttrKey |&self| { self.hir_id.owner.to_def_id() } },
-    crate::rustc_ext::HirTyAlias { WithAttrKey |&self| { self.owner_id.to_def_id() } }
+    crate::rustc_ext::HirConstItem { WithAttrKey |&self| { self.owner_id.attr_key() } },
+    // Keyed by the `let` statement's own `HirId`, *not* the enclosing item: rustc stores a
+    // statement's attributes on the statement (`Target::Statement`), so this is the only key
+    // under which the binding's own `#[autozng::...]` (e.g. a `rename`) can be found.
+    crate::rustc_ext::HirLetBindStmt { WithAttrKey |&self| { self.hir_id.attr_key() } },
+    crate::rustc_ext::HirTyAlias { WithAttrKey |&self| { self.owner_id.attr_key() } }
 }
 
 pub(crate) trait AutozngAttrsExt {

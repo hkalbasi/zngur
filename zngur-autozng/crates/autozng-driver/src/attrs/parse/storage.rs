@@ -114,7 +114,17 @@ impl<T: ToolAttrStore> ToolAttrStorage<T> {
 
     pub fn collect_attrs_for<ID: HasAttrs>(&mut self, id: ID) -> &mut Self {
         with_ctxt(|ctx| {
-            let attrs = rustc_hir::attrs::HasAttrs::get_attrs(id.attr_key(), &ctx.tcx);
+            // Fetch the attributes rustc actually stored for this key. `AttrKey` is deliberately
+            // not a `DefId`: a `let` binding has no `DefId` of its own, so its attributes only
+            // exist under its `HirId` (see `HirLetBindStmt`).
+            let attrs = match id.attr_key() {
+                AttrKey::DefId(def_id) => {
+                    rustc_hir::attrs::HasAttrs::get_attrs(def_id, &ctx.tcx)
+                }
+                AttrKey::HirId(hir_id) => {
+                    rustc_hir::attrs::HasAttrs::get_attrs(hir_id, &ctx.tcx)
+                }
+            };
 
             for attr in attrs {
                 if attr
@@ -158,53 +168,84 @@ impl ToolStorage for ToolAttrsOnly {
 
 use rustc_public::DefId;
 use rustc_span::def_id::DefId as RustcDefId;
-pub trait HasAttrs {
-    fn attr_key(&self) -> RustcDefId;
+
+/// The identity rustc stores a list of attributes under.
+///
+/// Almost every item is addressed by its `DefId`, but a `let` binding inside an
+/// `#[autozng::emit_items]` const has no `DefId` of its own: its `#[autozng::...]` attributes are
+/// stored on its `HirId` (they are lowered with `Target::Statement`). The two are kept distinct
+/// so the attribute cache can key each `let` binding separately from its enclosing item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttrKey {
+    DefId(RustcDefId),
+    HirId(rustc_hir::HirId),
 }
 
-impl HasAttrs for DefId {
-    fn attr_key(&self) -> RustcDefId {
-        with_ctxt(|ctx| self.internal(ctx.tcx))
+impl AttrKey {
+    /// The `DefId` this key addresses, if it is not a bare HIR node.
+    pub fn as_def_id(self) -> Option<RustcDefId> {
+        match self {
+            AttrKey::DefId(def_id) => Some(def_id),
+            AttrKey::HirId(_) => None,
+        }
     }
 }
-impl HasAttrs for RustcDefId {
-    fn attr_key(&self) -> RustcDefId {
+
+pub trait HasAttrs {
+    fn attr_key(&self) -> AttrKey;
+}
+
+impl HasAttrs for AttrKey {
+    fn attr_key(&self) -> AttrKey {
         *self
     }
 }
 
+impl HasAttrs for DefId {
+    fn attr_key(&self) -> AttrKey {
+        AttrKey::DefId(with_ctxt(|ctx| self.internal(ctx.tcx)))
+    }
+}
+impl HasAttrs for RustcDefId {
+    fn attr_key(&self) -> AttrKey {
+        AttrKey::DefId(*self)
+    }
+}
+
 impl HasAttrs for rustc_hir::def_id::LocalDefId {
-    fn attr_key(&self) -> RustcDefId {
-        self.to_def_id()
+    fn attr_key(&self) -> AttrKey {
+        AttrKey::DefId(self.to_def_id())
     }
 }
 
 impl HasAttrs for rustc_hir::OwnerId {
-    fn attr_key(&self) -> RustcDefId {
-        self.to_def_id()
+    fn attr_key(&self) -> AttrKey {
+        AttrKey::DefId(self.to_def_id())
     }
 }
 
 impl HasAttrs for rustc_hir::HirId {
-    fn attr_key(&self) -> RustcDefId {
-        self.owner.to_def_id()
+    fn attr_key(&self) -> AttrKey {
+        AttrKey::HirId(*self)
     }
 }
 
 impl HasAttrs for rustc_span::def_id::CrateNum {
-    fn attr_key(&self) -> RustcDefId {
-        self.as_def_id()
+    fn attr_key(&self) -> AttrKey {
+        AttrKey::DefId(self.as_def_id())
     }
 }
 
 impl HasAttrs for rustc_public::CrateNum {
-    fn attr_key(&self) -> RustcDefId {
-        with_ctxt(|ctx| rustc_public::rustc_internal::internal(ctx.tcx, *self).as_def_id())
+    fn attr_key(&self) -> AttrKey {
+        AttrKey::DefId(
+            with_ctxt(|ctx| rustc_public::rustc_internal::internal(ctx.tcx, *self).as_def_id()),
+        )
     }
 }
 
 pub trait HasParentAttrs {
-    fn parent_attrs(&self, attr_key: RustcDefId) -> Option<Vec<Rc<dyn DynAttr>>> {
+    fn parent_attrs(&self, attr_key: AttrKey) -> Option<Vec<Rc<dyn DynAttr>>> {
         let _ = attr_key;
         None
     }

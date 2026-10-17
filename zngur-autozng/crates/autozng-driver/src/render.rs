@@ -36,7 +36,7 @@ use crate::driver::with_ctxt;
 use crate::error::{
     emit_warning_for_span, span_of_def, with_struct_warning_for_rustc_public_span,
 };
-use crate::metadata::IntoMetadataKey;
+use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
 use crate::rustc_ext::{
     AdtDefExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKownTraitsExt, WellKnownTrait,
 };
@@ -308,7 +308,13 @@ fn warn_unsupported_rename<T: IntoMetadataKey + ?Sized>(
     def_id: DefId,
     item: &str,
 ) {
-    let Some(export) = ctx.export_name_for(key) else {
+    warn_unsupported_rename_with(ctx.export_name_for(key), def_id, item);
+}
+
+/// Like [`warn_unsupported_rename`], but for a caller that already resolved the export name
+/// (e.g. a free function whose `rename` came from an `emit_items` monomorphization).
+fn warn_unsupported_rename_with(export: Option<ExportName>, def_id: DefId, item: &str) {
+    let Some(export) = export else {
         return;
     };
     with_struct_warning_for_rustc_public_span(
@@ -319,6 +325,22 @@ fn warn_unsupported_rename<T: IntoMetadataKey + ?Sized>(
             diag.emit()
         },
     );
+}
+
+/// The export name recorded for one monomorphization of `def` (`#[autozng::rename]` on a `let`
+/// binding inside an `emit_items` const).
+///
+/// The name is keyed by the fn's `DefId` plus its enumerated generic args (the same list stored
+/// as `FnRecord::partial_args` / `TraitFnRecord::generics`), so it only applies to that
+/// instantiation and not to every monomorphization of the same `FnDef`. An empty arg list is the
+/// plain `DefId` key (see [`MetadataKey::for_monomorphization`]).
+fn monomorphization_export_name(
+    ctx: &AutozngContext,
+    def: FnDef,
+    args: Option<&GenericArgs>,
+) -> Option<ExportName> {
+    let args = args.filter(|args| !args.0.is_empty())?;
+    ctx.export_name_for(&MetadataKey::for_monomorphization(def.def_id(), args))
 }
 
 /// Build the methods recorded for a type (from its inherent impl blocks).
@@ -465,7 +487,11 @@ fn build_method(
     // The IDL keeps the original Rust name (needed to construct the bindings); a `rename` goes
     // into `cpp_name` as the `fn ... as <name>` suffix.
     let name = name.to_string();
-    let cpp_name = ctx.export_name_for(&assoc_item).map(|export| export.name);
+    // A `rename` on the method declaration is keyed by the `AssocItem`; one on a `let` binding is
+    // keyed by the named monomorphization, so it is looked up first and only applies to it.
+    let cpp_name = monomorphization_export_name(ctx, def, method.partial_args.as_ref())
+        .or_else(|| ctx.export_name_for(&assoc_item))
+        .map(|export| export.name);
     let self_ty = record.ty;
     // The ADT definition's (identity) self type, e.g. `Generic<T>` for a `Generic<i32>` record.
     // Used to still recognize the receiver of a method whose own generics prevent instantiation.
@@ -612,7 +638,10 @@ fn build_trait_method(
         return None;
     };
     let name = name.to_string();
-    let cpp_name = ctx.export_name_for(&assoc_item).map(|export| export.name);
+    // See `build_method`: a `rename` on the `let` binding is keyed by the named monomorphization.
+    let cpp_name = monomorphization_export_name(ctx, def, Some(&trait_fn.generics))
+        .or_else(|| ctx.export_name_for(&assoc_item))
+        .map(|export| export.name);
     let self_ty = record.ty;
     let self_def_ty = record.adt.map(|adt| adt.ty().base_ty());
 
@@ -684,9 +713,9 @@ fn build_fn(ctx: &AutozngContext, record: &FnRecord) -> Option<ZngurFn> {
         None => fn_def.fn_sig().skip_binder(),
     };
 
-    warn_unsupported_rename(
-        ctx,
-        &fn_def,
+    warn_unsupported_rename_with(
+        monomorphization_export_name(ctx, fn_def, record.partial_args.as_ref())
+            .or_else(|| ctx.export_name_for(&fn_def)),
         fn_def.def_id(),
         &format!("fn `{}`", fn_def.name()),
     );

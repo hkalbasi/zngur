@@ -1,9 +1,11 @@
-//! `EmitTarget`/`EmitItemsTarget` implementations for HIR-backed wrappers.
+//! `EmitTarget`/`EmitItemsTarget`/`RenameTarget` implementations for HIR-backed wrappers.
 //!
 //! `HirConstItem` (via `emit_items`) records enumerated inner types and walks `let`
-//! bindings; `HirLetBindStmt` records its own type. `HirTyAlias::emit` is a **stub
-//! returning `false`** — `ty` aliases are visited but not emitted.
+//! bindings; `HirLetBindStmt` records its own type and is re-nameable (its `rename` is
+//! collected from the statement's `HirId`). `HirTyAlias::emit` is a **stub returning
+//! `false`** — `ty` aliases are visited but not emitted.
 
+use rustc_public::CrateDef;
 use rustc_public::rustc_internal::stable;
 use rustc_span::Span;
 
@@ -13,6 +15,7 @@ use crate::{
         attributes::{
             emit::{EmitAction, EmitTarget},
             emit_items::EmitItemsTarget,
+            rename::RenameTarget,
         },
         macros::impl_attr_target,
     },
@@ -100,7 +103,31 @@ impl EmitTarget for crate::rustc_ext::HirLetBindStmt {
     }
 }
 
-impl_attr_target!(crate::rustc_ext::HirLetBindStmt, EmitTarget);
+/// A `let` binding inside an `#[autozng::emit_items]` const is re-nameable: the `rename` reaches
+/// the function item's monomorphization (see [`crate::rustc_ext::HirLetBindStmt`]'s
+/// `IntoMetadataKey`, which keys the export name by the fn's `DefId` + enumerated args).
+impl RenameTarget for crate::rustc_ext::HirLetBindStmt {
+    fn item_name(&self) -> String {
+        // A plain `rename("x")` ignores the name; `rename(case = ...)` transforms the named
+        // function's simple name, mirroring a `rename` on the method itself.
+        if let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, _)) =
+            self.ty.kind()
+        {
+            return CrateDef::name(&fn_def)
+                .rsplit("::")
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+        }
+        String::new()
+    }
+}
+
+impl_attr_target!(
+    crate::rustc_ext::HirLetBindStmt,
+    EmitTarget,
+    RenameTarget
+);
 
 // impl<'hir> EmitVisitable for rustc_hir::Stmt<'hir> {
 //     fn emit(
