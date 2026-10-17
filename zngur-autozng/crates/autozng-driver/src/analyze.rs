@@ -3,12 +3,12 @@
 //! [`analyze`] runs:
 //! 1. an **HIR pass** ([`visit::HirVisitor`]) over every item-like in the crate, which
 //!    handles `const` items (incl. `emit_items`), `ty` aliases and `let` bindings, and
-//! 2. a **`rustc_public` pass** ([`CrateAnalysisVisitor`]) over the local crate's ADTs,
-//!    trait decls and trait impls.
+//! 2. a **`rustc_public` pass** ([`CrateAnalysisVisitor`]) over the local crate's ADTs
+//!    (including their inherent impl blocks, whose methods are recorded onto the type) and
+//!    free functions.
 //!
-//! Results are accumulated into a single [`AutozngContext`], from which a `ZngurSpec` must
-//! be built before `tcx` goes out of scope (see `render.rs`); the render step itself is not
-//! implemented yet.
+//! Results are accumulated into a single [`AutozngContext`], from which a `ZngurSpec` is
+//! built while `tcx` is alive (see `render.rs`).
 //!
 //! [`experiment`] is scratch exploration output (trait-detection prototypes); it should be
 //! removed or folded into real analysis logic.
@@ -29,7 +29,7 @@ use crate::{
     ctx::AutozngContext,
     driver::{AnalyzeReport, with_ctxt},
     render,
-    rustc_ext::{GetFnInfoExt, VisibilityExt},
+    rustc_ext::GetFnInfoExt,
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
 };
 use zngur_def::ZngurSpec;
@@ -50,14 +50,30 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
     }
 
     fn visit_adt(&mut self, adt: &rustc_public::ty::AdtDef) -> std::ops::ControlFlow<Self::Break> {
-        let name = adt.name();
-        eprintln!("Visiting: {}", name);
-        let vis = adt.visibility();
         let attrs = adt.autozng_attrs();
-        eprintln!("AUTOZNG ATTRS: {attrs:?}");
-        eprintln!("VISIBILITY {vis:?} ");
         attrs.visit(adt, self.ctx);
+
+        // Methods live in the ADT's inherent impl blocks. Only walk them when the type
+        // itself was emitted: recording a method implicitly creates its type's `TyRecord`,
+        // so walking impls of a `skip`-ed type would leak it into the output.
+        if self.ctx.is_ty_recorded(&adt.ty()) {
+            for impl_def in adt.inherent_impls() {
+                let impl_attrs = impl_def.autozng_attrs();
+                impl_attrs.visit(&impl_def, self.ctx);
+            }
+        }
+
         adt.super_visit(self)
+    }
+
+    fn visit_fn(&mut self, fn_def: &rustc_public::ty::FnDef) -> std::ops::ControlFlow<Self::Break> {
+        // Associated functions (methods) are handled through their impl block in `visit_adt`;
+        // only free functions are recorded here.
+        if fn_def.associated_item().is_none() {
+            let attrs = fn_def.autozng_attrs();
+            attrs.visit(fn_def, self.ctx);
+        }
+        fn_def.super_visit(self)
     }
 
     fn visit_static(&mut self, st: &StaticDef) -> ControlFlow<Self::Break> {
