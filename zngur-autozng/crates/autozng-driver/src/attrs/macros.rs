@@ -55,14 +55,14 @@ macro_rules! impl_has_attrs {
     (@; $name: path { WithAttrKey |& $self:ident| $key_block:block $(, WithParents |& $parents_self: ident, $key_name: ident| $parents_block:block)? }  ) => {
 
         impl $crate::attrs::parse::storage::HasAttrs for $name {
-            fn attr_key(& $self ) -> rustc_span::def_id::DefId {
+            fn attr_key(& $self ) -> $crate::attrs::parse::storage::AttrKey {
                 $key_block
             }
         }
 
         impl  $crate::attrs::parse::storage::HasParentAttrs for $name {
         $(
-            fn parent_attrs(& $parents_self, $key_name: rustc_span::def_id::DefId) -> Option<Vec<::std::rc::Rc<dyn $crate::attrs::DynAttr>>> {
+            fn parent_attrs(& $parents_self, $key_name: $crate::attrs::parse::storage::AttrKey) -> Option<Vec<::std::rc::Rc<dyn $crate::attrs::DynAttr>>> {
                 $parents_block
             }
         )?
@@ -72,13 +72,13 @@ macro_rules! impl_has_attrs {
     (@; $name: path { UseCrateDef  $(, WithParents |& $parents_self: ident, $key_name: ident| $parents_block:block)? } ) => {
 
         impl  $crate::attrs::parse::storage::HasAttrs for $name {
-            fn attr_key(&self) -> rustc_span::def_id::DefId {
+            fn attr_key(&self) -> $crate::attrs::parse::storage::AttrKey {
                 self.def_id().attr_key()
             }
         }
         impl  $crate::attrs::parse::storage::HasParentAttrs for $name {
         $(
-            fn parent_attrs(& $parents_self, $key_name: rustc_span::def_id::DefId) -> Option<Vec<::std::rc::Rc<dyn $crate::attrs::DynAttr>>> {
+            fn parent_attrs(& $parents_self, $key_name: $crate::attrs::parse::storage::AttrKey) -> Option<Vec<::std::rc::Rc<dyn $crate::attrs::DynAttr>>> {
                 $parents_block
             }
         )?
@@ -89,7 +89,7 @@ macro_rules! impl_has_attrs {
 
         impl $crate::attrs::parse::storage::HasParentAttrs for $name {
         $(
-            fn parent_attrs(& $self, $key_name: rustc_span::def_id::DefId) -> Option<Vec<::std::rc::Rc<dyn $crate::attrs::DynAttr>>> {
+            fn parent_attrs(& $self, $key_name: $crate::attrs::parse::storage::AttrKey) -> Option<Vec<::std::rc::Rc<dyn $crate::attrs::DynAttr>>> {
                 $parents_block
             }
         )?

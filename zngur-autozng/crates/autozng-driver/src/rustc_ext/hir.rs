@@ -24,10 +24,10 @@ impl IntoMetadataKey for HirConstItem {
 
 /// Per-`let` binding discovered inside a `const` block (used for `emit_items`).
 ///
-/// **Pitfall:** its metadata/attr key resolves to `hir_id.owner`, i.e. the enclosing item
-/// (the `const`), not the `let` statement itself (see `metadata::IntoMetadataKey` impl and
-/// `attrs/attrs_for.rs`). As a result, tool attributes placed on a `let` binding are not
-/// currently collected/distinguished.
+/// Its attribute key is the statement's own `HirId` (rustc lowers statement attributes with
+/// `Target::Statement`), so a `#[autozng::...]` on the binding is collected; see
+/// `attrs/attrs_for.rs`. Its *metadata* key resolves to the function item the binding names,
+/// so a `#[autozng::rename]` reaches the emitted method (see [`Self::to_metadata_key`]).
 #[derive(Debug, Clone)]
 pub struct HirLetBindStmt {
     pub parent: rustc_hir::OwnerId,
@@ -37,6 +37,22 @@ pub struct HirLetBindStmt {
 
 impl IntoMetadataKey for HirLetBindStmt {
     fn to_metadata_key(&self) -> MetadataKey {
+        use rustc_public::ty::{RigidTy, TyKind};
+
+        // A `let` binding in an `emit_items` const names a function item (a monomorphization, an
+        // associated fn, or a trait method). Its `rename` must reach *that* function's emitted
+        // record, so the export name is keyed the way `render` looks it up: by the fn's `DefId`
+        // plus the enumerated generic args (the same list stored as `FnRecord::partial_args` /
+        // `TraitFnRecord::generics`). An empty arg list matches a record with `partial_args =
+        // None`, which `render` looks up by the plain fn `DefId`.
+        if let TyKind::RigidTy(RigidTy::FnDef(fn_def, generics)) = self.ty.kind() {
+            if generics.0.is_empty() {
+                return fn_def.to_metadata_key();
+            }
+            return MetadataKey::for_monomorphization(fn_def.def_id(), &generics);
+        }
+
+        // Not a function item: nothing renames it; keep it under the enclosing item's key.
         self.hir_id.owner.to_metadata_key()
     }
 }

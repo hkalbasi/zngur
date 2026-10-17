@@ -103,6 +103,8 @@ impl<T: Clone + std::fmt::Debug> GenericExample<T> {
     #[autozng::emit_items]
     const MONO: () = {
         let _ = Self::inner_clone_in_tuple_with::<u8>;
+        #[autozng::rename("inner_clone_in_tuple_with_vec")]
+        let _ = Self::inner_clone_in_tuple_with::<Vec<u8>>;
         let _ = Self::inner_clone_array::<8>;
     };
 }
@@ -164,9 +166,7 @@ impl Example {
     #[cfg(autozng)]
     #[autozng::emit_items]
     const __SECOND_IN_TUPLE_WITH_MONO_FOR: () = {
-        #[autozng::mono]
         let __second_in_tuple_with_mono_for_u8 = Self::second_in_tuple_with::<u8>;
-        #[autozng::mono]
         let __second_in_tuple_with_mono_for_u32 = Self::second_in_tuple_with::<u32>;
     };
 

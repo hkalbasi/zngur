@@ -313,3 +313,65 @@ impl S {
         }
     "#]]);
 }
+
+#[test]
+fn a_rename_on_a_let_binding_only_affects_that_monomorphization() {
+    let out = run(r#"
+pub struct S;
+
+impl S {
+    pub fn give<D>(&self, value: D) -> D {
+        value
+    }
+
+    #[cfg(autozng)]
+    #[autozng::emit_items]
+    const MONO: () = {
+        let _ = Self::give::<u8>;
+        #[autozng::rename("give_u32")]
+        let _ = Self::give::<u32>;
+    };
+}
+"#);
+    // The `rename` on the second `let` binding is collected from the *statement's* `HirId` and
+    // keyed by the named monomorphization (`give::<u32>`), so the other instantiation of the same
+    // `FnDef` keeps its Rust name.
+    out.assert_zng(expect![[r#"
+        type crate::S {
+            #layout(size = 0, align = 1);
+
+            fn give<u8>(&self, u8) -> u8;
+            fn give<u32>(&self, u32) -> u32 as give_u32;
+        }
+    "#]]);
+    out.assert_diagnostics(expect![[r#""#]]);
+}
+
+#[test]
+fn a_case_rename_on_a_let_binding_transforms_the_method_name() {
+    let out = run(r#"
+pub struct S;
+
+impl S {
+    pub fn long_name<D>(&self, value: D) -> D {
+        value
+    }
+
+    #[cfg(autozng)]
+    #[autozng::emit_items]
+    const MONO: () = {
+        #[autozng::rename(case = "Pascal")]
+        let _ = Self::long_name::<u8>;
+    };
+}
+"#);
+    // `rename(case = ...)` transforms the named function's simple name, exactly as it would on
+    // the method declaration itself.
+    out.assert_zng(expect![[r#"
+        type crate::S {
+            #layout(size = 0, align = 1);
+
+            fn long_name<u8>(&self, u8) -> u8 as LongName;
+        }
+    "#]]);
+}
