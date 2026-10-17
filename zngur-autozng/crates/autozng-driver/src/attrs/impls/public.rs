@@ -44,7 +44,13 @@ impl EmitTarget for rustc_public::ty::AdtDef {
 
 impl RenameTarget for rustc_public::ty::AdtDef {
     fn item_name(&self) -> String {
+        // `rename` only adjusts the item's own name (the last segment of its full path);
+        // the crate/module path is preserved so the type stays discoverable.
         CrateDef::name(self)
+            .rsplit("::")
+            .next()
+            .unwrap_or_default()
+            .to_owned()
     }
 }
 

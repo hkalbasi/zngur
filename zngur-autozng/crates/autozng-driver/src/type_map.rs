@@ -4,10 +4,9 @@
 //! [`zngur_def::RustType`], returning a human-readable `Err` for every unsupported shape
 //! (arrays, fn pointers, closures, const generics, opaque params, ...).
 //!
-//! It is **not called yet**: it will be used by the render step (`render.rs`) to build the
-//! `ZngurSpec`. Callers are expected to follow the project policy for unsupported types:
-//! warn at the offending span and skip only that item, preserving the rest of the output.
-//! (`visit.rs` contains commented-out call sites that sketched exactly this.)
+//! It is used by the render step (`render.rs`) to build the `ZngurSpec`. Callers are
+//! expected to follow the project policy for unsupported types: warn at the offending span
+//! and skip only that item, preserving the rest of the output.
 
 use rustc_middle::ty::TyCtxt;
 use rustc_public::{
@@ -64,7 +63,14 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Str
                 if adt_generics.parent_count > 0 {
                     Err("types with nested generics are not currently supported in a zngur interface".to_string())
                 } else {
-                    let path = adt_def.name().split(PATH_SEP).map(Into::into).collect();
+                    let mut path: Vec<String> =
+                        adt_def.name().split(PATH_SEP).map(Into::into).collect();
+                    if adt_def.krate().is_local && !path.is_empty() {
+                        // `rustc_public` reports the local crate's own items under the crate
+                        // name, whereas the Zngur IR marks local paths with a leading `crate`
+                        // segment (the generator substitutes the real crate name back in).
+                        path[0] = "crate".to_string();
+                    }
 
                     let rustc_generic_args =
                         rustc_public::rustc_internal::internal(tcx, &generics_args);

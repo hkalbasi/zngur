@@ -27,10 +27,12 @@ use rustc_trait_selection::infer::InferCtxtExt;
 use crate::{
     attrs::{AttrCollectionExt, AutozngAttrsExt},
     ctx::AutozngContext,
-    driver::AnalyzeReport,
+    driver::{AnalyzeReport, with_ctxt},
+    render,
     rustc_ext::{GetFnInfoExt, VisibilityExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
 };
+use zngur_def::ZngurSpec;
 
 struct CrateAnalysisVisitor<'a> {
     ctx: &'a AutozngContext,
@@ -63,10 +65,11 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
     }
 }
 
-pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport> {
-    // NOTE: the context borrows `tcx`, so any `ZngurSpec` must be built from it before this
-    // function returns. There is no plumbing for that yet — see render.rs / driver.rs.
-    let mut ctx = AutozngContext::default();
+pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
+    // NOTE: the context borrows `tcx`, so the `ZngurSpec` is built from it before this
+    // function returns, while the `TyCtxt` is still alive. Printing happens later (see
+    // `render` / `driver`).
+    let mut ctx = AutozngContext::new(with_ctxt(|driver| driver.cfg.clone()));
 
     let krate = rustc_public::local_crate();
     let crate_name = &krate.name;
@@ -84,7 +87,9 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport> {
             errors: tcx.dcx().err_count(),
         })
     } else {
-        ControlFlow::Continue(())
+        // Build the owned spec while `tcx` is alive; the driver prints it after
+        // `run_compiler` returns (see `render::build_spec` / `render::print_to_file`).
+        ControlFlow::Continue(render::build_spec(&ctx))
     }
 }
 
