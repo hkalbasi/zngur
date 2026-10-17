@@ -11,7 +11,11 @@ members = [
     "zngur-lib",
 ]
 # Exclude tutorial-wasm32 from default workspace builds since it requires extra dependencies
-exclude = ["zngur-autozng", "examples/tutorial-wasm32"]
+exclude = [
+    "examples/tutorial-wasm32",
+    # exists in it's own workspace to pin rust nightly
+    "zngur-autozng",
+]
 resolver = "2"
 
 [workspace.package]
