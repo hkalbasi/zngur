@@ -1,12 +1,15 @@
 //! Bridge from `rustc_public` types to `zngur_def` IR types.
 //!
 //! [`map_rustc_public_ty_to_zngur`] recursively converts a `Ty` into a
-//! [`zngur_def::RustType`], returning a human-readable `Err` for every unsupported shape
-//! (arrays, fn pointers, closures, const generics, opaque params, ...).
+//! [`zngur_def::RustType`]. A fully monomorphized generic type maps successfully as long as
+//! every generic argument is either a lifetime (dropped, rustc re-infers it) or a concrete
+//! [`RigidTy`]; the concrete arguments are rendered as the `.zng` type parameters.
 //!
-//! It is used by the render step (`render.rs`) to build the `ZngurSpec`. Callers are
-//! expected to follow the project policy for unsupported types: warn at the offending span
-//! and skip only that item, preserving the rest of the output.
+//! Unsupported shapes (arrays, fn pointers, closures, const generics, opaque params, ...)
+//! return [`MapTypeError::Unsupported`] so callers can warn at the offending span and skip
+//! only that item, preserving the rest of output. A type that still mentions an unresolved
+//! generic projection / higher-ranked variable ([`TyKind::Alias`] / [`TyKind::Bound`]) returns
+//! [`MapTypeError::SkipSilently`]: it is skipped without a diagnostic.
 
 use rustc_middle::ty::TyCtxt;
 use rustc_public::{
@@ -21,8 +24,38 @@ use zngur_def::{PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType};
 
 const PATH_SEP: &str = "::";
 
-pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, String> {
+/// Why [`map_rustc_public_ty_to_zngur`] could not map a type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MapTypeError {
+    /// The type has no `.zng` representation. Callers warn at the offending span and skip only
+    /// the item that mentions it.
+    Unsupported(String),
+    /// The type still mentions an unresolved generic projection / higher-ranked variable
+    /// (`TyKind::Alias` / `TyKind::Bound`). Callers skip the item **without** a warning.
+    SkipSilently,
+}
+
+impl MapTypeError {
+    fn unsupported(msg: impl Into<String>) -> Self {
+        MapTypeError::Unsupported(msg.into())
+    }
+}
+
+impl std::fmt::Display for MapTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MapTypeError::Unsupported(msg) => f.write_str(msg),
+            MapTypeError::SkipSilently => f.write_str("type cannot be resolved"),
+        }
+    }
+}
+
+pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, MapTypeError> {
     match ty.kind() {
+        // An unresolved associated-type projection or a higher-ranked variable has no `.zng`
+        // spelling; drop the item silently (the concrete instantiation already happened where
+        // possible, see `render::build_method`).
+        TyKind::Alias(..) | TyKind::Bound(..) => Err(MapTypeError::SkipSilently),
         TyKind::RigidTy(rty) => match rty {
             RigidTy::Bool => Ok(RustType::Primitive(PrimitiveRustType::Bool)),
             RigidTy::Char => Ok(RustType::Primitive(PrimitiveRustType::Char)),
@@ -45,7 +78,7 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Str
                         UintTy::U32 => 32,
                         UintTy::U64 => 64,
                         UintTy::U128 => 128,
-                        UintTy::Usize => unreachable!(),
+                        UintTy::Usize => return Err(MapTypeError::unsupported("usize is not currently supported")),
                     },
                 ))),
             },
@@ -61,7 +94,7 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Str
                 let adt_generics = adt_def.generics_of();
 
                 if adt_generics.parent_count > 0 {
-                    Err("types with nested generics are not currently supported in a zngur interface".to_string())
+                    Err(MapTypeError::unsupported("types with nested generics are not currently supported in a zngur interface"))
                 } else {
                     let mut path: Vec<String> =
                         adt_def.name().split(PATH_SEP).map(Into::into).collect();
@@ -92,7 +125,11 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Str
                             } else {
                                 match arg {
                                     GenericArgKind::Lifetime(_) => None, // don't need to preserve lifetimes, re-inferred by rustc
-                                    GenericArgKind::Const(_) => Some(Err("types with const generics are not currently supported in a zngur interface".to_string())),
+                                    GenericArgKind::Const(_) => Some(Err(MapTypeError::unsupported("types with const generics are not currently supported in a zngur interface"))),
+                                    // A fully monomorphized generic is only emitted when every
+                                    // non-lifetime argument is a concrete `RigidTy`; an
+                                    // unresolved parameter (`Param`/`Alias`/`Bound`) bubbles up
+                                    // from the recursive call (warned or skipped silently).
                                     GenericArgKind::Type(param_ty) => Some(map_rustc_public_ty_to_zngur(*param_ty, tcx)),
                                 }
                             }
@@ -145,8 +182,7 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Str
                         .filter_map(|bound_var| match bound_var {
                             BoundVariableKind::Ty(bound_ty) => match bound_ty {
                                 BoundTyKind::Anon => {
-                                    Some(Err("can not use anonymous bounds in a zngur interface"
-                                        .to_string()))
+                                    Some(Err(MapTypeError::unsupported("can not use anonymous bounds in a zngur interface")))
                                 }
                                 BoundTyKind::Param(param_def, _) => {
                                     let rustc_def_id = rustc_public::rustc_internal::internal(
@@ -162,8 +198,7 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Str
                             },
                             BoundVariableKind::Region(_) => None, // filter out lifetime bounds
                             BoundVariableKind::Const => {
-                                Some(Err("const generics are not supported in zngur interfaces"
-                                    .to_string()))
+                                Some(Err(MapTypeError::unsupported("const generics are not supported in zngur interfaces")))
                             }
                         })
                         .collect::<Result<Vec<_>, _>>()?;
@@ -179,10 +214,10 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Str
                                         .last()
                                         .unwrap()
                                         .to_string(),
-                                        map_rustc_public_ty_to_zngur(match projection.term {
-                                            TermKind::Type(term_ty) => Ok(term_ty),
-                                            TermKind::Const(_) => Err("const generics are not supported in zngur interfaces")
-                                        }?, tcx)?,
+                                    map_rustc_public_ty_to_zngur(match projection.term {
+                                        TermKind::Type(term_ty) => Ok(term_ty),
+                                        TermKind::Const(_) => Err(MapTypeError::unsupported("const generics are not supported in zngur interfaces"))
+                                    }?, tcx)?,
                                 ));
                             }
                             ExistentialPredicate::AutoTrait(auto_trait_def) => {
@@ -234,35 +269,34 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Str
                     .collect::<Result<Vec<_>, _>>()?,
             )),
             RigidTy::FnDef(_fn_def, _generics) => {
-                Err("function definition types are not supported in a zngur interface".to_string())
+                Err(MapTypeError::unsupported("function definition types are not supported in a zngur interface"))
             }
             RigidTy::FnPtr(_fn_sig) => {
-                Err("function pointer types are not supported in a zngur interface".to_string())
+                Err(MapTypeError::unsupported("function pointer types are not supported in a zngur interface"))
             }
             RigidTy::Closure(_closure_def, _generics) => {
-                Err("closure types are not supported in a zngur interface".to_string())
+                Err(MapTypeError::unsupported("closure types are not supported in a zngur interface"))
             }
             RigidTy::Never => {
-                Err("the `never` type is not supported in a zngur interface".to_string())
+                Err(MapTypeError::unsupported("the `never` type is not supported in a zngur interface"))
             }
             RigidTy::Foreign(_) => {
-                Err("foreign types are not supported in a zngur interface".to_string())
+                Err(MapTypeError::unsupported("foreign types are not supported in a zngur interface"))
             }
             RigidTy::Array(_, _) => {
-                Err("array types are not supported in a zngur interface".to_string())
+                Err(MapTypeError::unsupported("array types are not supported in a zngur interface"))
             }
             RigidTy::Pat(_, _) => {
-                Err("pattern types are not supported in a zngur interface".to_string())
+                Err(MapTypeError::unsupported("pattern types are not supported in a zngur interface"))
             }
             RigidTy::Coroutine(_, _)
             | RigidTy::CoroutineClosure(_, _)
             | RigidTy::CoroutineWitness(_, _) => {
-                Err("coroutine types are not supported in a zngur interface".to_string())
+                Err(MapTypeError::unsupported("coroutine types are not supported in a zngur interface"))
             }
         },
         TyKind::Param(_ty_param) => {
-            Err("type parameters are not supported in a zngur interface".to_string())
+            Err(MapTypeError::unsupported("type parameters are not supported in a zngur interface"))
         }
-        _ => Err(format!("{ty} is not a supported type in a zngur interface")),
     }
 }

@@ -1,7 +1,7 @@
 #![cfg_attr(autozng, feature(register_tool, custom_inner_attributes))]
 #![cfg_attr(autozng, register_tool(autozng))]
 #![cfg_attr(autozng, autozng::policy("test"))]
-
+#![allow(dead_code)]
 //! #[autozng::policy("test")]
 //! #[autozng::policy("test_2")]
 
@@ -106,6 +106,17 @@ impl<T: Clone + std::fmt::Debug> GenericExample<T> {
         let _ = Self::inner_clone_array::<8>;
     };
 }
+
+#[derive(Debug)]
+pub struct NonCloneType(pub u32);
+
+#[cfg(autozng)]
+#[autozng::emit_items]
+const _: &[(
+    GenericExample<NonCloneType>,
+    GenericExample<u64>,
+    GenericExample<Vec<u32>>,
+)] = &[];
 
 /// a Trait
 ///   multiline doc comment

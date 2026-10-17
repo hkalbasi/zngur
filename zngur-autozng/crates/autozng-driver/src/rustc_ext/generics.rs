@@ -32,6 +32,38 @@ impl InstantiatedClauses {
     pub fn iter(&self) -> <&Self as IntoIterator>::IntoIter {
         self.into_iter()
     }
+
+    /// Confirm every instantiated clause holds for the concrete arguments it was built from.
+    ///
+    /// A fresh inference context is asked to prove each clause as an obligation; regions are
+    /// ignored (`ignoring_regions`), so only meaningful clauses (trait bounds, projections,
+    /// consts) can fail. Returns `false` as soon as one clause cannot be proven — the caller
+    /// then drops the associated item instead of emitting it with unmet bounds.
+    pub fn all_hold(&self) -> bool {
+        with_ctxt(|ctx| {
+            use rustc_infer::traits::Obligation;
+            use rustc_middle::traits::ObligationCause;
+            use rustc_middle::ty::ParamEnv;
+            use rustc_trait_selection::infer::TyCtxtInferExt;
+            use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt as _;
+            use rustc_type_ir::TypingMode;
+
+            let tcx = ctx.tcx;
+            let infcx = tcx
+                .infer_ctxt()
+                .with_next_trait_solver(true)
+                .ignoring_regions()
+                .build(TypingMode::Codegen);
+            let param_env = ParamEnv::empty();
+
+            self.clauses.iter().all(|clause| {
+                let clause =
+                    rustc_middle::ty::Clause::upcast_from(clause.clone().internal(tcx), tcx);
+                let obligation = Obligation::new(tcx, ObligationCause::dummy(), param_env, clause);
+                infcx.predicate_must_hold_modulo_regions(&obligation)
+            })
+        })
+    }
 }
 
 impl IntoIterator for InstantiatedClauses {

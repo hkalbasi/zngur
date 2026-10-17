@@ -9,19 +9,16 @@ use expect_test::expect;
 use crate::harness::run;
 
 #[test]
-fn generic_type_is_warned_and_skipped() {
+fn generic_type_is_skipped_silently() {
     let out = run(r#"
 pub struct Generic<T> {
     pub value: T,
 }
 "#);
-    out.assert_diagnostics(expect![[r#"
-        warning: autozng: skipping `Generic<T>`: type parameters are not supported in a zngur interface
-         --> src/lib.rs:4:1
-          |
-        4 | pub struct Generic<T> {
-          | ^^^^^^^^^^^^^^^^^^^^^
-    "#]]);
+    // A generic template has no `.zng` representation of its own; only its concrete
+    // instantiations are emitted (via `emit_items`). A type parameter is expected here, so
+    // the template is dropped without a diagnostic.
+    out.assert_diagnostics(expect![[r#""#]]);
     out.assert_zng(expect![[r#""#]]);
 }
 
@@ -61,6 +58,31 @@ pub struct HasArray {
 }
 
 #[test]
+fn unresolved_projection_is_skipped_silently() {
+    let out = run(r#"
+pub trait HasAssoc {
+    type Output;
+}
+
+impl HasAssoc for u32 {
+    type Output = i64;
+}
+
+struct Holder<T> {
+    v: T,
+}
+
+#[cfg(autozng)]
+#[autozng::emit_items]
+const _: [(Holder<<u32 as HasAssoc>::Output>,); 0] = [];
+"#);
+    // The instantiation still mentions an unresolved associated-type projection, so it is
+    // dropped without any diagnostics (unlike a bare type parameter, which is warned about).
+    out.assert_diagnostics(expect![[r#""#]]);
+    out.assert_zng(expect![[r#""#]]);
+}
+
+#[test]
 fn rename_on_a_type_is_ignored() {
     let out = run(r#"
 #[autozng::rename("Renamed")]
@@ -80,5 +102,57 @@ pub struct Original {
           |
         4 | #[autozng::rename("Renamed")]
           | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    "#]]);
+}
+
+#[test]
+fn an_enumerated_non_adt_type_warns_at_the_const_span() {
+    let out = run(r#"
+#[cfg(autozng)]
+#[autozng::emit_items]
+const _: [(&[u8; 4],); 0] = [];
+"#);
+    // A non-ADT type (an array here) has no `DefId` of its own, so the `const` tagged by
+    // `#[autozng::emit_items]` becomes the primary span of the warning.
+    out.assert_diagnostics(expect![[r#"
+        warning: autozng: skipping `[u8; 4]`: array types are not supported in a zngur interface
+         --> src/lib.rs:6:1
+          |
+        6 | const _: [(&[u8; 4],); 0] = [];
+          | ^^^^^^^^^^^^^^^^^^^^^^^^^
+    "#]]);
+}
+
+#[test]
+fn an_item_selected_by_a_let_binding_notes_the_emit_site() {
+    let out = run(r#"
+pub struct S;
+
+impl S {
+    pub fn give<D: Copy>(&self, value: D) -> [D; 4] {
+        [value; 4]
+    }
+
+    #[cfg(autozng)]
+    #[autozng::emit_items]
+    const MONO: () = {
+        let _ = Self::give::<u8>;
+    };
+}
+"#);
+    // `give::<u8>` is instantiated and emitted, but its `[D; 4]` return type is unsupported: the
+    // primary span is the method, and the `let` that selected it is noted as the emission site.
+    out.assert_diagnostics(expect![[r#"
+        warning: autozng: skipping method `give`: array types are not supported in a zngur interface
+          --> src/lib.rs:7:5
+           |
+         7 |     pub fn give<D: Copy>(&self, value: D) -> [D; 4] {
+           |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+           |
+        note: emitted here
+          --> src/lib.rs:14:9
+           |
+        14 |         let _ = Self::give::<u8>;
+           |         ^^^^^^^^^^^^^^^^^^^^^^^^^
     "#]]);
 }

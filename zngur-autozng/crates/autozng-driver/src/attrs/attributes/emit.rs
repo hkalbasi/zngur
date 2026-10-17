@@ -2,6 +2,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use itertools::Itertools;
 use rustc_attr_parsing::template;
+use rustc_span::Span;
 
 use crate::{
     attrs::{
@@ -93,10 +94,17 @@ impl core::ops::BitOrAssign for EmitAction {
 }
 
 pub trait EmitTarget {
-    /// process the item with the given emit action
+    /// Process the item with the given emit action.
+    ///
+    /// Recording uses [`EmitTarget::span`] (the item's own span) so render diagnostics can
+    /// point back at the item that was selected.
     fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool;
 
     fn name(&self) -> String;
+
+    /// The item's source span, used as the span of its implicit `Emit` attribute and as the
+    /// `span` recorded by [`AutozngContext::record_ty`] & friends.
+    fn emit_span(&self) -> Span;
 
     /// if the item has an implicit emit action.
     /// normally `None` or `Some(EmitAction::Default)` to follow visibility defaults
@@ -106,20 +114,25 @@ pub trait EmitTarget {
 
     /// get the implicit Emit attr
     fn implicit_emit_attr(&self) -> Option<Rc<dyn DynAttr>> {
-        self.implicit_action()
-            .map(|action| Rc::new(Emit::new_implicit_emit(action)) as Rc<dyn DynAttr>)
+        self.implicit_action().map(|action| {
+            Rc::new(Emit::new_implicit_emit(action, self.emit_span())) as Rc<dyn DynAttr>
+        })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Emit {
     items: HashMap<EmitItem, EmitAction>,
+    /// Span of the attribute that created this `Emit`: the `#[autozng::emit(...)]` /
+    /// `#[autozng::skip(...)]`, or the target's own span for an implicit emit.
+    span: Span,
 }
 
 impl Emit {
-    fn new_implicit_emit(action: EmitAction) -> Self {
+    fn new_implicit_emit(action: EmitAction, span: Span) -> Self {
         Emit {
             items: HashMap::from([(EmitItem::This, action)]),
+            span,
         }
     }
 }
@@ -153,6 +166,7 @@ impl Attr for Emit {
                     })
                     .unique()
                     .collect(),
+                span: self.span,
             })
         } else {
             None
@@ -177,6 +191,7 @@ impl Attr for Emit {
 #[derive(Debug, Clone, Default)]
 pub struct EmitParser {
     items: Option<Vec<(EmitItem, EmitAction)>>,
+    span: Option<Span>,
 }
 
 impl AttrtibuteParser for EmitParser {
@@ -197,10 +212,12 @@ impl AttrtibuteParser for EmitParser {
     fn finalize(self, target: &dyn EmitTarget) -> Option<Self::Attr> {
         if let EmitParser {
             items: Some(items),
+            span: Some(span),
         } = self
         {
             return Some(Emit {
                 items: items.into_iter().collect(),
+                span,
             });
         }
         None
@@ -209,6 +226,7 @@ impl AttrtibuteParser for EmitParser {
 
 impl EmitParser {
     pub fn parse(&mut self, ac: &mut AcceptContext, args: &ArgParser) {
+        self.span = Some(ac.span);
         let Some(action) = EMIT_PATH_ACTIONS
             .iter()
             .find_map(|(path, action)| {

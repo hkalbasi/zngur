@@ -4,7 +4,7 @@ use crate::{
     driver::with_ctxt,
     metadata::{IntoMetadataKey, MetadataKey},
     rustc_ext::{
-        GenericClauses, RustcInternalEx,
+        GenericClauses, RustcInternalEx, RustcPublicTyExt,
         generics::{get_clauses_of, get_generics_of},
     },
 };
@@ -41,7 +41,40 @@ impl IntoMetadataKey for HirLetBindStmt {
     }
 }
 
+impl HirLetBindStmt {
+    /// The inherent impl block that owns the `const` this `let` binding lives in, if any.
+    ///
+    /// A `let` binding inside an `#[autozng::emit_items]` const that is an associated const of
+    /// an impl names a monomorphization of one of that impl's methods (e.g.
+    /// `let _ = Self::foo::<u32>;`). The enclosing impl supplies the (possibly generic) `Self`
+    /// type and the impl's clauses. Returns `None` for a const at module scope.
+    pub fn impl_parent(&self) -> Option<(rustc_public::ty::Ty, rustc_public::ty::ImplDef)> {
+        with_ctxt(|ctx| {
+            let tcx = ctx.tcx;
+            let parent_def_id = tcx.parent(self.parent.def_id.to_def_id());
+            if !matches!(
+                tcx.def_kind(parent_def_id),
+                rustc_hir::def::DefKind::Impl { .. }
+            ) {
+                return None;
+            }
+            let impl_def = rustc_public::ty::ImplDef(stable(parent_def_id));
+            let self_ty =
+                stable(tcx.type_of(parent_def_id).instantiate_identity().skip_norm_wip());
+            Some((self_ty.base_ty(), impl_def))
+        })
+    }
+}
+
 impl HirConstItem {
+    /// The span of the `const` item itself (the item tagged `#[autozng::emit_items]`).
+    ///
+    /// Used as the recorded span of the types the `const` enumerates: unlike an ADT or a
+    /// function, an enumerated slice/tuple/primitive has no source span of its own.
+    pub fn span(&self) -> rustc_span::Span {
+        with_ctxt(|ctx| ctx.tcx.def_span(self.owner_id.def_id))
+    }
+
     pub fn body_let_bind_stmts(&self) -> Vec<HirLetBindStmt> {
         with_ctxt(|ctx| {
             let tcx = ctx.tcx;
@@ -93,23 +126,27 @@ impl HirConstItem {
 
     /// The types directly enumerated inside a `const` tagged `emit_items`.
     ///
-    /// **Narrow:** only recognizes an array or slice whose element type is a tuple, e.g.
-    /// `const _: [(A, B); N] = ...`. Other shapes (a bare tuple, `Option<(A, B)>`, a `let`
-    /// binding in the const body, ...) are not handled — see `body_let_bind_stmts`.
+    /// The const's type is a list of the types to emit, written as a tuple and optionally
+    /// wrapped in a reference / array / slice: `(A, B)`, `[(A, B); 0]` and `&[(A, B)]` all
+    /// enumerate `A` and `B`. References (and raw pointers) are peeled with `base_ty`, then
+    /// the array/slice element (or the tuple itself) supplies the elements.
+    ///
+    /// Other shapes (a bare non-tuple type, `Option<(A, B)>`, ...) are not recognized; the
+    /// `let`-binding form is handled separately by [`Self::body_let_bind_stmts`].
     pub fn inner_emit_types(&self) -> Vec<rustc_public::ty::Ty> {
         use rustc_public::ty::{RigidTy, TyKind};
-        match self.ty.kind() {
-            TyKind::RigidTy(RigidTy::Array(ty, _) | RigidTy::Slice(ty)) => Some(ty),
-            _ => None,
+
+        // Peel `&`/`*const`/`*mut` wrappers, e.g. `&[(A, B)]` -> `[(A, B)]`.
+        let ty = self.ty.base_ty();
+        let tuple = match ty.kind() {
+            TyKind::RigidTy(RigidTy::Array(element, _) | RigidTy::Slice(element)) => element,
+            TyKind::RigidTy(RigidTy::Tuple(_)) => ty,
+            _ => return Vec::new(),
+        };
+        match tuple.kind() {
+            TyKind::RigidTy(RigidTy::Tuple(tys)) => tys,
+            _ => Vec::new(),
         }
-        .and_then(|ty| {
-            if let TyKind::RigidTy(RigidTy::Tuple(tys)) = ty.kind() {
-                Some(tys)
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default()
     }
 }
 
