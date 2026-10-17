@@ -18,18 +18,20 @@ use rustc_public::{CrateDef, rustc_internal::stable};
 
 use crate::{
     attrs::{
-        Attr, AttrCollectionExt, AttrPath, AttrTarget, DynAttr,
+        AttrCollectionExt, AttrPath, AttrTarget, DynAttr,
         macros::impl_has_attrs,
         parse::storage::{AttrKey, HasAttrs, HasParentAttrs, ToolStorage},
         process_attrs,
     },
     driver::with_ctxt,
-    error::pull_and_emit_errors_from_results,
     rustc_ext::FieldDefExt,
 };
 
+/// Parsed attributes cached per item, keyed by the item's [`AttrKey`].
+type AttrCache = RefCell<HashMap<AttrKey, Box<[Rc<dyn DynAttr>]>>>;
+
 thread_local! {
-    static ATTRCACHE: RefCell<HashMap<AttrKey, Box<[Rc<dyn DynAttr>]>>> = RefCell::new(HashMap::new());
+    static ATTRCACHE: AttrCache = RefCell::new(HashMap::new());
 }
 
 pub struct AttrsFor<ID: HasAttrs>(PhantomData<ID>);

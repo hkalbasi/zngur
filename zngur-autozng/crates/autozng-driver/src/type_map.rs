@@ -78,7 +78,11 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                         UintTy::U32 => 32,
                         UintTy::U64 => 64,
                         UintTy::U128 => 128,
-                        UintTy::Usize => return Err(MapTypeError::unsupported("usize is not currently supported")),
+                        UintTy::Usize => {
+                            return Err(MapTypeError::unsupported(
+                                "usize is not currently supported",
+                            ));
+                        }
                     },
                 ))),
             },
@@ -94,7 +98,9 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                 let adt_generics = adt_def.generics_of();
 
                 if adt_generics.parent_count > 0 {
-                    Err(MapTypeError::unsupported("types with nested generics are not currently supported in a zngur interface"))
+                    Err(MapTypeError::unsupported(
+                        "types with nested generics are not currently supported in a zngur interface",
+                    ))
                 } else {
                     let mut path: Vec<String> =
                         adt_def.name().split(PATH_SEP).map(Into::into).collect();
@@ -181,9 +187,9 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                         .into_iter()
                         .filter_map(|bound_var| match bound_var {
                             BoundVariableKind::Ty(bound_ty) => match bound_ty {
-                                BoundTyKind::Anon => {
-                                    Some(Err(MapTypeError::unsupported("can not use anonymous bounds in a zngur interface")))
-                                }
+                                BoundTyKind::Anon => Some(Err(MapTypeError::unsupported(
+                                    "can not use anonymous bounds in a zngur interface",
+                                ))),
                                 BoundTyKind::Param(param_def, _) => {
                                     let rustc_def_id = rustc_public::rustc_internal::internal(
                                         tcx,
@@ -197,9 +203,9 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                                 }
                             },
                             BoundVariableKind::Region(_) => None, // filter out lifetime bounds
-                            BoundVariableKind::Const => {
-                                Some(Err(MapTypeError::unsupported("const generics are not supported in zngur interfaces")))
-                            }
+                            BoundVariableKind::Const => Some(Err(MapTypeError::unsupported(
+                                "const generics are not supported in zngur interfaces",
+                            ))),
                         })
                         .collect::<Result<Vec<_>, _>>()?;
 
@@ -268,35 +274,35 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                     .map(|ty| map_rustc_public_ty_to_zngur(ty, tcx))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
-            RigidTy::FnDef(_fn_def, _generics) => {
-                Err(MapTypeError::unsupported("function definition types are not supported in a zngur interface"))
-            }
-            RigidTy::FnPtr(_fn_sig) => {
-                Err(MapTypeError::unsupported("function pointer types are not supported in a zngur interface"))
-            }
-            RigidTy::Closure(_closure_def, _generics) => {
-                Err(MapTypeError::unsupported("closure types are not supported in a zngur interface"))
-            }
-            RigidTy::Never => {
-                Err(MapTypeError::unsupported("the `never` type is not supported in a zngur interface"))
-            }
-            RigidTy::Foreign(_) => {
-                Err(MapTypeError::unsupported("foreign types are not supported in a zngur interface"))
-            }
-            RigidTy::Array(_, _) => {
-                Err(MapTypeError::unsupported("array types are not supported in a zngur interface"))
-            }
-            RigidTy::Pat(_, _) => {
-                Err(MapTypeError::unsupported("pattern types are not supported in a zngur interface"))
-            }
+            RigidTy::FnDef(_fn_def, _generics) => Err(MapTypeError::unsupported(
+                "function definition types are not supported in a zngur interface",
+            )),
+            RigidTy::FnPtr(_fn_sig) => Err(MapTypeError::unsupported(
+                "function pointer types are not supported in a zngur interface",
+            )),
+            RigidTy::Closure(_closure_def, _generics) => Err(MapTypeError::unsupported(
+                "closure types are not supported in a zngur interface",
+            )),
+            RigidTy::Never => Err(MapTypeError::unsupported(
+                "the `never` type is not supported in a zngur interface",
+            )),
+            RigidTy::Foreign(_) => Err(MapTypeError::unsupported(
+                "foreign types are not supported in a zngur interface",
+            )),
+            RigidTy::Array(_, _) => Err(MapTypeError::unsupported(
+                "array types are not supported in a zngur interface",
+            )),
+            RigidTy::Pat(_, _) => Err(MapTypeError::unsupported(
+                "pattern types are not supported in a zngur interface",
+            )),
             RigidTy::Coroutine(_, _)
             | RigidTy::CoroutineClosure(_, _)
-            | RigidTy::CoroutineWitness(_, _) => {
-                Err(MapTypeError::unsupported("coroutine types are not supported in a zngur interface"))
-            }
+            | RigidTy::CoroutineWitness(_, _) => Err(MapTypeError::unsupported(
+                "coroutine types are not supported in a zngur interface",
+            )),
         },
-        TyKind::Param(_ty_param) => {
-            Err(MapTypeError::unsupported("type parameters are not supported in a zngur interface"))
-        }
+        TyKind::Param(_ty_param) => Err(MapTypeError::unsupported(
+            "type parameters are not supported in a zngur interface",
+        )),
     }
 }

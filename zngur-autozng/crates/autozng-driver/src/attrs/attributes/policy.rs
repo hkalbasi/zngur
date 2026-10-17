@@ -30,13 +30,14 @@ impl Attr for Policy {
         POLICY_PATH
     }
 
-    fn visit(&self, item: &Self::Target, ctx: &AutozngContext) {
+    fn visit(&self, _item: &Self::Target, _ctx: &AutozngContext) {
         // TODO:
     }
 }
 
 #[derive(Debug, Default)]
 pub struct PolicyParser {
+    #[allow(dead_code)] // policies are parsed but not applied yet (see `Policy`)
     valid: bool,
 }
 
@@ -49,11 +50,11 @@ impl AttrtibuteParser for PolicyParser {
         Self::parse,
     )];
 
-    fn finalize(self, target: &<Self::Attr as Attr>::Target) -> Option<Self::Attr> {
+    fn finalize(self, _target: &<Self::Attr as Attr>::Target) -> Option<Self::Attr> {
         None
     }
 }
 
 impl PolicyParser {
-    fn parse(&mut self, cx: &mut AcceptContext, args: &ArgParser) {}
+    fn parse(&mut self, _cx: &mut AcceptContext, _args: &ArgParser) {}
 }

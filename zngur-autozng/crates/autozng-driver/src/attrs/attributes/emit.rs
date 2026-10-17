@@ -209,7 +209,7 @@ impl AttrtibuteParser for EmitParser {
         ),
     ];
 
-    fn finalize(self, target: &dyn EmitTarget) -> Option<Self::Attr> {
+    fn finalize(self, _target: &dyn EmitTarget) -> Option<Self::Attr> {
         if let EmitParser {
             items: Some(items),
             span: Some(span),
@@ -292,7 +292,7 @@ impl Attr for EmitOnImpl {
         EMIT_ON_IMPL_PATH
     }
 
-    fn visit(&self, item: &Self::Target, ctx: &AutozngContext) {
+    fn visit(&self, _item: &Self::Target, _ctx: &AutozngContext) {
         // TODO: emit the trait's / impl's eligible methods onto each implementing type.
     }
 }
@@ -316,7 +316,7 @@ impl AttrtibuteParser for EmitOnImplParser {
         EmitOnImplParser::parse,
     )];
 
-    fn finalize(self, target: &dyn EmitOnImplTarget) -> Option<Self::Attr> {
+    fn finalize(self, _target: &dyn EmitOnImplTarget) -> Option<Self::Attr> {
         self.valid.then_some(EmitOnImpl)
     }
 }

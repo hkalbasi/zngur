@@ -1,9 +1,23 @@
 use rustc_middle::ty::TyCtxt;
-use rustc_public::{CrateDef, rustc_internal::internal};
+use rustc_public::{
+    CrateDef,
+    rustc_internal::{internal, stable},
+};
 
 pub trait RustcInternalEx {
     type T<'tcx>;
     fn internal<'tcx>(self, tcx: TyCtxt<'tcx>) -> Self::T<'tcx>;
+}
+
+pub fn stable_trait(trt: &rustc_middle::ty::trait_def::TraitDef) -> rustc_public::ty::TraitDecl {
+    stable(trt)
+}
+
+impl RustcInternalEx for rustc_public::ty::TraitDef {
+    type T<'tcx> = &'tcx rustc_middle::ty::trait_def::TraitDef;
+    fn internal<'tcx>(self, tcx: TyCtxt<'tcx>) -> Self::T<'tcx> {
+        tcx.trait_def(self.def_id().internal(tcx))
+    }
 }
 
 impl RustcInternalEx for rustc_public::ty::Region {

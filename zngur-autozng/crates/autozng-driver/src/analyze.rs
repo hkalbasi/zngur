@@ -5,7 +5,8 @@
 //!    handles `const` items (incl. `emit_items`), `ty` aliases and `let` bindings, and
 //! 2. a **`rustc_public` pass** ([`CrateAnalysisVisitor`]) over the local crate's ADTs
 //!    (including their fields and inherent impl blocks, whose fields and methods are recorded
-//!    onto the type) and free functions.
+//!    onto the type), trait declarations (an `emit`-tagged trait and its associated functions)
+//!    and free functions.
 //!
 //! Results are accumulated into a single [`AutozngContext`], from which a `ZngurSpec` is
 //! built while `tcx` is alive (see `render.rs`).
@@ -28,8 +29,9 @@ use crate::{
     attrs::{AttrCollectionExt, AutozngAttrsExt},
     ctx::AutozngContext,
     driver::{AnalyzeReport, with_ctxt},
+    error::span_of_def,
     render,
-    rustc_ext::GetFnInfoExt,
+    rustc_ext::GetAssocInfoExt,
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
 };
 use zngur_def::ZngurSpec;
@@ -73,6 +75,35 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
         }
 
         adt.super_visit(self)
+    }
+
+    fn visit_trait(
+        &mut self,
+        trait_def: &rustc_public::ty::TraitDef,
+    ) -> std::ops::ControlFlow<Self::Break> {
+        let attrs = trait_def.autozng_attrs();
+        attrs.visit(trait_def, self.ctx);
+
+        // A trait is only recorded when it carries an explicit `emit` (its implicit action is
+        // `None`); when it is, record every associated function. A trait's functions are at most
+        // as visible as the trait itself, so there is nothing further to filter. Only descend
+        // once the trait is recorded: recording a method implicitly records its trait, so
+        // walking a `skip`-ed trait's methods would leak it into the output.
+        if self.ctx.is_trait_recorded(trait_def) {
+            for assoc_item in trait_def.associated_items() {
+                if let Some((fn_def, generics)) = assoc_item.opt_fn_def() {
+                    self.ctx.record_trait_method(
+                        assoc_item.opt_trait_def().unwrap(),
+                        assoc_item.opt_trait_ref(),
+                        fn_def,
+                        generics,
+                        span_of_def(fn_def.def_id()),
+                    );
+                }
+            }
+        }
+
+        trait_def.super_visit(self)
     }
 
     fn visit_fn(&mut self, fn_def: &rustc_public::ty::FnDef) -> std::ops::ControlFlow<Self::Break> {
@@ -120,6 +151,7 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
 
 /// Scratch/exploration code: prototypes for detecting which traits implementers should be
 /// emitted for and inspecting trait associated fns. Not part of the real pipeline.
+#[allow(dead_code)] // scratch exploration kept for reference
 fn experiment(tcx: TyCtxt) {
     eprintln!("===========================");
     eprintln!("     Trait searching ");

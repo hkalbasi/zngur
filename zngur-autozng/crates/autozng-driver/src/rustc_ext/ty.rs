@@ -5,11 +5,13 @@ use rustc_public::{
 
 pub trait RustcPublicTyExt {
     fn base_ty(&self) -> rustc_public::ty::Ty;
+    #[allow(dead_code)] // collects a type's inner types; not consumed yet
     fn dependent_tys(&self) -> Vec<rustc_public::ty::Ty> {
         let mut tys = Vec::new();
         self.dependent_tys_inner(&mut tys);
-        return tys;
+        tys
     }
+    #[allow(dead_code)] // only reached through `dependent_tys`
     fn dependent_tys_inner(&self, tys: &mut Vec<rustc_public::ty::Ty>);
 
     /// the type contains no generic params or unevaluated constants
@@ -30,8 +32,8 @@ impl RustcPublicTyExt for rustc_public::ty::Ty {
 
     fn dependent_tys_inner(&self, tys: &mut Vec<rustc_public::ty::Ty>) {
         let kind = self.base_ty().kind();
-        match &kind {
-            TyKind::RigidTy(ty) => match ty {
+        if let TyKind::RigidTy(ty) = &kind {
+            match ty {
                 // push inner tys of primitive containers
                 RigidTy::Array(ty, _) | RigidTy::Slice(ty) => {
                     tys.push(*ty);
@@ -45,8 +47,7 @@ impl RustcPublicTyExt for rustc_public::ty::Ty {
                     tys.extend(sig.inputs_and_output.iter().copied());
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
     }
 

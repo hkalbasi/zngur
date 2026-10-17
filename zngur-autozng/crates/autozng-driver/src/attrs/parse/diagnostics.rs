@@ -3,10 +3,12 @@
 use rustc_attr_parsing::AttributeTemplate;
 use rustc_errors::{Diag, Diagnostic};
 use rustc_lint::Applicability;
-use rustc_span::{ErrorGuaranteed, Span};
+use rustc_span::Span;
 
 use crate::attrs::AttrPath;
 
+// Mirrors `rustc_attr_parsing`'s reason list; not every reason is produced by autozng yet.
+#[allow(dead_code)]
 pub enum AttributeParseErrorReason<'a> {
     ExpectedNoArgs,
     ExpectedStringLiteral {

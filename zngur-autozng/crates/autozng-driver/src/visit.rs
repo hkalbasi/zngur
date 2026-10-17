@@ -3,22 +3,21 @@
 //! - [`HirVisitor`] walks the HIR to find `const`/`ty`/`let` items (things the
 //!   `rustc_public` API exposes poorly).
 //! - [`CrateAnalysisVisitor`](crate::analyze) (defined in `analyze.rs`) walks the local
-//!   crate's ADTs, free functions and ADT inherent impl blocks via [`RustcPublicVisitor`].
+//!   crate's ADTs, free functions, trait decls and ADT inherent impl blocks via
+//!   [`RustcPublicVisitor`].
 //!
-//! Trait handling is **stubbed**: the `TraitDef`/`ImplDef` `super_visit` impls below are
-//! no-ops, and `CrateAnalysisVisitor` has no `visit_trait`/`visit_impl`, so trait decls and
-//! trait impls are currently not analyzed. (ADT *inherent* impls are walked directly from
-//! `visit_adt`.) The large commented block in the `AdtDef` impl is an earlier sketch of the
-//! intended field/method/well-known-trait emission.
+//! Trait *decls* are visited (`visit_trait`) and their associated functions recorded for an
+//! `emit`-tagged trait. Trait *impls* are still stubbed (`ImplDef`'s `super_visit` is a no-op
+//! and there is no `visit_impl`). (ADT *inherent* impls are walked directly from `visit_adt`.)
 
 use rustc_middle::ty::TyCtxt;
 
 use std::ops::ControlFlow;
 
 use rustc_public::{
-    Crate, CrateDef,
+    Crate,
     mir::mono::StaticDef,
-    ty::{AdtDef, FnDef},
+    ty::{AdtDef, FnDef, TraitDef},
 };
 
 use crate::{
@@ -52,17 +51,17 @@ impl<'tcx> rustc_hir::intravisit::Visitor<'tcx> for HirVisitor<'_, 'tcx> {
     fn visit_impl_item(&mut self, ii: &'tcx rustc_hir::ImplItem<'tcx>) -> Self::Result {
         if let Some(const_item) = ii.opt_const_item() {
             let attrs = const_item.autozng_attrs();
-            let _results = attrs.visit(&const_item, self.ctx);
+            attrs.visit(&const_item, self.ctx);
         }
     }
 
     fn visit_item(&mut self, i: &'tcx rustc_hir::Item<'tcx>) -> Self::Result {
         if let Some(const_item) = i.opt_const_item() {
             let attrs = const_item.autozng_attrs();
-            let _ = attrs.visit(&const_item, self.ctx);
+            attrs.visit(&const_item, self.ctx);
         } else if let Some(alias_item) = i.opt_ty_alias() {
             let attrs = alias_item.autozng_attrs();
-            let _ = attrs.visit(&alias_item, self.ctx);
+            attrs.visit(&alias_item, self.ctx);
         }
     }
 }
@@ -78,6 +77,10 @@ pub trait RustcPublicVisitor: Sized {
         adt.super_visit(self)
     }
 
+    fn visit_trait(&mut self, trait_def: &TraitDef) -> ControlFlow<Self::Break> {
+        trait_def.super_visit(self)
+    }
+
     fn visit_static(&mut self, st: &StaticDef) -> ControlFlow<Self::Break> {
         st.super_visit(self)
     }
@@ -87,14 +90,14 @@ pub trait RustcPublicVisitor: Sized {
     }
 
     fn visit_all_rustc_public_items(&mut self) -> ControlFlow<Self::Break> {
-        // visit all items except `CrateItems` from  `rustc_public::all_local_items()`
+        // Visit all items except `CrateItems` from  `rustc_public::all_local_items()`
         // that interface is cumbersome, and the work is mostly duplicated by visiting the local `Crate`
         // visiting aliases and `const` items is better done via traversing the HIR anyway
-
-        rustc_public::local_crate().visit(self)?;
-
-        rustc_public::all_trait_decls().visit(self)?;
-        rustc_public::all_trait_impls().visit(self)
+        //
+        // Only the *local* crate is walked: `Crate::super_visit` descends into its trait decls
+        // (and impls), so the whole crate graph (`all_trait_decls`/`all_trait_impls`, which pull
+        // in `std` and every dependency) is deliberately not visited.
+        rustc_public::local_crate().visit(self)
     }
 }
 
@@ -146,8 +149,6 @@ impl RustcPublicVisitable for rustc_public::Crate {
 
 impl RustcPublicVisitable for rustc_public::mir::mono::StaticDef {
     fn visit<V: RustcPublicVisitor>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
-        eprintln!("Visiting Static: {}", self.name());
-        eprintln!("  Type: {}", self.ty());
         visitor.visit_static(self)
     }
     fn super_visit<V: RustcPublicVisitor>(&self, _visitor: &mut V) -> ControlFlow<V::Break> {
@@ -487,7 +488,11 @@ impl RustcPublicVisitable for rustc_public::ty::AdtDef {
 }
 
 impl RustcPublicVisitable for rustc_public::ty::TraitDef {
-    // TODO: stubbed — trait decls are visited but produce nothing.
+    fn visit<V: RustcPublicVisitor>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_trait(self)
+    }
+    /// The descent into the trait's associated functions is done by `visit_trait` (mirroring how
+    /// `visit_adt` walks fields and inherent impls), so the default traversal is a no-op.
     fn super_visit<V: RustcPublicVisitor>(&self, _visitor: &mut V) -> ControlFlow<V::Break> {
         ControlFlow::Continue(())
     }

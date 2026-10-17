@@ -1,13 +1,13 @@
-use std::{marker::PhantomData, mem::MaybeUninit, rc::Rc};
+use std::{marker::PhantomData, rc::Rc};
 
 use rustc_ast::{MetaItem, MetaItemInner, MetaItemKind, MetaItemLit, tokenstream::TokenStream};
 use rustc_attr_parsing::AttributeTemplate;
 use rustc_session::parse::ParseSess;
-use rustc_span::{ErrorGuaranteed, Ident, Span, Symbol};
+use rustc_span::{ErrorGuaranteed, Span, Symbol};
 
 use crate::{
     attrs::{
-        Attr, AttrBuilder, AttrPath, AttrTarget, DynAttr, TryFromDynAttrTarget,
+        Attr, AttrBuilder, AttrPath, AttrTarget, DynAttr,
         parse::{PartialParsedAttr, PartialParsedAttrKind, context::AcceptContext},
     },
     driver::with_ctxt,
@@ -21,8 +21,8 @@ pub struct MetaItemListParser {
 }
 
 impl MetaItemListParser {
-    pub fn new<'sess>(
-        psess: &'sess ParseSess,
+    pub fn new(
+        psess: &ParseSess,
         tokens: TokenStream,
         span: Span,
     ) -> Result<Self, ErrorGuaranteed> {
@@ -41,10 +41,12 @@ impl MetaItemListParser {
         self.items.iter()
     }
 
+    #[allow(dead_code)] // part of the list parser's API
     pub fn len(&self) -> usize {
         self.items.len()
     }
 
+    #[allow(dead_code)] // part of the list parser's API
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -120,6 +122,7 @@ pub struct MetaItemParser {
 
 impl MetaItemParser {
     /// For a single-segment meta item, returns its name; otherwise, returns `None`.
+    #[allow(dead_code)] // part of the meta-item parser's API
     pub fn ident(&self) -> Option<String> {
         if let [ident] = self.path.segments().collect::<Vec<_>>()[..] {
             Some(ident.to_string())
@@ -147,6 +150,7 @@ impl MetaItemParser {
     }
 
     /// Asserts that this `MetaItem` starts with a word, or single segment path.
+    #[allow(dead_code)] // part of the meta-item parser's API
     pub fn word_is(&self, s: &str) -> Option<&ArgParser> {
         self.path()
             .as_ident()
@@ -378,6 +382,7 @@ impl From<MetaItem> for ArgParser {
 pub type AcceptFn<T> = for<'sess> fn(&mut T, &mut AcceptContext<'_, 'sess>, &ArgParser);
 pub type AcceptAttrMap<T> = &'static [(AttrPath, AttributeTemplate, AcceptFn<T>)];
 
+#[allow(dead_code)] // used by the `ASSERTION` below; kept as part of the framework
 pub const MAX_PARSER_ATTRS: usize = 4;
 pub trait AttrtibuteParser: Default + 'static {
     type Attr: Attr;
@@ -404,6 +409,7 @@ impl<T: AttrtibuteParser> std::fmt::Debug for ParserBuilder<T> {
 }
 
 impl<T: AttrtibuteParser> ParserBuilder<T> {
+    #[allow(dead_code)] // compile-time sanity check, not referenced at runtime
     const ASSERTION: () = assert!(MAX_PARSER_ATTRS >= T::ATTRIBUTES.len());
 }
 
@@ -428,9 +434,7 @@ impl<T: AttrtibuteParser> AttrBuilder for ParserBuilder<T> {
             return None;
         };
 
-        let Some(item) = item.cast_ref::<<T::Attr as Attr>::Target>() else {
-            return None;
-        };
+        let item = item.cast_ref::<<T::Attr as Attr>::Target>()?;
 
         let mut parser = T::default();
         with_ctxt(|ctxt| -> Result<_, ErrorGuaranteed> {

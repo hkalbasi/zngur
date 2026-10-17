@@ -76,7 +76,7 @@ impl Attr for Rename {
         self.path.clone()
     }
 
-    fn for_child(&self, item: &dyn RenameTarget) -> Option<Self> {
+    fn for_child(&self, _item: &dyn RenameTarget) -> Option<Self> {
         // if this is a rename_all aimed at children and a re-nameable items
         if self.path() == RENAME_ALL_PATH && matches!(self.target, RenameTargetType::Children) {
             // redirect target to This for children
@@ -156,7 +156,7 @@ impl AttrtibuteParser for RenameParser {
         ),
     ];
 
-    fn finalize(self, target: &<Self::Attr as Attr>::Target) -> Option<Self::Attr> {
+    fn finalize(self, _target: &<Self::Attr as Attr>::Target) -> Option<Self::Attr> {
         if let RenameParser {
             path: Some(path),
             actions: Some(actions),

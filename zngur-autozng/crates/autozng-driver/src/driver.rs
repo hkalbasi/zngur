@@ -39,6 +39,7 @@ scoped_thread_local!(
 /// analysis are not reflected here.
 #[derive(Debug, Default)]
 pub struct AnalyzeReport {
+    #[allow(dead_code)] // counted for the report; not read by the caller yet
     pub errors: usize,
 }
 
@@ -85,7 +86,10 @@ where
                 match render::print_to_file(&spec, &output_path) {
                     Ok(()) => Ok(()),
                     Err(err) => {
-                        eprintln!("autozng: failed to write `{}`: {err}", output_path.display());
+                        eprintln!(
+                            "autozng: failed to write `{}`: {err}",
+                            output_path.display()
+                        );
                         Err(CompilerError::Failed)
                     }
                 }
@@ -170,7 +174,7 @@ pub(crate) fn with_ctxt<R>(f: impl for<'tcx, 'cfg> FnOnce(&DriverContext<'tcx, '
     })
 }
 
-pub(crate) fn set_ctxt<R>(ctx: &DriverContext, f: impl for<'tcx> FnOnce() -> R) -> R {
+pub(crate) fn set_ctxt<R>(ctx: &DriverContext, f: impl FnOnce() -> R) -> R {
     let ctx_ptr: *const () = (&raw const ctx) as _;
     TCX.set(&Cell::new(ctx_ptr), f)
 }

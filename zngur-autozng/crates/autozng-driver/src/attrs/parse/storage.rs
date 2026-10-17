@@ -1,9 +1,6 @@
 use std::rc::Rc;
 
-use crate::{
-    attrs::{Attr, DynAttr},
-    rustc_ext::RustcInternalEx,
-};
+use crate::{attrs::DynAttr, rustc_ext::RustcInternalEx};
 
 use super::*;
 
@@ -60,7 +57,7 @@ impl ToolAttrStore for DocAttrToolsAttrStorage {
         attrs.extend(
             self.doc_lines
                 .iter()
-                .filter_map(|(line, span)| parse_attr_str(&line, *span).ok()),
+                .filter_map(|(line, span)| parse_attr_str(line, *span).ok()),
         );
     }
 }
@@ -81,7 +78,7 @@ impl ToolAttrStore for RawToolAttrStorage {
     }
 
     fn prepare_attrs_into(&self, attrs: &mut Vec<PartialParsedAttr>) {
-        attrs.extend(self.tools.iter().map(|attr| parse_attr_item_ir(attr)));
+        attrs.extend(self.tools.iter().map(parse_attr_item_ir));
     }
 }
 
@@ -118,12 +115,8 @@ impl<T: ToolAttrStore> ToolAttrStorage<T> {
             // not a `DefId`: a `let` binding has no `DefId` of its own, so its attributes only
             // exist under its `HirId` (see `HirLetBindStmt`).
             let attrs = match id.attr_key() {
-                AttrKey::DefId(def_id) => {
-                    rustc_hir::attrs::HasAttrs::get_attrs(def_id, &ctx.tcx)
-                }
-                AttrKey::HirId(hir_id) => {
-                    rustc_hir::attrs::HasAttrs::get_attrs(hir_id, &ctx.tcx)
-                }
+                AttrKey::DefId(def_id) => rustc_hir::attrs::HasAttrs::get_attrs(def_id, &ctx.tcx),
+                AttrKey::HirId(hir_id) => rustc_hir::attrs::HasAttrs::get_attrs(hir_id, &ctx.tcx),
             };
 
             for attr in attrs {
@@ -238,9 +231,9 @@ impl HasAttrs for rustc_span::def_id::CrateNum {
 
 impl HasAttrs for rustc_public::CrateNum {
     fn attr_key(&self) -> AttrKey {
-        AttrKey::DefId(
-            with_ctxt(|ctx| rustc_public::rustc_internal::internal(ctx.tcx, *self).as_def_id()),
-        )
+        AttrKey::DefId(with_ctxt(|ctx| {
+            rustc_public::rustc_internal::internal(ctx.tcx, *self).as_def_id()
+        }))
     }
 }
 

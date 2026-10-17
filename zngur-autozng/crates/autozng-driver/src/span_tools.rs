@@ -18,6 +18,7 @@ impl<T> From<rustc_span::Spanned<T>> for Spanned<T> {
 }
 
 impl<T> Spanned<T> {
+    #[allow(dead_code)] // part of the `Spanned` helper API
     pub fn map<U, F>(self, f: F) -> Spanned<U>
     where
         F: FnOnce(T) -> U,
@@ -27,6 +28,7 @@ impl<T> Spanned<T> {
             span: self.span,
         }
     }
+    #[allow(dead_code)] // part of the `Spanned` helper API
     pub fn as_ref(&self) -> Spanned<&T> {
         Spanned {
             value: &self.value,
@@ -37,6 +39,7 @@ impl<T> Spanned<T> {
 
 impl<T> Spanned<Result<T, AutozngError>> {
     /// transpose the result, leaving spans unchanged
+    #[allow(dead_code)] // part of the `Spanned` helper API
     pub fn transpose(self) -> Result<Spanned<T>, AutozngError> {
         match self.value {
             Ok(value) => {
@@ -52,6 +55,7 @@ pub fn respan<T>(span: Span, value: T) -> Spanned<T> {
     Spanned { value, span }
 }
 
+#[allow(dead_code)] // helper kept alongside `OffsetRustcSpanExt`
 pub trait StableRustcPublicSpanExt {
     fn stable(self) -> rustc_public::ty::Span;
 }
@@ -64,7 +68,9 @@ impl StableRustcPublicSpanExt for Span {
 
 pub trait OffsetRustcSpanExt {
     fn offset_lo(&self, offset: usize) -> Span;
+    #[allow(dead_code)] // part of the span-offset API
     fn offset_hi(&self, offset: usize) -> Span;
+    #[allow(dead_code)] // only reached through `offset_lo`/`offset_hi`
     fn offset_by(&self, offset: usize) -> Span {
         self.offset_lo(offset).offset_hi(offset)
     }

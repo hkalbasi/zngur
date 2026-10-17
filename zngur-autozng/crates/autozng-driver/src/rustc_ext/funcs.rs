@@ -4,8 +4,8 @@ use rustc_public::{
     ty::{FnDef, FnSig, GenericArgKind, GenericArgs, ImplDef, TraitDef, TraitRef, Ty},
 };
 
-use crate::driver::with_ctxt;
-use crate::rustc_ext::RustcPublicTyExt;
+use crate::rustc_ext::{RustcPublicTyExt, convert::stable_trait};
+use crate::{driver::with_ctxt, rustc_ext::RustcInternalEx};
 
 /// Extensions for [`FnDef`]s.
 pub(crate) trait FnDefExt {
@@ -48,14 +48,16 @@ impl FnDefExt for FnDef {
             )
         })
     }
-
     fn impl_of(&self) -> Option<(Ty, ImplDef)> {
         with_ctxt(|ctx| {
             let tcx = ctx.tcx;
             let impl_def_id = tcx.impl_of_assoc(internal(tcx, self.def_id()))?;
             let impl_def = ImplDef(stable(impl_def_id));
-            let self_ty =
-                stable(tcx.type_of(impl_def_id).instantiate_identity().skip_norm_wip());
+            let self_ty = stable(
+                tcx.type_of(impl_def_id)
+                    .instantiate_identity()
+                    .skip_norm_wip(),
+            );
             Some((self_ty.base_ty(), impl_def))
         })
     }
@@ -79,12 +81,15 @@ impl FnDefExt for FnDef {
     }
 }
 
-pub(crate) trait GetFnInfoExt {
+pub(crate) trait GetAssocInfoExt {
+    #[allow(dead_code)] // kept for inspecting a trait/impl method's signature
     fn opt_fn_sig(&self) -> Option<rustc_public::ty::FnSig>;
-    fn opt_fn_def(&self) -> Option<rustc_public::ty::FnDef>;
+    fn opt_fn_def(&self) -> Option<(rustc_public::ty::FnDef, GenericArgs)>;
+    fn opt_trait_def(&self) -> Option<rustc_public::ty::TraitDef>;
+    fn opt_trait_ref(&self) -> Option<rustc_public::ty::TraitRef>;
 }
 
-impl GetFnInfoExt for rustc_public::ty::AssocItem {
+impl GetAssocInfoExt for rustc_public::ty::AssocItem {
     fn opt_fn_sig(&self) -> Option<rustc_public::ty::FnSig> {
         with_ctxt(|ctx| match &self.kind {
             rustc_public::ty::AssocKind::Fn { .. } => {
@@ -100,12 +105,59 @@ impl GetFnInfoExt for rustc_public::ty::AssocItem {
             _ => None,
         })
     }
-    fn opt_fn_def(&self) -> Option<rustc_public::ty::FnDef> {
-        match &self.kind {
-            rustc_public::ty::AssocKind::Fn { .. } => {
-                Some(rustc_public::ty::FnDef(self.def_id.def_id()))
+    fn opt_fn_def(&self) -> Option<(rustc_public::ty::FnDef, GenericArgs)> {
+        with_ctxt(|ctx| {
+            stable(ctx.tcx.type_of(self.def_id.def_id().internal(ctx.tcx)))
+                .value
+                .kind()
+                .fn_def()
+                .map(|(fn_def, generics)| (fn_def, generics.clone()))
+        })
+    }
+
+    fn opt_trait_def(&self) -> Option<rustc_public::ty::TraitDef> {
+        with_ctxt(|ctx| {
+            let tcx = ctx.tcx;
+            let def_id = self.def_id.def_id().internal(tcx);
+            let (parent, kind) = tcx.assoc_parent(def_id)?;
+            match kind {
+                rustc_hir::def::DefKind::Trait => Some(stable_trait(tcx.trait_def(parent)).def_id),
+                rustc_hir::def::DefKind::Impl { of_trait } => {
+                    if of_trait {
+                        let tref = stable(
+                            tcx.impl_trait_ref(parent)
+                                .instantiate_identity()
+                                .skip_normalization(),
+                        );
+                        Some(tref.def_id)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
             }
-            _ => None,
-        }
+        })
+    }
+    fn opt_trait_ref(&self) -> Option<rustc_public::ty::TraitRef> {
+        with_ctxt(|ctx| {
+            let tcx = ctx.tcx;
+            let def_id = self.def_id.def_id().internal(tcx);
+            let (parent, kind) = tcx.assoc_parent(def_id)?;
+            match kind {
+                rustc_hir::def::DefKind::Impl { of_trait } => {
+                    if of_trait {
+                        let tref = stable(
+                            tcx.impl_trait_ref(parent)
+                                .instantiate_identity()
+                                .skip_normalization(),
+                        );
+                        Some(tref)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        })
     }
 }

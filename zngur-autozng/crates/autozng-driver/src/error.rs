@@ -8,6 +8,9 @@ use rustc_span::{DUMMY_SP, ErrorGuaranteed, Span};
 
 use crate::{attrs::AttrPath, driver::with_ctxt, span_tools::Spanned};
 
+// The error type and its helpers are the framework for reporting attribute/analysis errors; the
+// remaining callers are migrated as the passes grow.
+#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum AutozngError {
     #[error("Attribute `{attr_path}` not allowed on this item")]
@@ -24,6 +27,7 @@ pub enum AutozngError {
     AlreadyReported,
 }
 
+#[allow(dead_code)]
 impl AutozngError {
     pub fn custom_w_dummy_span(msg: impl Display) -> Self {
         Self::Custom {
@@ -78,6 +82,7 @@ impl<'a> From<rustc_errors::Diag<'a>> for AutozngError {
     }
 }
 
+#[allow(dead_code)] // used by the analysis passes as they migrate onto `AutozngError`
 pub fn pull_and_emit_errors_from_results<T>(
     results: impl IntoIterator<Item = Result<T, AutozngError>>,
 ) -> Vec<T> {
@@ -99,6 +104,7 @@ pub fn pull_and_emit_errors_from_results<T>(
     })
 }
 
+#[allow(dead_code)] // counterpart to `with_struct_warning_for_rustc_public_span`
 pub fn emit_error_for_rustc_public_span(span: RustcPublicSpan, err: impl Into<DiagMessage>) {
     with_ctxt(|ctx| {
         let span = internal(ctx.tcx, span);
@@ -107,6 +113,7 @@ pub fn emit_error_for_rustc_public_span(span: RustcPublicSpan, err: impl Into<Di
 }
 
 /// Emit a warning attached to a `rustc_public` span (converted to an internal [`Span`]).
+#[allow(dead_code)] // render currently warns through `emit_warning_for_span`
 pub fn emit_warning_for_rustc_public_span(span: RustcPublicSpan, msg: impl Into<DiagMessage>) {
     with_ctxt(|ctx| {
         let span = internal(ctx.tcx, span);
@@ -132,6 +139,7 @@ pub fn emit_warning_for_span(span: Span, msg: impl Into<DiagMessage>) {
     })
 }
 
+#[allow(dead_code)] // counterpart to `with_struct_warning_for_rustc_public_span`
 pub fn with_struct_error_for_rustc_public_span<R>(
     span: RustcPublicSpan,
     err: impl Into<DiagMessage>,

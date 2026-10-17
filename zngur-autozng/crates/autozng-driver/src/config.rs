@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub enum DefaultEmitPolicy {
     #[default]
     PubVis,
+    #[allow(dead_code)] // selectable policy; `run` only exposes `PubVis`/`None` so far
     PubCrateVis,
     None,
 }

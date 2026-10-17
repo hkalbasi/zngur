@@ -1,9 +1,0 @@
-[target.'cfg(target_os = "windows")']
-linker = "rust-lld"
-
-[env]
-# `expect-test` resolves `file!()` paths against the top-most ancestor with a `Cargo.toml`.
-# Because this workspace is nested inside (and excluded from) the parent `zngur` repo, that
-# heuristic would pick the wrong root. Point it at this workspace instead.
-# (`relative = true` is relative to the parent of this `.cargo` directory, i.e. the workspace root.)
-CARGO_WORKSPACE_DIR = { value = ".", relative = true }

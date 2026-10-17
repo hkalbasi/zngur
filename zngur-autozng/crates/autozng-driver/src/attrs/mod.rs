@@ -69,6 +69,8 @@ pub trait AttrBuilder: std::fmt::Debug {
     /// the attribute path to construct this attribute for
     fn valid_for(&self, path: &AttrPath) -> bool;
 
+    // Kept for the parser framework's full API; not every builder needs its paths listed yet.
+    #[allow(dead_code)]
     fn paths(&self) -> Vec<AttrPath>;
 
     /// parse the attr into a full object or error
@@ -92,6 +94,7 @@ impl AttrPath {
         value.into()
     }
 
+    #[allow(dead_code)] // part of the framework's path API; callers iterate `as_ident`/`Display`
     pub fn segments(&self) -> impl Iterator<Item = &str> {
         enum AttrPathIter<'a, S: Iterator<Item = &'a str>, U: Iterator<Item = &'a str>> {
             Static(S),
@@ -109,8 +112,8 @@ impl AttrPath {
             }
         }
         match self {
-            Self::Static(s) => AttrPathIter::Static(s.into_iter().map(|s| *s)),
-            Self::Owned(o) => AttrPathIter::Owned(o.as_ref().into_iter().map(String::as_str)),
+            Self::Static(s) => AttrPathIter::Static(s.iter().copied()),
+            Self::Owned(o) => AttrPathIter::Owned(o.as_ref().iter().map(String::as_str)),
         }
     }
 
@@ -271,7 +274,7 @@ pub trait DynAttr: Any {
 impl<T: Attr + Any> DynAttr for T {
     /// the path the attr is constructed form
     fn path(&self) -> AttrPath {
-        <Self as Attr>::path(&self)
+        <Self as Attr>::path(self)
     }
 
     fn clone_dyn(&self) -> Rc<dyn DynAttr> {
@@ -281,7 +284,7 @@ impl<T: Attr + Any> DynAttr for T {
     /// build an `dyn Attr` if this attribute is applied to a child item
     fn for_child(&self, item: &dyn AttrTarget) -> Option<Rc<dyn DynAttr>> {
         item.cast_ref::<<Self as Attr>::Target>().and_then(|item| {
-            <Self as Attr>::for_child(&self, item).map(|attr| Rc::new(attr) as Rc<dyn DynAttr>)
+            <Self as Attr>::for_child(self, item).map(|attr| Rc::new(attr) as Rc<dyn DynAttr>)
         })
     }
 
@@ -304,11 +307,11 @@ impl<T: Attr + Any> DynAttr for T {
     /// visit an `Attributable` item with this attr
     fn visit(&self, item: &dyn AttrTarget, ctx: &AutozngContext) {
         if let Some(item) = item.cast_ref::<<Self as Attr>::Target>() {
-            <Self as Attr>::visit(&self, item, ctx);
+            <Self as Attr>::visit(self, item, ctx);
         }
     }
     fn debug_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <Self as std::fmt::Debug>::fmt(&self, f)
+        <Self as std::fmt::Debug>::fmt(self, f)
     }
 }
 
@@ -372,6 +375,7 @@ impl<'a> dyn AttrTarget + 'a {
     }
 }
 
+#[allow(dead_code)] // framework helper kept alongside the casting table
 trait TryFromDynAttrTarget {
     fn try_from_dyn_attr_target(value: &dyn AttrTarget) -> Option<&Self>;
 }
@@ -455,6 +459,7 @@ pub fn process_attrs(attrs: Vec<PartialParsedAttr>, item: &dyn AttrTarget) -> Ve
 
 pub trait AttrCollectionExt<'collection> {
     fn for_child(self, item: &dyn AttrTarget) -> Vec<Rc<dyn DynAttr>>;
+    #[allow(dead_code)] // kept for inspecting an item's attribute paths (e.g. `emit_on_implementers`)
     fn get_paths(self) -> Vec<AttrPath>;
     fn visit(self, item: &dyn AttrTarget, ctx: &AutozngContext);
 }
