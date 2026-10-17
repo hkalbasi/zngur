@@ -1,3 +1,9 @@
+//! `#[autozng::policy]` — **placeholder**, parsed but ignored.
+//!
+//! No concrete policies have been specified yet, so `visit`/`finalize` intentionally do
+//! nothing (the parser currently even discards its own result). When policies exist they
+//! are expected to adjust emission defaults (e.g. `Config::default_emit_policy`).
+
 use rustc_attr_parsing::template;
 
 use crate::attrs::AttrPath;

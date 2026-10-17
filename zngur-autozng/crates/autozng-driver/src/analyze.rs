@@ -1,3 +1,18 @@
+//! Entry point that drives the two analysis passes.
+//!
+//! [`analyze`] runs:
+//! 1. an **HIR pass** ([`visit::HirVisitor`]) over every item-like in the crate, which
+//!    handles `const` items (incl. `emit_items`), `ty` aliases and `let` bindings, and
+//! 2. a **`rustc_public` pass** ([`CrateAnalysisVisitor`]) over the local crate's ADTs,
+//!    trait decls and trait impls.
+//!
+//! Results are accumulated into a single [`AutozngContext`], from which a `ZngurSpec` must
+//! be built before `tcx` goes out of scope (see `render.rs`); the render step itself is not
+//! implemented yet.
+//!
+//! [`experiment`] is scratch exploration output (trait-detection prototypes); it should be
+//! removed or folded into real analysis logic.
+
 use std::ops::ControlFlow;
 
 use itertools::Itertools;
@@ -49,6 +64,8 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
 }
 
 pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport> {
+    // NOTE: the context borrows `tcx`, so any `ZngurSpec` must be built from it before this
+    // function returns. There is no plumbing for that yet — see render.rs / driver.rs.
     let mut ctx = AutozngContext::default();
 
     let krate = rustc_public::local_crate();
@@ -71,6 +88,8 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport> {
     }
 }
 
+/// Scratch/exploration code: prototypes for detecting which traits implementors should be
+/// emitted for and inspecting trait associated fns. Not part of the real pipeline.
 fn experiment(tcx: TyCtxt) {
     eprintln!("===========================");
     eprintln!("     Trait searching ");

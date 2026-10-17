@@ -1,3 +1,12 @@
+//! Thin wrapper around `rustc_driver::run_compiler` that runs autozng's analysis after the
+//! compiler's analysis phase and stops compilation before codegen.
+//!
+//! [`RustcPublic::run`] drives the compile; the closure passed to `run_compiler` is this
+//! struct itself, whose [`Callbacks::after_analysis`] invokes the user-supplied analyze
+//! callback and stashes the result. `run` then inspects that result. The `Emitting ZNG`
+//! arm below is a placeholder: rendering `AutozngContext` to `.zng` is not wired up yet
+//! (see `render.rs`).
+
 use rustc_driver::{Callbacks, Compilation, run_compiler};
 use rustc_interface::interface;
 use rustc_middle::ty::TyCtxt;
@@ -10,15 +19,22 @@ use scoped_tls::scoped_thread_local;
 
 use crate::config::Config;
 
+/// Ambient state made available to [`with_ctxt`] for the duration of the analysis callback.
 pub struct DriverContext<'tcx, 'cfg> {
     pub tcx: TyCtxt<'tcx>,
     pub cfg: &'cfg Config,
 }
 
+// Type-erased `&DriverContext<'_, '_>` (as a raw pointer) so `with_ctxt` can recover it
+// without naming the `'tcx`/`'cfg` lifetimes. Only set inside `after_analysis`.
 scoped_thread_local!(
     static TCX: Cell<*const ()>
 );
 
+/// Result of a completed analysis pass, carried out of `after_analysis` via `ControlFlow`.
+///
+/// Currently only counts hard errors seen by the `DiagCtxt`; warnings emitted during
+/// analysis are not reflected here.
 #[derive(Debug, Default)]
 pub struct AnalyzeReport {
     pub errors: usize,
@@ -54,7 +70,10 @@ where
         });
         match (compiler_result, self.result.take()) {
             (Ok(Ok(())), Some(ControlFlow::Continue(()))) => {
-                // emit ZNG here
+                // TODO(render): the `ZngurSpec` must be built from the `AutozngContext`
+                // *inside* `after_analysis` (while the `TyCtxt` is alive) and then printed
+                // here with `IDLPrinter` (see `render.rs`). The analyzed context is
+                // currently dropped, so this arm only logs.
                 eprintln!("Emitting ZNG");
                 Ok(())
             }

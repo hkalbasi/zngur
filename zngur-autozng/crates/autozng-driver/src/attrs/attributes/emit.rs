@@ -25,12 +25,20 @@ const SKIP_PATH: AttrPath = AttrPath::from_static(&[AUTOZNG_NAMESPACE, SKIP_NAME
 const EMIT_PATH_ACTIONS: &[(AttrPath, EmitAction)] =
     &[(EMIT_PATH, EmitAction::Emit), (SKIP_PATH, EmitAction::Skip)];
 
+/// Which item an `emit`/`skip` entry applies to.
+///
+/// `This` means the annotated item itself (bare `#[autozng::emit]` or the `self` keyword);
+/// `Name` names a child field / associated item, e.g. `emit(third, forth)`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EmitItem {
     This,
     Name(String),
 }
 
+/// The forced emission state for an item.
+///
+/// `Default` defers to `Config::default_emit_policy` + visibility; `Emit`/`Skip` override.
+/// Combining (via `|`) lets more specific attributes win over less specific ones.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum EmitAction {
     #[default]
@@ -254,6 +262,10 @@ impl EmitParser {
 const EMIT_ON_IMPL_PATH: AttrPath =
     AttrPath::from_static(&[AUTOZNG_NAMESPACE, "emit_on_implementors"]);
 
+/// Target for `#[autozng::emit_on_implementors]`: traits and trait impl blocks.
+///
+/// Semantics: emit the eligible (public or `emit`-tagged) methods of this trait / impl for
+/// every implementing type found. Parsing works; [`EmitOnImpl::visit`] is still a stub.
 pub trait EmitOnImplTarget {}
 
 #[derive(Debug, Copy, Clone)]
@@ -267,7 +279,7 @@ impl Attr for EmitOnImpl {
     }
 
     fn visit(&self, item: &Self::Target, ctx: &AutozngContext) {
-        // TODO:
+        // TODO: emit the trait's / impl's eligible methods onto each implementing type.
     }
 }
 
