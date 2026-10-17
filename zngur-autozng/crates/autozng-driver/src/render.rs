@@ -17,21 +17,25 @@
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+use indexmap::IndexMap;
 use rustc_errors::DiagMessage;
 use rustc_public::abi::FieldsShape;
 use rustc_public::ty::{
-    AdtDef, AssocKind, FieldDef, FnDef, GenericArgKind, GenericArgs, RigidTy, Ty, TyKind,
+    AdtDef, AssocKind, FieldDef, FnDef, GenericArgKind, GenericArgs, GenericParamDefKind, RigidTy,
+    TraitDecl, TraitDef, Ty, TyKind,
 };
 use rustc_public::{CrateDef, CrateDefType, DefId};
 use rustc_span::Span;
 use zngur_def::printing::IDLPrinter;
 use zngur_def::{
-    LayoutPolicy, PrimitiveRustType, RustPathAndGenerics, RustType, ZngurField, ZngurFn,
-    ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver, ZngurSpec, ZngurType, ZngurVariant,
-    ZngurWellknownTrait,
+    LayoutPolicy, PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurField,
+    ZngurFn, ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver, ZngurSpec, ZngurTrait,
+    ZngurType, ZngurVariant, ZngurWellknownTrait,
 };
 
-use crate::ctx::{AutozngContext, FnRecord, ImplRecord, TraitFnRecord, TyRecord};
+use crate::ctx::{
+    AutozngContext, ExportedTraitRecord, FnRecord, ImplRecord, TraitFnRecord, TyRecord,
+};
 use crate::driver::with_ctxt;
 use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_rustc_public_span};
 use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
@@ -67,11 +71,197 @@ pub fn build_spec(ctx: &AutozngContext) -> ZngurSpec {
     // `fn_records` preserves discovery order; sort for stable output.
     funcs.sort_by_cached_key(|func| func.path.to_string());
 
+    // One `trait ... { .. }` block per recorded trait, keyed by its `RustTrait` representation
+    // (the `Fn*` family is collapsed; see `rust_trait_for`). Discovery order is deterministic,
+    // but sort by the key's spelling for stable output like `types`/`funcs`.
+    let mut traits: Vec<(RustTrait, ZngurTrait)> =
+        ctx.trait_records().iter().filter_map(build_trait).collect();
+    traits.sort_by_cached_key(|(key, _)| key.to_string());
+    let traits: IndexMap<RustTrait, ZngurTrait> = traits.into_iter().collect();
+
     ZngurSpec {
         types,
         funcs,
+        traits,
         ..ZngurSpec::default()
     }
+}
+
+/// Build one recorded trait into its `ZngurSpec::traits` entry: the [`RustTrait`] key plus the
+/// [`ZngurTrait`] block (its associated functions as `.zng` methods).
+///
+/// Returns `None` when the trait cannot be represented (e.g. a const generic parameter).
+fn build_trait(record: &ExportedTraitRecord) -> Option<(RustTrait, ZngurTrait)> {
+    let key = rust_trait_for(record)?;
+    let methods = record
+        .fns
+        .iter()
+        .filter_map(build_trait_decl_method)
+        .collect();
+    let trt = ZngurTrait {
+        tr: key.clone(),
+        methods,
+    };
+    Some((key, trt))
+}
+
+/// The [`RustTrait`] representation of an exported trait, used as the key of
+/// `ZngurSpec::traits`.
+///
+/// Most traits are just their full path ([`RustTrait::Normal`]). The `Fn`/`FnMut`/`FnOnce`
+/// family is collapsed to [`RustTrait::Fn`] (its call signature) so codegen can build a
+/// `std::function`-style bridge instead of a vtable.
+fn rust_trait_for(record: &ExportedTraitRecord) -> Option<RustTrait> {
+    let path = trait_path(record.decl.def_id);
+    match fn_trait_name(&path) {
+        Some(name) => Some(fn_trait_rust_trait(record, name)),
+        None => Some(RustTrait::Normal(RustPathAndGenerics {
+            path,
+            generics: trait_decl_generics(&record.decl)?,
+            named_generics: Vec::new(),
+        })),
+    }
+}
+
+/// The trait's full path as `.zng` path segments: the local crate is spelled `crate`, external
+/// crates keep their name (the printer adds the leading `::`).
+fn trait_path(def: TraitDef) -> Vec<String> {
+    let mut path: Vec<String> = def.name().split("::").map(Into::into).collect();
+    if def.krate().is_local && !path.is_empty() {
+        path[0] = "crate".to_string();
+    }
+    path
+}
+
+/// The name of the `Fn*` trait this path denotes, if any (`Fn`/`FnMut`/`FnOnce` in `std`/`core`).
+fn fn_trait_name(path: &[String]) -> Option<String> {
+    match path {
+        [krate, ops, name] if (krate == "std" || krate == "core") && ops == "ops" => {
+            matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce").then(|| name.clone())
+        }
+        _ => None,
+    }
+}
+
+/// The trait's own generic parameters as `.zng` type variables (`trait Foo<T>` -> `Foo<T>`).
+///
+/// Returns `None` for a const generic parameter, which the `.zng` IR cannot spell.
+fn trait_decl_generics(decl: &TraitDecl) -> Option<Vec<RustType>> {
+    let generics = decl.generics_of();
+    let mut out = Vec::new();
+    for param in &generics.params {
+        // A trait's implicit `Self` is its first parameter; it is not a `.zng` generic argument.
+        if generics.has_self && param.index == 0 {
+            continue;
+        }
+        match param.kind {
+            GenericParamDefKind::Lifetime => {}
+            GenericParamDefKind::Type { .. } => {
+                out.push(RustType::TypeVar(TypeVar(param.name.to_string())));
+            }
+            GenericParamDefKind::Const { .. } => return None,
+        }
+    }
+    Some(out)
+}
+
+/// The `RustTrait::Fn` representation of a `Fn`/`FnMut`/`FnOnce` trait: its name plus the call
+/// signature (`Args` -> `Output`).
+///
+/// A trait *declaration* has no concrete instantiation, so `Args` and `Output` are rendered as
+/// type variables; a concrete `Fn*` signature comes from a `dyn`/`impl` trait reference (see
+/// `type_map`). `Args` is the first type parameter after `Self`, `Output` the sole associated
+/// type.
+fn fn_trait_rust_trait(record: &ExportedTraitRecord, name: String) -> RustTrait {
+    let decl = &record.decl;
+    let generics = decl.generics_of();
+    let inputs = generics
+        .params
+        .iter()
+        .filter(|param| !(generics.has_self && param.index == 0))
+        .filter_map(|param| match param.kind {
+            GenericParamDefKind::Type { .. } => {
+                Some(RustType::TypeVar(TypeVar(param.name.to_string())))
+            }
+            _ => None,
+        })
+        .collect();
+    let output = decl
+        .def_id
+        .associated_items()
+        .iter()
+        .find_map(|item| match item.kind {
+            AssocKind::Type { .. } => Some(RustType::TypeVar(TypeVar(
+                item.def_id
+                    .def_id()
+                    .name()
+                    .split("::")
+                    .last()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ))),
+            _ => None,
+        })
+        .unwrap_or(RustType::UNIT);
+    RustTrait::Fn {
+        name,
+        inputs,
+        output: Box::new(output),
+    }
+}
+
+/// Build one of a trait declaration's associated functions into a `.zng` [`ZngurMethod`].
+///
+/// The declaration has no concrete `Self`, so the method's identity signature is used: `Self`
+/// (and any other generic parameter) appears as itself, and a method whose signature mentions one
+/// is warn-and-skipped (the `.zng` IR has no type parameters).
+fn build_trait_decl_method(trait_fn: &TraitFnRecord) -> Option<ZngurMethod> {
+    let def = trait_fn.def;
+    let assoc_item = def.associated_item()?;
+    let AssocKind::Fn { name, has_self } = &assoc_item.kind else {
+        return None;
+    };
+    let name = name.to_string();
+    // The receiver is the trait's own `Self` parameter: the first identity argument.
+    let self_ty = match trait_fn.generics.0.first() {
+        Some(GenericArgKind::Type(ty)) => *ty,
+        _ => return None,
+    };
+    let signature = def.fn_sig().skip_binder();
+    let (receiver, inputs, output) = method_signature_parts(
+        def,
+        &name,
+        *has_self,
+        self_ty,
+        None,
+        &signature,
+        trait_fn.span,
+    )?;
+    Some(ZngurMethod {
+        name,
+        generics: own_type_params(&def),
+        receiver,
+        inputs,
+        output,
+        is_safe: matches!(signature.safety, rustc_public::mir::Safety::Safe),
+    })
+}
+
+/// The type parameters a function declares itself, as `.zng` type variables (`fn foo<T>` -> `[T]`).
+///
+/// `Generics::params` holds only the function's own parameters (the enclosing trait/impl's are
+/// counted by `parent_count`), which is exactly what the `.zng` turbofish lists.
+fn own_type_params(def: &FnDef) -> Vec<RustType> {
+    def.generics_of()
+        .params
+        .iter()
+        .filter_map(|param| match param.kind {
+            GenericParamDefKind::Type { .. } => {
+                Some(RustType::TypeVar(TypeVar(param.name.to_string())))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Convert a single recorded type into a [`ZngurType`], or `None` if it cannot be represented
@@ -581,10 +771,9 @@ fn method_signature_parts(
             }
             // `self` by value: the first parameter is exactly the self type. Compared against
             // the instantiated signature (and the ADT definition, for uninstantiated methods)
-            // so concrete generic instances like `Container<i32>` are recognized.
-            Some(TyKind::RigidTy(RigidTy::Adt(_, _)))
-                if first_input == Some(self_ty) || first_input == self_def_ty =>
-            {
+            // so concrete generic instances like `Container<i32>` are recognized, and against
+            // the trait's own `Self` parameter for a trait declaration.
+            _ if first_input == Some(self_ty) || first_input == self_def_ty => {
                 ZngurMethodReceiver::Move
             }
             other => {
