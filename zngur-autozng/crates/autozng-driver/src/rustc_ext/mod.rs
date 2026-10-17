@@ -9,7 +9,7 @@ mod vis;
 
 pub(crate) use adt::{AdtDefExt, FieldDefExt, VariantDefExt};
 pub(crate) use convert::RustcInternalEx;
-pub(crate) use funcs::GetFnInfoExt;
+pub(crate) use funcs::{FnDefExt, GetFnInfoExt};
 pub(crate) use generics::{ClausesOfExt, GenericClauses};
 pub(crate) use hir::{HirConstBodyExt, HirConstItem, HirItemExt, HirLetBindStmt, HirTyAlias};
 pub(crate) use traits::{WellKownTraitsExt, WellKnownTrait};

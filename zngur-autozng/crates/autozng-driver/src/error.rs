@@ -106,9 +106,28 @@ pub fn emit_error_for_rustc_public_span(span: RustcPublicSpan, err: impl Into<Di
     })
 }
 
+/// Emit a warning attached to a `rustc_public` span (converted to an internal [`Span`]).
 pub fn emit_warning_for_rustc_public_span(span: RustcPublicSpan, msg: impl Into<DiagMessage>) {
     with_ctxt(|ctx| {
         let span = internal(ctx.tcx, span);
+        ctx.tcx.dcx().struct_span_warn(span, msg).emit();
+    })
+}
+
+/// The internal [`Span`] of a `rustc_public` definition.
+///
+/// Used to record where an item was selected for emission (the item's own span), e.g. for the
+/// implicit `Emit` attribute of an [`crate::attrs::attributes::emit::EmitTarget`].
+pub fn span_of_def(def_id: rustc_public::DefId) -> Span {
+    with_ctxt(|ctx| internal(ctx.tcx, def_id.span()))
+}
+
+/// Emit a warning attached to an internal [`Span`].
+///
+/// Used when the warning's primary span comes from an attribute (`#[autozng::emit]` /
+/// `emit_items`) rather than from the offending item, which may have no `DefId` of its own.
+pub fn emit_warning_for_span(span: Span, msg: impl Into<DiagMessage>) {
+    with_ctxt(|ctx| {
         ctx.tcx.dcx().struct_span_warn(span, msg).emit();
     })
 }

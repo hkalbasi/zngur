@@ -736,10 +736,10 @@ impl WriteIDL for crate::ZngurMethod {
         if self.generics.len() > 0 {
             write!(p, "<")?;
             for (i, generic) in self.generics.iter().enumerate() {
-                p.write_idl(generic)?;
-                if i < self.generics.len() {
+                if i > 0 {
                     write!(p, ", ")?;
                 }
+                p.write_idl(generic)?;
             }
             write!(p, ">")?;
         }

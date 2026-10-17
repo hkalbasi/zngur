@@ -5,6 +5,7 @@
 //! returning `false`** — `ty` aliases are visited but not emitted.
 
 use rustc_public::rustc_internal::stable;
+use rustc_span::Span;
 
 use crate::{
     attrs::{
@@ -16,19 +17,32 @@ use crate::{
         macros::impl_attr_target,
     },
     ctx::AutozngContext,
+    driver::with_ctxt,
+    rustc_ext::FnDefExt,
 };
 
 impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
     fn emit(&self, ctx: &AutozngContext) {
+        // The recorded span is the `const` item itself (the item tagged by `emit_items`): the
+        // enumerated types have no source span of their own.
+        let span = self.span();
         // record any relevant inner type in the `const`
         for ty in self.inner_emit_types() {
-            ctx.record_ty(&ty);
+            ctx.record_ty(&ty, span);
         }
 
-        // visit ant let bindings inside the `const`'s block
+        // visit any let bindings inside the `const`'s block
         for stmt in self.body_let_bind_stmts() {
+            // A `let` binding has no `DefId` of its own, so its attribute key resolves to the
+            // enclosing `const`: `autozng_attrs` therefore returns the *const's* attributes
+            // (forwarding any child-targeted ones onto the binding). The binding's own implicit
+            // `Emit`/`Skip` action is applied separately, since the `DefId`-keyed cache never
+            // computes it for a `let`.
             let attrs = stmt.autozng_attrs();
             attrs.visit(&stmt, ctx);
+            if let Some(implicit) = stmt.implicit_emit_attr() {
+                implicit.visit(&stmt, ctx);
+            }
         }
     }
 }
@@ -41,13 +55,44 @@ impl EmitTarget for crate::rustc_ext::HirLetBindStmt {
             return false;
         }
 
-        ctx.record_ty(&self.ty);
+        // A `let` binding inside an `emit_items` const enumerates either a concrete type, or a
+        // monomorphization of a function (an fn item such as `foo::<u8>` / `Self::bar::<u8>`).
+        let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, generics)) =
+            self.ty.kind()
+        else {
+            ctx.record_ty(&self.ty, self.emit_span());
+            return true;
+        };
+
+        // The span of the `let` binding that selected the item.
+        let span = self.emit_span();
+        // `tref` is `Some` when the fn item is a trait method; `partial_args` are the fn item's
+        // own generic args, present when it was monomorphized (`foo::<u8>`).
+        let tref = fn_def.trait_ref(&generics);
+        let partial_args = (!generics.0.is_empty()).then(|| generics.clone());
+
+        // Inside an impl const the fn item is a method of *that* impl. Otherwise it is attached
+        // to its own impl (an associated fn), to its own trait (a trait method), or recorded as
+        // a free function.
+        if let Some((self_ty, impl_def)) = self.impl_parent() {
+            ctx.record_impl_method(self_ty, impl_def, fn_def, partial_args.clone(), span);
+        } else if let Some((self_ty, impl_def)) = fn_def.impl_of() {
+            ctx.record_impl_method(self_ty, impl_def, fn_def, partial_args.clone(), span);
+        } else if let Some(tref) = tref {
+            ctx.record_trait_fn(fn_def, tref, generics, span);
+        } else {
+            ctx.record_fn(fn_def, partial_args, span);
+        }
 
         true
     }
 
     fn name(&self) -> String {
         stable(self.hir_id.owner.to_def_id()).name()
+    }
+
+    fn emit_span(&self) -> Span {
+        with_ctxt(|ctx| ctx.tcx.hir_span(self.hir_id))
     }
 
     fn implicit_action(&self) -> Option<EmitAction> {
@@ -82,6 +127,9 @@ impl EmitTarget for crate::rustc_ext::HirTyAlias {
     }
     fn name(&self) -> String {
         stable(self.owner_id.to_def_id()).name()
+    }
+    fn emit_span(&self) -> Span {
+        with_ctxt(|ctx| ctx.tcx.def_span(self.owner_id.def_id))
     }
     fn implicit_action(&self) -> Option<EmitAction> {
         Some(EmitAction::Default)

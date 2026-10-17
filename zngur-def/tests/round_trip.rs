@@ -303,6 +303,29 @@ type MyType {
 }
 
 #[test]
+fn reparse_method_generics() {
+    // The turbofish must be comma-separated with no trailing comma (`<u8, >` would not parse).
+    let _ = check_round_trip(
+        r#"
+type MyType {
+    #layout(size = 24, align = 8);
+
+    fn foo<u8>(&self) -> u8;
+    fn bar<u8, u64>(self) -> u64;
+}
+    "#,
+        expect![[r#"
+            type ::MyType {
+                #layout(size = 24, align = 8);
+
+                fn foo<u8>(&self) -> u8;
+                fn bar<u8, u64>(self) -> u64;
+            }
+        "#]],
+    );
+}
+
+#[test]
 fn reparse_fields() {
     let _ = check_round_trip(
         r#"

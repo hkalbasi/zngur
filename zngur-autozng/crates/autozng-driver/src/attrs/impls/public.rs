@@ -8,6 +8,7 @@
 use rustc_public::CrateDef;
 use rustc_public::rustc_internal::{internal, stable};
 use rustc_public::ty::AssocKind;
+use rustc_span::Span;
 
 use crate::{
     attrs::{
@@ -21,6 +22,7 @@ use crate::{
     },
     ctx::AutozngContext,
     driver::with_ctxt,
+    error::span_of_def,
     rustc_ext::{FieldDefExt, RustcPublicTyExt, VisibilityExt},
 };
 
@@ -40,12 +42,16 @@ impl EmitTarget for rustc_public::ty::AdtDef {
         if !action.emit_for_visibility(vis, ctx.config().default_emit_policy) {
             return false;
         }
-        ctx.record_adt(self);
+        ctx.record_adt(self, self.emit_span());
         true
     }
 
     fn name(&self) -> String {
         self.def_id().name()
+    }
+
+    fn emit_span(&self) -> Span {
+        span_of_def(self.def_id())
     }
 
     fn implicit_action(&self) -> Option<EmitAction> {
@@ -75,12 +81,16 @@ impl EmitTarget for rustc_public::ty::FnDef {
         if !action.emit_for_visibility(vis, ctx.config().default_emit_policy) {
             return false;
         }
-        ctx.record_fn(*self);
+        ctx.record_fn(*self, None, self.emit_span());
         true
     }
 
     fn name(&self) -> String {
         simple_name(self.def_id().name())
+    }
+
+    fn emit_span(&self) -> Span {
+        span_of_def(self.def_id())
     }
 
     fn implicit_action(&self) -> Option<EmitAction> {
@@ -118,6 +128,10 @@ impl EmitTarget for rustc_public::ty::ImplDef {
         self.def_id().name()
     }
 
+    fn emit_span(&self) -> Span {
+        span_of_def(self.def_id())
+    }
+
     fn implicit_action(&self) -> Option<EmitAction> {
         Some(EmitAction::Default)
     }
@@ -149,13 +163,17 @@ impl EmitTarget for rustc_public::ty::AssocItem {
             let self_ty =
                 stable(tcx.type_of(impl_def_id).instantiate_identity().skip_norm_wip());
             let fn_def = rustc_public::ty::FnDef(self.def_id.def_id());
-            ctx.record_impl_method(self_ty.base_ty(), impl_def, fn_def, None);
+            ctx.record_impl_method(self_ty.base_ty(), impl_def, fn_def, None, self.emit_span());
             true
         })
     }
 
     fn name(&self) -> String {
         simple_name(self.def_id.def_id().name())
+    }
+
+    fn emit_span(&self) -> Span {
+        span_of_def(self.def_id.def_id())
     }
 
     fn implicit_action(&self) -> Option<EmitAction> {
@@ -184,12 +202,16 @@ impl EmitTarget for rustc_public::ty::FieldDef {
         let Some(adt) = self.adt_def() else {
             return false;
         };
-        ctx.record_field(adt.ty().base_ty(), self.clone());
+        ctx.record_field(adt.ty().base_ty(), self.clone(), self.emit_span());
         true
     }
 
     fn name(&self) -> String {
         self.name.to_string()
+    }
+
+    fn emit_span(&self) -> Span {
+        span_of_def(self.def_id())
     }
 
     fn implicit_action(&self) -> Option<EmitAction> {
@@ -214,6 +236,10 @@ impl EmitTarget for rustc_public::ty::TraitDef {
 
     fn name(&self) -> String {
         self.def_id().name()
+    }
+
+    fn emit_span(&self) -> Span {
+        span_of_def(self.def_id())
     }
 }
 

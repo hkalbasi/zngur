@@ -12,9 +12,14 @@ use crate::{
 };
 
 pub trait EmitItemsTarget {
+    /// Process the `const` tagged `#[autozng::emit_items]`.
     fn emit(&self, _ctx: &AutozngContext) {}
 }
 
+/// `#[autozng::emit_items]` on a `const`.
+///
+/// The `const` item (through [`EmitItemsTarget`]) is the "attributed item": its own span is what
+/// the enumerated items record, so the marker carries no span of its own.
 #[derive(Debug, Clone)]
 pub struct EmitItems;
 
