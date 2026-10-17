@@ -112,8 +112,33 @@ pub struct AutozngContext {
 }
 
 impl AutozngContext {
+    /// Create a context that carries the driver's [`Config`].
+    pub fn new(cfg: Config) -> Self {
+        AutozngContext {
+            cfg,
+            data: AutozngContextData::default(),
+        }
+    }
+
     pub fn config(&self) -> &Config {
         &self.cfg
+    }
+
+    /// All types recorded so far, keyed by their (base) `Ty`.
+    ///
+    /// Used by the render step to build a [`zngur_def::ZngurSpec`]. The borrow must be
+    /// dropped before calling any method that records more types.
+    pub fn ty_records(&self) -> std::cell::Ref<'_, FxHashMap<Ty, TyRecord>> {
+        self.data.tys.borrow()
+    }
+
+    /// The export name recorded for `key` (`#[autozng::rename]`), if any.
+    pub fn export_name_for<T: IntoMetadataKey + ?Sized>(&self, key: &T) -> Option<String> {
+        self.data
+            .metadata
+            .borrow()
+            .get(&key.to_metadata_key())
+            .and_then(|record| record.export_name.clone())
     }
 
     pub fn with_metadata_mut<T: IntoMetadataKey + ?Sized, R>(

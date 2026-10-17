@@ -3,8 +3,7 @@
 //!
 //! [`RustcPublic::run`] drives the compile; the closure passed to `run_compiler` is this
 //! struct itself, whose [`Callbacks::after_analysis`] invokes the user-supplied analyze
-//! callback and stashes the result. `run` then inspects that result. The `Emitting ZNG`
-//! arm below is a placeholder: rendering `AutozngContext` to `.zng` is not wired up yet
+//! callback and stashes the owned render result. `run` then writes the resulting `.zng`
 //! (see `render.rs`).
 
 use rustc_driver::{Callbacks, Compilation, run_compiler};
@@ -14,10 +13,13 @@ use rustc_public::CompilerError;
 use rustc_public::rustc_internal;
 use std::cell::Cell;
 use std::ops::ControlFlow;
+use std::path::PathBuf;
 
 use scoped_tls::scoped_thread_local;
+use zngur_def::ZngurSpec;
 
 use crate::config::Config;
+use crate::render;
 
 /// Ambient state made available to [`with_ctxt`] for the duration of the analysis callback.
 pub struct DriverContext<'tcx, 'cfg> {
@@ -42,23 +44,27 @@ pub struct AnalyzeReport {
 
 pub struct RustcPublic<F>
 where
-    F: for<'tcx> FnMut(TyCtxt<'tcx>) -> ControlFlow<AnalyzeReport> + Send,
+    F: for<'tcx> FnMut(TyCtxt<'tcx>) -> ControlFlow<AnalyzeReport, ZngurSpec> + Send,
 {
-    result: Option<ControlFlow<AnalyzeReport>>,
+    result: Option<ControlFlow<AnalyzeReport, ZngurSpec>>,
     analyze_callback: F,
     cfg: Config,
+    /// Where to write the `.zng`, decided in `after_analysis` (the crate name is only
+    /// available while the `TyCtxt` is alive).
+    output_path: Option<PathBuf>,
 }
 
 impl<F> RustcPublic<F>
 where
-    F: for<'tcx> FnMut(TyCtxt<'tcx>) -> ControlFlow<AnalyzeReport> + Send,
+    F: for<'tcx> FnMut(TyCtxt<'tcx>) -> ControlFlow<AnalyzeReport, ZngurSpec> + Send,
 {
     /// Creates a new `RustcPublic` instance, with given test_function and arguments.
-    pub fn new(callback: F) -> Self {
+    pub fn new(callback: F, cfg: Config) -> Self {
         RustcPublic {
             result: None,
             analyze_callback: callback,
-            cfg: Config::default(),
+            cfg,
+            output_path: None,
         }
     }
 
@@ -69,13 +75,20 @@ where
             Ok(())
         });
         match (compiler_result, self.result.take()) {
-            (Ok(Ok(())), Some(ControlFlow::Continue(()))) => {
-                // TODO(render): the `ZngurSpec` must be built from the `AutozngContext`
-                // *inside* `after_analysis` (while the `TyCtxt` is alive) and then printed
-                // here with `IDLPrinter` (see `render.rs`). The analyzed context is
-                // currently dropped, so this arm only logs.
-                eprintln!("Emitting ZNG");
-                Ok(())
+            (Ok(Ok(())), Some(ControlFlow::Continue(spec))) => {
+                // The `ZngurSpec` was built inside `after_analysis` (while the `TyCtxt` was
+                // alive) and is now printed with `IDLPrinter`.
+                let Some(output_path) = self.output_path.take() else {
+                    eprintln!("autozng: no `.zng` output path was computed");
+                    return Err(CompilerError::Failed);
+                };
+                match render::print_to_file(&spec, &output_path) {
+                    Ok(()) => Ok(()),
+                    Err(err) => {
+                        eprintln!("autozng: failed to write `{}`: {err}", output_path.display());
+                        Err(CompilerError::Failed)
+                    }
+                }
             }
             (Ok(Ok(())), Some(ControlFlow::Break(report))) => {
                 eprintln!("Errors during analysis?");
@@ -95,7 +108,7 @@ where
 
 impl<F> Callbacks for RustcPublic<F>
 where
-    F: for<'tcx> FnMut(TyCtxt<'tcx>) -> ControlFlow<AnalyzeReport> + Send,
+    F: for<'tcx> FnMut(TyCtxt<'tcx>) -> ControlFlow<AnalyzeReport, ZngurSpec> + Send,
 {
     /// Called after analysis. Return value instructs the compiler whether to
     /// continue the compilation afterwards (defaults to `Compilation::Continue`)
@@ -111,6 +124,11 @@ where
             };
             set_ctxt(driver_ctx, || {
                 self.result = Some((self.analyze_callback)(tcx));
+
+                // The `.zng` destination depends on the crate name, which is only reachable
+                // here (inside the `rustc_public` context, while `tcx` is alive).
+                let crate_name = rustc_public::local_crate().name.to_string();
+                self.output_path = Some(output_path(&self.cfg, &crate_name));
             })
         })
         .unwrap();
@@ -118,6 +136,24 @@ where
         // stop after analysis
         Compilation::Stop
     }
+}
+
+/// Decide where the `.zng` file for `crate_name` should be written.
+///
+/// An explicit `--output-zng` path is used verbatim. Otherwise the file is named after the
+/// crate and placed in rustc's `--out-dir` (or the current directory when rustc would have
+/// defaulted to it). rustc's own `-o` argument is intentionally ignored.
+fn output_path(config: &Config, crate_name: &str) -> PathBuf {
+    if let Some(explicit) = &config.output.output_zng {
+        return explicit.clone();
+    }
+
+    let dir = config
+        .output
+        .out_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("."));
+    dir.join(format!("{crate_name}.zng"))
 }
 
 /// This is here so that the tcx and some configuration values can be accessed from trait extensions on rustc_public
