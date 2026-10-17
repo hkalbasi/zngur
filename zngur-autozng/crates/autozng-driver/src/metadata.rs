@@ -2,6 +2,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use rustc_hash::FxHashMap;
 use rustc_public::{CrateDef, DefId, rustc_internal::stable};
+use rustc_span::Span;
 
 use crate::driver::with_ctxt;
 
@@ -77,6 +78,12 @@ impl IntoMetadataKey for rustc_public::ty::ImplDef {
         MetadataKey::from_public_def_id(self.def_id())
     }
 }
+impl IntoMetadataKey for rustc_public::ty::FieldDef {
+    #[inline(always)]
+    fn to_metadata_key(&self) -> MetadataKey {
+        MetadataKey::from_public_def_id(self.def_id())
+    }
+}
 
 impl IntoMetadataKey for rustc_public::Crate {
     fn to_metadata_key(&self) -> MetadataKey {
@@ -91,9 +98,21 @@ impl IntoMetadataKey for rustc_public::Crate {
     }
 }
 
+/// The result of a `#[autozng::rename]`: the name to export and the span of the attribute that
+/// produced it.
+///
+/// The span is kept so render-time diagnostics can point a `renamed here` note at the
+/// offending `rename` (see `render::warn_unsupported_rename`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportName {
+    pub name: String,
+    /// Span of the `#[autozng::rename(...)]` attribute that produced `name`.
+    pub span: Span,
+}
+
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct MetadataRecord {
-    pub export_name: Option<String>,
+    pub export_name: Option<ExportName>,
 }
 
 pub type MetadataMap = FxHashMap<MetadataKey, MetadataRecord>;

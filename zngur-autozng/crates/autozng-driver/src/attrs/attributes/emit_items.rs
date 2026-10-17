@@ -15,7 +15,7 @@ pub trait EmitItemsTarget {
     fn emit(&self, _ctx: &AutozngContext) {}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EmitItems;
 
 const EMIT_ITEMS_PATH: AttrPath = AttrPath::from_static(&[AUTOZNG_NAMESPACE, "emit_items"]);

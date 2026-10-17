@@ -21,7 +21,7 @@ use crate::{
     },
     ctx::AutozngContext,
     driver::with_ctxt,
-    rustc_ext::{RustcPublicTyExt, VisibilityExt},
+    rustc_ext::{FieldDefExt, RustcPublicTyExt, VisibilityExt},
 };
 
 /// The simple (last path segment) name of a definition, used both for child `emit(name)`
@@ -170,6 +170,40 @@ impl RenameTarget for rustc_public::ty::AssocItem {
 }
 
 impl_attr_target!(rustc_public::ty::AssocItem, EmitTarget, RenameTarget);
+
+/// A field of an ADT (struct/union field, or enum variant field), recorded onto the owning
+/// type's [`TyRecord`].
+///
+/// [`TyRecord`]: crate::ctx::TyRecord
+impl EmitTarget for rustc_public::ty::FieldDef {
+    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+        let vis = self.visibility();
+        if !action.emit_for_visibility(vis, ctx.config().default_emit_policy) {
+            return false;
+        }
+        let Some(adt) = self.adt_def() else {
+            return false;
+        };
+        ctx.record_field(adt.ty().base_ty(), self.clone());
+        true
+    }
+
+    fn name(&self) -> String {
+        self.name.to_string()
+    }
+
+    fn implicit_action(&self) -> Option<EmitAction> {
+        Some(EmitAction::Default)
+    }
+}
+
+impl RenameTarget for rustc_public::ty::FieldDef {
+    fn item_name(&self) -> String {
+        self.name.to_string()
+    }
+}
+
+impl_attr_target!(rustc_public::ty::FieldDef, EmitTarget, RenameTarget);
 
 // TODO: trait emission is unimplemented; always returns `false` (even for `emit`-tagged
 // public traits, which per spec should be emitted).

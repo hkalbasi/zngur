@@ -256,9 +256,9 @@ impl EmitParser {
 }
 
 const EMIT_ON_IMPL_PATH: AttrPath =
-    AttrPath::from_static(&[AUTOZNG_NAMESPACE, "emit_on_implementors"]);
+    AttrPath::from_static(&[AUTOZNG_NAMESPACE, "emit_on_implementers"]);
 
-/// Target for `#[autozng::emit_on_implementors]`: traits and trait impl blocks.
+/// Target for `#[autozng::emit_on_implementers]`: traits and trait impl blocks.
 ///
 /// Semantics: emit the eligible (public or `emit`-tagged) methods of this trait / impl for
 /// every implementing type found. Parsing works; [`EmitOnImpl::visit`] is still a stub.

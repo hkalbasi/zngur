@@ -211,7 +211,12 @@ where
 }
 
 /// an Autozng Attribute
-pub trait Attr: std::fmt::Debug + Sized {
+///
+/// Attributes must be `Clone`: a parent's child-targeted attribute is forked onto each child
+/// (see [`Attr::for_child`]) and then merged with the child's own attributes, which requires
+/// cloning the derived [`DynAttr`] behind a fresh, uniquely-owned `Rc` (see
+/// [`DynAttr::clone_dyn`]).
+pub trait Attr: std::fmt::Debug + Clone + Sized {
     type Target: ?Sized;
 
     /// the path the attr is constructed form
@@ -243,6 +248,15 @@ pub trait DynAttr: Any {
     /// the path the attr is constructed form
     fn path(&self) -> AttrPath;
 
+    /// Clone this attribute behind a new, uniquely-owned `Rc`.
+    ///
+    /// Used when merging a forked parent attribute with the child's own attribute: [`merge`]
+    /// consumes a uniquely-owned `Rc`, but attributes cached by [`AttrsFor`] are shared.
+    ///
+    /// [`merge`]: DynAttr::merge
+    /// [`AttrsFor`]: crate::attrs::attrs_for::AttrsFor
+    fn clone_dyn(&self) -> Rc<dyn DynAttr>;
+
     /// build an `dyn DynAttr` if this attribute is applied to a child item
     fn for_child(&self, item: &dyn AttrTarget) -> Option<Rc<dyn DynAttr>>;
 
@@ -258,6 +272,10 @@ impl<T: Attr + Any> DynAttr for T {
     /// the path the attr is constructed form
     fn path(&self) -> AttrPath {
         <Self as Attr>::path(&self)
+    }
+
+    fn clone_dyn(&self) -> Rc<dyn DynAttr> {
+        Rc::new(self.clone())
     }
 
     /// build an `dyn Attr` if this attribute is applied to a child item

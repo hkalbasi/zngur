@@ -4,8 +4,8 @@
 //! 1. an **HIR pass** ([`visit::HirVisitor`]) over every item-like in the crate, which
 //!    handles `const` items (incl. `emit_items`), `ty` aliases and `let` bindings, and
 //! 2. a **`rustc_public` pass** ([`CrateAnalysisVisitor`]) over the local crate's ADTs
-//!    (including their inherent impl blocks, whose methods are recorded onto the type) and
-//!    free functions.
+//!    (including their fields and inherent impl blocks, whose fields and methods are recorded
+//!    onto the type) and free functions.
 //!
 //! Results are accumulated into a single [`AutozngContext`], from which a `ZngurSpec` is
 //! built while `tcx` is alive (see `render.rs`).
@@ -53,10 +53,19 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
         let attrs = adt.autozng_attrs();
         attrs.visit(adt, self.ctx);
 
-        // Methods live in the ADT's inherent impl blocks. Only walk them when the type
-        // itself was emitted: recording a method implicitly creates its type's `TyRecord`,
-        // so walking impls of a `skip`-ed type would leak it into the output.
+        // Children inherit the type's child-targeted attrs (`emit(name)`, `rename_all`).
+        // Only walk them when the type itself was emitted: recording a field/method
+        // implicitly creates its type's `TyRecord`, so walking children of a `skip`-ed type
+        // would leak it into the output.
         if self.ctx.is_ty_recorded(&adt.ty()) {
+            for variant in adt.variants() {
+                for field in variant.fields() {
+                    let field_attrs = field.autozng_attrs();
+                    field_attrs.visit(&field, self.ctx);
+                }
+            }
+
+            // Methods live in the ADT's inherent impl blocks.
             for impl_def in adt.inherent_impls() {
                 let impl_attrs = impl_def.autozng_attrs();
                 impl_attrs.visit(&impl_def, self.ctx);
@@ -94,9 +103,9 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
     tcx.hir_visit_all_item_likes_in_crate(&mut visit::HirVisitor { ctx: &mut ctx, tcx });
     CrateAnalysisVisitor { ctx: &ctx }.visit_all_rustc_public_items()?;
 
-    eprintln!("AFTER VISIT CTX: {ctx:#?}");
+    // eprintln!("AFTER VISIT CTX: {ctx:#?}");
 
-    experiment(tcx);
+    // experiment(tcx);
 
     if tcx.dcx().has_errors().is_some() {
         ControlFlow::Break(AnalyzeReport {
@@ -109,7 +118,7 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
     }
 }
 
-/// Scratch/exploration code: prototypes for detecting which traits implementors should be
+/// Scratch/exploration code: prototypes for detecting which traits implementers should be
 /// emitted for and inspecting trait associated fns. Not part of the real pipeline.
 fn experiment(tcx: TyCtxt) {
     eprintln!("===========================");
@@ -325,7 +334,7 @@ fn experiment(tcx: TyCtxt) {
                 infcx.type_implements_trait(trait_def_id, [adt_ty], tcx.param_env(adt_def_id));
 
             eprintln!(
-                "{} impliments {} ? {}",
+                "{} implements {} ? {}",
                 adt.name(),
                 trait_def.name(),
                 result.must_apply_modulo_regions()

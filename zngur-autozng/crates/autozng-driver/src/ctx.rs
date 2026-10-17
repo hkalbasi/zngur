@@ -5,16 +5,16 @@
 //! keyed by `MetadataKey`. Both passes in `analyze.rs` (the HIR pass and the
 //! `rustc_public` pass) write into the same context.
 //!
-//! Methods reach a type through [`AutozngContext::record_impl_method`] (called while walking
-//! an ADT's inherent impl blocks in `analyze.rs`); free functions through
-//! [`AutozngContext::record_fn`].
+//! A type's fields reach it through [`AutozngContext::record_field`] and its methods through
+//! [`AutozngContext::record_impl_method`] (both called while walking the ADT in `analyze.rs`);
+//! free functions through [`AutozngContext::record_fn`].
 
 use indexmap::{IndexMap, IndexSet};
 
 use rustc_hash::FxHashMap;
 use rustc_public::CrateDef;
 use rustc_public::abi::Layout;
-use rustc_public::ty::{AdtDef, FnDef, GenericArgs, ImplDef};
+use rustc_public::ty::{AdtDef, FieldDef, FnDef, GenericArgs, ImplDef};
 use rustc_public::{DefId, ty::Ty};
 
 use std::cell::RefCell;
@@ -25,7 +25,7 @@ use crate::config::Config;
 
 use crate::driver::with_ctxt;
 use crate::metadata::{
-    IntoMetadataKey, MetadataKey, MetadataMap, MetadataRecord, MetadataRecordRefMut,
+    ExportName, IntoMetadataKey, MetadataKey, MetadataMap, MetadataRecordRefMut,
 };
 use crate::rustc_ext::{ClausesOfExt, GenericClauses, RustcPublicTyExt};
 
@@ -70,6 +70,9 @@ pub struct TyRecord {
     pub layout: Option<Layout>,
     pub clauses: GenericClauses,
     pub is_concrete: bool,
+    /// Fields selected for emission (via visibility + `emit`/`skip`), keyed by the field's
+    /// `DefId` to deduplicate and keep declaration order.
+    pub fields: IndexMap<DefId, FieldDef>,
     /// Keyed by the impl's `DefId`; populated by [`AutozngContext::record_impl_method`].
     pub impls: IndexMap<DefId, ImplRecord>,
 }
@@ -102,6 +105,7 @@ impl AutozngContextData {
                 layout: ty.layout().ok(),
                 clauses: adt.map_or_default(|adt| adt.clauses_of()),
                 is_concrete: ty.is_concrete(),
+                fields: IndexMap::default(),
                 impls: IndexMap::default(),
             })
         })
@@ -140,8 +144,9 @@ impl AutozngContext {
         self.data.funcs.borrow()
     }
 
-    /// The export name recorded for `key` (`#[autozng::rename]`), if any.
-    pub fn export_name_for<T: IntoMetadataKey + ?Sized>(&self, key: &T) -> Option<String> {
+    /// The export name recorded for `key` (`#[autozng::rename]`), if any, along with the span of
+    /// the attribute that produced it.
+    pub fn export_name_for<T: IntoMetadataKey + ?Sized>(&self, key: &T) -> Option<ExportName> {
         self.data
             .metadata
             .borrow()
@@ -171,6 +176,16 @@ impl AutozngContext {
             // insert a default record
             let _ = self.data.ty_record_mut(ty);
         }
+    }
+
+    /// Record a field as selected for emission onto `ty`'s [`TyRecord`].
+    ///
+    /// Called while walking an ADT's fields in `analyze.rs` (through
+    /// [`rustc_public::ty::FieldDef`]'s `EmitTarget` impl), after the `emit`/`skip` action and
+    /// the field's visibility have been resolved.
+    pub fn record_field(&self, ty: Ty, field: FieldDef) {
+        let mut record = self.data.ty_record_mut(ty);
+        record.fields.insert(field.def_id(), field);
     }
 
     /// Whether a type has already been recorded (i.e. selected for emission). Used to gate
