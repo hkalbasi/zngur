@@ -15,5 +15,6 @@ mod enums;
 mod free_functions;
 mod methods;
 mod structs;
+mod traits;
 mod visibility;
 mod warnings;

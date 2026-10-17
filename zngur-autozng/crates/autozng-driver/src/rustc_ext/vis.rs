@@ -48,6 +48,12 @@ impl VisibilityExt for rustc_public::ty::AdtDef {
     }
 }
 
+impl VisibilityExt for rustc_public::ty::TraitDef {
+    fn visibility(&self) -> Visibility {
+        with_ctxt(|ctx| visibility(ctx.tcx, internal(ctx.tcx, self.def_id())))
+    }
+}
+
 impl VisibilityExt for rustc_public::ty::AssocItem {
     fn visibility(&self) -> Visibility {
         with_ctxt(|ctx| visibility(ctx.tcx, internal(ctx.tcx, self.def_id.def_id())))

@@ -2,7 +2,7 @@ use rustc_attr_parsing::template;
 
 use crate::{
     attrs::{
-        AUTOZNG_NAMESPACE, Attr, AttrBuilder, AttrPath,
+        AUTOZNG_NAMESPACE, Attr, AttrPath,
         parse::{
             context::AcceptContext,
             parser::{ArgParser, AttrtibuteParser},
@@ -163,7 +163,7 @@ impl AttrtibuteParser for EmitItemsParser {
         EmitItemsParser::parse,
     )];
 
-    fn finalize(self, target: &<Self::Attr as Attr>::Target) -> Option<Self::Attr> {
+    fn finalize(self, _target: &<Self::Attr as Attr>::Target) -> Option<Self::Attr> {
         self.valid.then_some(EmitItems)
     }
 }

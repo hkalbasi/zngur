@@ -33,12 +33,10 @@ use zngur_def::{
 
 use crate::ctx::{AutozngContext, FnRecord, ImplRecord, TraitFnRecord, TyRecord};
 use crate::driver::with_ctxt;
-use crate::error::{
-    emit_warning_for_span, span_of_def, with_struct_warning_for_rustc_public_span,
-};
+use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_rustc_public_span};
 use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
 use crate::rustc_ext::{
-    AdtDefExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKownTraitsExt, WellKnownTrait,
+    AdtDefExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKnownTrait, WellKownTraitsExt,
 };
 use crate::type_map::{MapTypeError, map_rustc_public_ty_to_zngur};
 
@@ -245,7 +243,10 @@ fn build_field(
             warn(
                 field.def_id(),
                 emit_span,
-                format!("autozng: skipping field `{name}` of `{}`: {msg}", adt.name()),
+                format!(
+                    "autozng: skipping field `{name}` of `{}`: {msg}",
+                    adt.name()
+                ),
             );
             None
         }
@@ -462,14 +463,22 @@ fn combine_method_args(
             // The impl's parameters come from the concrete instance; only the method's *own*
             // args (past `parent_count`) are taken from `partial`.
             if let Some(instance) = instance_args {
-                combined.extend(instance.0[..parent_count.min(instance.0.len())].iter().cloned());
+                combined.extend(
+                    instance.0[..parent_count.min(instance.0.len())]
+                        .iter()
+                        .cloned(),
+                );
             }
-            combined.extend(partial.0[parent_count.min(partial.0.len())..].iter().cloned());
+            combined.extend(
+                partial.0[parent_count.min(partial.0.len())..]
+                    .iter()
+                    .cloned(),
+            );
         }
         (None, Some(instance)) => combined.extend(instance.0.iter().cloned()),
         (None, None) => return None,
     }
-    (combined.len() == fn_generics_len(def)).then(|| GenericArgs(combined))
+    (combined.len() == fn_generics_len(def)).then_some(GenericArgs(combined))
 }
 
 fn build_method(
@@ -519,8 +528,15 @@ fn build_method(
         None => def.fn_sig().skip_binder(),
     };
 
-    let (receiver, inputs, output) =
-        method_signature_parts(def, &name, *has_self, self_ty, self_def_ty, &signature, method.span)?;
+    let (receiver, inputs, output) = method_signature_parts(
+        def,
+        &name,
+        *has_self,
+        self_ty,
+        self_def_ty,
+        &signature,
+        method.span,
+    )?;
 
     Some(ZngurMethodDetails {
         data: ZngurMethod {
@@ -592,9 +608,10 @@ fn method_signature_parts(
             .map(|input| map_rustc_public_ty_to_zngur(*input, driver.tcx))
             .collect::<Result<Vec<_>, _>>()
     });
-    let (inputs, output) = match (inputs, with_ctxt(|driver| {
-        map_rustc_public_ty_to_zngur(signature.output(), driver.tcx)
-    })) {
+    let (inputs, output) = match (
+        inputs,
+        with_ctxt(|driver| map_rustc_public_ty_to_zngur(signature.output(), driver.tcx)),
+    ) {
         (Ok(inputs), Ok(output)) => (inputs, output),
         (Err(MapTypeError::Unsupported(msg)), _) | (_, Err(MapTypeError::Unsupported(msg))) => {
             warn(
@@ -648,8 +665,7 @@ fn build_trait_method(
     // The named generic args (Self first) must cover every generic parameter of the trait
     // method; the trait's clauses must then hold for them, or the method would be emitted with
     // unmet bounds.
-    let args =
-        (trait_fn.generics.0.len() == fn_generics_len(&def)).then_some(&trait_fn.generics);
+    let args = (trait_fn.generics.0.len() == fn_generics_len(&def)).then_some(&trait_fn.generics);
     if let Some(args) = args
         && !trait_fn.clauses.clone().instantiate(args).all_hold()
     {
@@ -661,11 +677,18 @@ fn build_trait_method(
         None => def.fn_sig().skip_binder(),
     };
 
-    let (receiver, inputs, output) =
-        method_signature_parts(def, &name, *has_self, self_ty, self_def_ty, &signature, trait_fn.span)?;
+    let (receiver, inputs, output) = method_signature_parts(
+        def,
+        &name,
+        *has_self,
+        self_ty,
+        self_def_ty,
+        &signature,
+        trait_fn.span,
+    )?;
 
     // The trait is rendered as the method's `use_path`.
-    let trait_def = trait_fn.tref.def_id;
+    let trait_def = trait_fn.trait_def;
     let mut use_path: Vec<String> = trait_def.name().split("::").map(Into::into).collect();
     if trait_def.krate().is_local && !use_path.is_empty() {
         use_path[0] = "crate".to_string();
@@ -727,9 +750,10 @@ fn build_fn(ctx: &AutozngContext, record: &FnRecord) -> Option<ZngurFn> {
             .map(|input| map_rustc_public_ty_to_zngur(*input, driver.tcx))
             .collect::<Result<Vec<_>, _>>()
     });
-    let (inputs, output) = match (inputs, with_ctxt(|driver| {
-        map_rustc_public_ty_to_zngur(signature.output(), driver.tcx)
-    })) {
+    let (inputs, output) = match (
+        inputs,
+        with_ctxt(|driver| map_rustc_public_ty_to_zngur(signature.output(), driver.tcx)),
+    ) {
         (Ok(inputs), Ok(output)) => (inputs, output),
         (Err(MapTypeError::Unsupported(msg)), _) | (_, Err(MapTypeError::Unsupported(msg))) => {
             warn(

@@ -82,7 +82,7 @@ impl EmitTarget for crate::rustc_ext::HirLetBindStmt {
         } else if let Some((self_ty, impl_def)) = fn_def.impl_of() {
             ctx.record_impl_method(self_ty, impl_def, fn_def, partial_args.clone(), span);
         } else if let Some(tref) = tref {
-            ctx.record_trait_fn(fn_def, tref, generics, span);
+            ctx.record_trait_type_fn(fn_def, tref, generics, span);
         } else {
             ctx.record_fn(fn_def, partial_args, span);
         }
@@ -123,11 +123,7 @@ impl RenameTarget for crate::rustc_ext::HirLetBindStmt {
     }
 }
 
-impl_attr_target!(
-    crate::rustc_ext::HirLetBindStmt,
-    EmitTarget,
-    RenameTarget
-);
+impl_attr_target!(crate::rustc_ext::HirLetBindStmt, EmitTarget, RenameTarget);
 
 // impl<'hir> EmitVisitable for rustc_hir::Stmt<'hir> {
 //     fn emit(

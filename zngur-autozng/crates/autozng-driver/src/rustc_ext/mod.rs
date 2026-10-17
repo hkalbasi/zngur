@@ -8,10 +8,10 @@ mod ty;
 mod vis;
 
 pub(crate) use adt::{AdtDefExt, FieldDefExt, VariantDefExt};
-pub(crate) use convert::RustcInternalEx;
-pub(crate) use funcs::{FnDefExt, GetFnInfoExt};
+pub(crate) use convert::{RustcInternalEx, stable_trait};
+pub(crate) use funcs::{FnDefExt, GetAssocInfoExt};
 pub(crate) use generics::{ClausesOfExt, GenericClauses};
 pub(crate) use hir::{HirConstBodyExt, HirConstItem, HirItemExt, HirLetBindStmt, HirTyAlias};
-pub(crate) use traits::{WellKownTraitsExt, WellKnownTrait};
+pub(crate) use traits::{WellKnownTrait, WellKownTraitsExt};
 pub(crate) use ty::RustcPublicTyExt;
 pub(crate) use vis::{Visibility, VisibilityExt};

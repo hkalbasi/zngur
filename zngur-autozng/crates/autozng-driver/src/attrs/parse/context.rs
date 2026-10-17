@@ -28,6 +28,9 @@ pub struct AcceptContext<'f, 'sess> {
     pub span: Span,
 }
 
+// The `expect_*` helpers mirror the (private) `rustc_attr_parsing` context; a few are not used
+// by autozng's own attribute parsers yet.
+#[allow(dead_code)]
 impl<'f, 'sess> AcceptContext<'f, 'sess> {
     pub fn expect_single_element_list<'arg>(
         &mut self,
@@ -81,7 +84,7 @@ impl<'f, 'sess> AcceptContext<'f, 'sess> {
         arg.expect_name_value(self, span, name)
     }
 
-    pub fn expect_no_args<'arg>(&mut self, arg: &'arg ArgParser) -> Option<()> {
+    pub fn expect_no_args(&mut self, arg: &ArgParser) -> Option<()> {
         if let Err(span) = arg.as_no_args() {
             self.expected_no_args(span);
             return None;
@@ -90,7 +93,7 @@ impl<'f, 'sess> AcceptContext<'f, 'sess> {
         Some(())
     }
 
-    pub fn expect_string_literal<'arg, Arg>(&mut self, arg: &'arg Arg) -> Option<Spanned<String>>
+    pub fn expect_string_literal<Arg>(&mut self, arg: &Arg) -> Option<Spanned<String>>
     where
         Arg: ExpectStringLiteral,
     {
@@ -98,6 +101,9 @@ impl<'f, 'sess> AcceptContext<'f, 'sess> {
     }
 }
 
+// The `expected_*` error constructors mirror `rustc_attr_parsing`; the unused ones are kept so
+// the framework stays complete.
+#[allow(dead_code)]
 impl<'f, 'sess> AcceptContext<'f, 'sess> {
     pub fn expected_list(&mut self, span: Span, args: &ArgParser) -> ErrorGuaranteed {
         let span = match args {
@@ -256,7 +262,7 @@ impl<'f, 'sess> AcceptContext<'f, 'sess> {
         self.template.suggestions(
             rustc_attr_parsing::ParsedDescription::Attribute,
             rustc_ast::Safety::Safe(self.span),
-            &self.attr_path,
+            self.attr_path,
         )
     }
 

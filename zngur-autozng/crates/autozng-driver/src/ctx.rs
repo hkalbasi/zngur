@@ -14,21 +14,25 @@ use indexmap::{IndexMap, IndexSet};
 use rustc_hash::FxHashMap;
 use rustc_public::CrateDef;
 use rustc_public::abi::Layout;
-use rustc_public::ty::{AdtDef, FieldDef, FnDef, GenericArgs, ImplDef, TraitRef};
+use rustc_public::ty::{
+    AdtDef, FieldDef, FnDef, GenericArgs, ImplDef, TraitDecl, TraitDef, TraitRef,
+};
 use rustc_public::{DefId, ty::Ty};
 use rustc_span::Span;
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 use crate::config::Config;
 
 use crate::driver::with_ctxt;
+use crate::error::span_of_def;
 use crate::metadata::{
     ExportName, IntoMetadataKey, MetadataKey, MetadataMap, MetadataRecordRefMut,
 };
-use crate::rustc_ext::{ClausesOfExt, GenericClauses, RustcPublicTyExt};
+use crate::rustc_ext::{
+    ClausesOfExt, GenericClauses, RustcInternalEx, RustcPublicTyExt, stable_trait,
+};
 
 #[derive(Debug)]
 pub struct FnRecord {
@@ -76,13 +80,20 @@ impl Hash for FnRecord {
 pub struct TraitFnRecord {
     /// The trait method itself (e.g. `ToString::to_string`).
     pub def: FnDef,
-    /// `Self: Trait<...>` for the implementing type (e.g. `Example: ToString`).
-    pub tref: TraitRef,
-    /// The method's generic args, as named by the `let` binding's `FnDef` type (Self first).
+    /// the the Trait assoceated with this function
+    pub trait_def: TraitDef,
+    /// Trait will qualifed generic args like the `Self` of the implementing type
+    /// impls that the function is form an impl block and not just the definition from the trait decl
+    #[allow(dead_code)]
+    // consumed once trait rendering lands; currently only `trait_def` is read
+    pub trait_ref: Option<TraitRef>,
+    /// The method's generic args, `Self` first: the ones named by the `let` binding's `FnDef`
+    /// type, or the method's identity args for a trait declaration.
     pub generics: GenericArgs,
     /// The trait method's own clauses.
     pub clauses: GenericClauses,
-    /// Span of the `#[autozng::emit_items]` that named this method (see [`TyRecord::span`]).
+    /// Span of the item that selected this method (an `#[autozng::emit_items]` const's `let`
+    /// binding, or the method declaration itself for a trait declaration; see [`TyRecord::span`]).
     pub span: Span,
 }
 
@@ -97,6 +108,38 @@ impl Hash for TraitFnRecord {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.def.hash(state);
     }
+}
+
+/// One exported trait declaration (`#[autozng::emit]` on a `pub`/`pub(crate)` trait).
+///
+/// The trait analogue of [`TyRecord`]: it carries the trait's declaration, its clauses and the
+/// associated functions selected for emission. A trait is only recorded when it carries an
+/// explicit `emit` (its implicit action is `None`, see [`rustc_public::ty::TraitDef`]'s
+/// `EmitTarget`), and every associated function of an emitted trait is recorded because a
+/// trait's functions are at most as visible as the trait itself.
+///
+/// A `TraitRef` (i.e. `Self: Trait<...>`) is a function-level notion and lives on each
+/// [`TraitFnRecord`], not here.
+// The recorded spans/clauses are consumed by the upcoming trait rendering; only `decl` and `fns`
+// are read during analysis today.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct ExportedTraitRecord {
+    /// The trait's declaration (the stable `TraitDecl`; see `rustc_ext::stable_trait`).
+    pub decl: TraitDecl,
+    /// Span of the `#[autozng::emit]` that selected the trait.
+    pub span: Span,
+    /// Source span of the trait declaration (the primary span for its diagnostics).
+    pub source_span: Span,
+    /// The trait's own clauses.
+    pub clauses: GenericClauses,
+    /// The trait's associated functions (methods), in declaration order.
+    pub fns: IndexSet<TraitFnRecord>,
+    /// Whether `#[autozng::emit_on_implementers]` was set on the trait.
+    ///
+    /// TODO: the attribute is not parsed onto a trait yet and the behavior is not implemented;
+    /// the field is recorded for that work (see `render`/`visit`).
+    pub emit_on_implementers: bool,
 }
 
 #[derive(Debug)]
@@ -125,6 +168,7 @@ pub struct TyRecord {
     pub ty: Ty,
     pub adt: Option<AdtDef>,
     pub layout: Option<Layout>,
+    #[allow(dead_code)] // kept for layout/clause policies that are not applied yet
     pub clauses: GenericClauses,
     pub is_concrete: bool,
     /// Span of the `#[autozng::emit]` / `emit_items` that selected this type for emission.
@@ -144,6 +188,7 @@ pub struct TyRecord {
 /// A field selected for emission, together with the span of the `emit` that selected it.
 #[derive(Debug, Clone)]
 pub struct FieldRecord {
+    #[allow(dead_code)] // the field is re-looked-up from the ADT at render time
     pub def: FieldDef,
     pub span: Span,
 }
@@ -154,6 +199,8 @@ struct AutozngContextData {
     metadata: RefCell<MetadataMap>,
     /// Free functions selected for emission, in discovery order.
     funcs: RefCell<IndexSet<FnRecord>>,
+    /// Trait declarations selected for emission, in discovery order.
+    traits: RefCell<Vec<ExportedTraitRecord>>,
 }
 
 impl AutozngContextData {
@@ -323,14 +370,85 @@ impl AutozngContext {
     /// Called when an `emit_items` const names a trait method (see [`TraitFnRecord`]); the
     /// implementing type is the trait reference's self type, and `span` is the span of the item
     /// that selected it.
-    pub fn record_trait_fn(&self, def: FnDef, tref: TraitRef, generics: GenericArgs, span: Span) {
-        let ty = tref.self_ty().base_ty();
+    pub fn record_trait_type_fn(
+        &self,
+        def: FnDef,
+        trait_ref: TraitRef,
+        generics: GenericArgs,
+        span: Span,
+    ) {
+        let ty = trait_ref.self_ty().base_ty();
         let mut record = self.data.ty_record_mut(ty, span);
         record.trait_fns.insert(TraitFnRecord {
             def,
             clauses: def.clauses_of(),
-            tref,
+            trait_def: trait_ref.def_id,
+            trait_ref: Some(trait_ref),
             generics,
+            span,
+        });
+    }
+
+    /// Whether a trait declaration has already been recorded (i.e. selected for emission). Used
+    /// to gate walking its associated functions so a `skip`-ed trait never leaks in.
+    pub fn is_trait_recorded(&self, trait_def: &TraitDef) -> bool {
+        self.data
+            .traits
+            .borrow()
+            .iter()
+            .any(|record| record.decl.def_id == *trait_def)
+    }
+
+    /// Record a trait declaration as selected for emission (see [`ExportedTraitRecord`]).
+    ///
+    /// `span` is the span of the `#[autozng::emit]` that selected the trait; the declaration's
+    /// own source span is recorded alongside it. The associated functions are added separately by
+    /// [`AutozngContext::record_trait_method`]. Recording is idempotent.
+    pub fn record_trait(&self, def: TraitDef, span: Span) {
+        if self.is_trait_recorded(&def) {
+            return;
+        }
+        // The public `TraitDecl` is the stable description of the trait (`stable_trait` bridges
+        // the internal `rustc_middle` definition to it).
+        let decl = with_ctxt(|ctx| stable_trait(def.internal(ctx.tcx)));
+        self.data.traits.borrow_mut().push(ExportedTraitRecord {
+            decl,
+            span,
+            source_span: span_of_def(def.def_id()),
+            clauses: def.clauses_of(),
+            fns: IndexSet::default(),
+            // TODO: detect `#[autozng::emit_on_implementers]` once its behavior lands.
+            emit_on_implementers: false,
+        });
+    }
+
+    /// Record one of an exported trait's associated functions onto its
+    /// [`ExportedTraitRecord`].
+    ///
+    /// The function's identity args are recorded (there is no concrete `Self` for a
+    /// declaration), together with its `Self: Trait<...>` reference. Does nothing if the trait
+    /// was not recorded.
+    pub fn record_trait_method(
+        &self,
+        trait_def: TraitDef,
+        trait_ref: Option<TraitRef>,
+        fn_def: FnDef,
+        generics: GenericArgs,
+        span: Span,
+    ) {
+        let mut traits = self.data.traits.borrow_mut();
+        let Some(record) = traits
+            .iter_mut()
+            .find(|record| record.decl.def_id == trait_def)
+        else {
+            return;
+        };
+        record.fns.insert(TraitFnRecord {
+            def: fn_def,
+            trait_def,
+            trait_ref,
+            generics,
+            clauses: fn_def.clauses_of(),
             span,
         });
     }

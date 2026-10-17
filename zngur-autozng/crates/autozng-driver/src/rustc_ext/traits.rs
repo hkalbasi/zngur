@@ -94,23 +94,23 @@ impl WellKnownTrait {
     }
 
     pub fn need_generic(&self) -> bool {
-        match self {
-            Self::PartialEq => true,
-            Self::PartialOrd => true,
-            Self::Add => true,
-            Self::Sub => true,
-            Self::Mul => true,
-            Self::Div => true,
-            Self::Rem => true,
-            Self::BitAnd => true,
-            Self::BitOr => true,
-            Self::BitXor => true,
-            Self::Shl => true,
-            Self::Shr => true,
-            Self::Drop => true,
-            Self::IntoIterator => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Self::PartialEq
+                | Self::PartialOrd
+                | Self::Add
+                | Self::Sub
+                | Self::Mul
+                | Self::Div
+                | Self::Rem
+                | Self::BitAnd
+                | Self::BitOr
+                | Self::BitXor
+                | Self::Shl
+                | Self::Shr
+                | Self::Drop
+                | Self::IntoIterator
+        )
     }
 }
 
@@ -168,7 +168,7 @@ impl WellKownTraitsExt for Ty {
             results.extend(
                 rustc_public::all_trait_impls()
                     .into_iter()
-                    .map(|impl_def| {
+                    .flat_map(|impl_def| {
                         let trt_ref = impl_def.trait_impl().value;
                         generic_wellknown
                             .iter()
@@ -183,8 +183,7 @@ impl WellKownTraitsExt for Ty {
                                 }
                             })
                             .collect::<Vec<_>>()
-                    })
-                    .flatten(),
+                    }),
             );
             results
         })

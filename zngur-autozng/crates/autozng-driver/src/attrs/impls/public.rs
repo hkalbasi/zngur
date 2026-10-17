@@ -160,8 +160,11 @@ impl EmitTarget for rustc_public::ty::AssocItem {
                 return false;
             };
             let impl_def = rustc_public::ty::ImplDef(stable(impl_def_id));
-            let self_ty =
-                stable(tcx.type_of(impl_def_id).instantiate_identity().skip_norm_wip());
+            let self_ty = stable(
+                tcx.type_of(impl_def_id)
+                    .instantiate_identity()
+                    .skip_norm_wip(),
+            );
             let fn_def = rustc_public::ty::FnDef(self.def_id.def_id());
             ctx.record_impl_method(self_ty.base_ty(), impl_def, fn_def, None, self.emit_span());
             true
@@ -227,11 +230,20 @@ impl RenameTarget for rustc_public::ty::FieldDef {
 
 impl_attr_target!(rustc_public::ty::FieldDef, EmitTarget, RenameTarget);
 
-// TODO: trait emission is unimplemented; always returns `false` (even for `emit`-tagged
-// public traits, which per spec should be emitted).
+/// A trait declaration: recorded only when explicitly tagged `emit` (a trait's implicit action
+/// is `None`, see [`EmitTarget::implicit_action`]) and only when it is `pub`/`pub(crate)`.
+///
+/// Recording the trait is what makes the visitor walk its associated functions (see
+/// `CrateAnalysisVisitor::visit_trait`); the functions themselves are recorded with
+/// [`AutozngContext::record_trait_method`].
 impl EmitTarget for rustc_public::ty::TraitDef {
-    fn emit(&self, _action: EmitAction, _ctx: &AutozngContext) -> bool {
-        false
+    fn emit(&self, action: EmitAction, ctx: &AutozngContext) -> bool {
+        let vis = self.visibility();
+        if !action.emit_for_visibility(vis, crate::config::DefaultEmitPolicy::None) {
+            return false;
+        }
+        ctx.record_trait(*self, self.emit_span());
+        true
     }
 
     fn name(&self) -> String {
@@ -240,6 +252,12 @@ impl EmitTarget for rustc_public::ty::TraitDef {
 
     fn emit_span(&self) -> Span {
         span_of_def(self.def_id())
+    }
+
+    /// A public trait is never emitted implicitly: unlike an ADT, it must carry an explicit
+    /// `#[autozng::emit]`.
+    fn implicit_action(&self) -> Option<EmitAction> {
+        None
     }
 }
 

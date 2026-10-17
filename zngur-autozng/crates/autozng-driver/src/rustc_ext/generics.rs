@@ -146,12 +146,14 @@ impl GenericClauses {
     }
 
     /// instantiate self and parent clauses as is
+    #[allow(dead_code)] // counterpart to `instantiate` for unsubstituted clauses
     pub fn instantiate_identity(self) -> InstantiatedClauses {
         let mut instantiated = InstantiatedClauses::empty();
         self.instantiate_identity_into(&mut instantiated);
         instantiated
     }
 
+    #[allow(dead_code)] // only reached through `instantiate_identity`
     fn instantiate_identity_into(self, instantiated: &mut InstantiatedClauses) {
         with_ctxt(|ctx| {
             let tcx = ctx.tcx;
@@ -196,6 +198,12 @@ impl ClausesOfExt for rustc_public::ty::ImplDef {
 }
 
 impl ClausesOfExt for rustc_public::ty::AdtDef {
+    fn clauses_of(&self) -> GenericClauses {
+        get_clauses_of(self.def_id())
+    }
+}
+
+impl ClausesOfExt for rustc_public::ty::TraitDef {
     fn clauses_of(&self) -> GenericClauses {
         get_clauses_of(self.def_id())
     }

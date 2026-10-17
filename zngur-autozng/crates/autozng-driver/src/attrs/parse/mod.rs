@@ -1,15 +1,14 @@
 use rustc_ast::{DelimArgs, MetaItemLit};
 
 use rustc_attr_ir::AttrItem;
-use rustc_middle::ty::TyCtxt;
 use rustc_public::{rustc_internal::stable, ty::LineInfo};
 use rustc_session::parse::ParseSess;
 use rustc_span::{ErrorGuaranteed, Span};
 
 use crate::{
-    attrs::{AUTOZNG_NAMESPACE, AttrBuilder, AttrPath, PATH_SEP},
+    attrs::{AUTOZNG_NAMESPACE, AttrPath, PATH_SEP},
     driver::with_ctxt,
-    span_tools::{OffsetRustcSpanExt, RespanedInsideExt, Spanned, respan},
+    span_tools::{OffsetRustcSpanExt, RespanedInsideExt},
 };
 
 pub mod context;
@@ -32,8 +31,8 @@ mod from_rustc {
         pub span: Span,
     }
 
-    pub fn expr_to_lit<'sess>(
-        psess: &'sess ParseSess,
+    pub fn expr_to_lit(
+        psess: &ParseSess,
         expr: &rustc_ast::Expr,
         span: Span,
     ) -> Result<MetaItemLit, ErrorGuaranteed> {
@@ -120,7 +119,7 @@ impl std::fmt::Debug for PartialParsedAttr {
                 write!(f, "({args:?})")
             }
             PartialParsedAttrKind::NameValue { args: value, .. } => {
-                write!(f, " = {}", value.lit.as_token_lit().to_string())
+                write!(f, " = {}", value.lit.as_token_lit())
             }
             _ => Ok(()),
         }
@@ -152,7 +151,7 @@ pub fn parse_attr_item_ir(attr: &rustc_attr_ir::AttrItem) -> PartialParsedAttr {
                 args: PartialNameValue {
                     eq_span: *eq_span,
                     span: expr.span,
-                    lit: expr.clone(),
+                    lit: *expr,
                 },
             },
         },

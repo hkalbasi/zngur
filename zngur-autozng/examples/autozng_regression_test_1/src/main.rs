@@ -187,6 +187,8 @@ impl Example {
     }
 
     /// by box fn
+    // Deliberately exercises a `Box<Self>` receiver (autozng's receiver handling).
+    #[allow(clippy::boxed_local)]
     pub fn by_box(self: Box<Self>) {
         self.by_ref("by_box");
     }
@@ -212,12 +214,12 @@ impl Example {
     }
 
     /// fn with lifetime
-    pub fn with_lifetime<'a>(self: &'a Self) {
+    pub fn with_lifetime(&self) {
         self.by_ref("lifetime");
     }
 
     /// fn with nested type
-    pub fn nested<'a>(self: &mut &'a Arc<Rc<Box<Alias>>>) {
+    pub fn nested(self: &mut &Arc<Rc<Box<Alias>>>) {
         self.by_ref("nested");
     }
 

@@ -4,7 +4,7 @@ use crate::{
     driver::with_ctxt,
     metadata::{IntoMetadataKey, MetadataKey},
     rustc_ext::{
-        GenericClauses, RustcInternalEx, RustcPublicTyExt,
+        GenericClauses, RustcPublicTyExt,
         generics::{get_clauses_of, get_generics_of},
     },
 };
@@ -75,8 +75,11 @@ impl HirLetBindStmt {
                 return None;
             }
             let impl_def = rustc_public::ty::ImplDef(stable(parent_def_id));
-            let self_ty =
-                stable(tcx.type_of(parent_def_id).instantiate_identity().skip_norm_wip());
+            let self_ty = stable(
+                tcx.type_of(parent_def_id)
+                    .instantiate_identity()
+                    .skip_norm_wip(),
+            );
             Some((self_ty.base_ty(), impl_def))
         })
     }
@@ -166,6 +169,8 @@ impl HirConstItem {
     }
 }
 
+// `ty` alias emission is still a stub, so the alias's signature/type are recorded but unused.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct HirTyAlias {
     pub owner_id: rustc_hir::OwnerId,
@@ -190,6 +195,7 @@ pub trait HirItemExt {
     fn opt_ty_alias(&self) -> Option<HirTyAlias>;
 }
 
+#[allow(dead_code)] // helper for the HIR passes; not consumed yet
 pub trait HirTyExt {
     fn ty(&self) -> Option<rustc_public::ty::Ty>;
 }
