@@ -1,0 +1,2 @@
+//@ fail
+merge "./_not_found.zng";

@@ -816,10 +816,10 @@ fn print_spec() {
     field foo (offset = 0, type = u64);
     field bar (offset = auto, type = f64);
 
-    fn foo_bar(&self) as fooBar;
+    safe fn foo_bar(&self) as fooBar;
 }
 
-fn crate::do_w_example(&crate::Example) -> bool;
+safe fn crate::do_w_example(&crate::Example) -> bool;
 ",
         idl
     );

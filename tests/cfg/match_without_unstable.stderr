@@ -1,0 +1,10 @@
+Error: `#match` statements are unstable. Enable them by using `#unstable(cfg_match)` at the top of the file.
+    ╭─[ match_without_unstable.zng:2:1 ]
+    │
+  2 │ ╭─▶ #match cfg!(feature) {
+    ┆ ┆   
+ 11 │ ├─▶ }
+    │ │       
+    │ ╰─────── `#match` statements are unstable. Enable them by using `#unstable(cfg_match)` at the top of the file.
+────╯
+cfg values used:

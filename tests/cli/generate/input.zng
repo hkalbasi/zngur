@@ -1,0 +1,3 @@
+extern "C++" {
+    safe fn add(i32, i32) -> i32;
+}

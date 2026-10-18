@@ -1,0 +1,16 @@
+Error: Method mismatch
+   ╭─[ ./mismatched_method.zng:1:6 ]
+   │
+ 1 │ type A { #layout(size = 1, align = 1); fn foo(i32) -> i32; }
+   │      ┬                                 ─────────┬─────────  
+   │      ╰────────────────────────────────────────────────────── Method mismatch
+   │                                                 │           
+   │                                                 ╰─────────── declaration here ...
+   │
+   ├─[ import_has_mismatched_method_signature.zng:5:5 ]
+   │
+ 5 │     fn foo(i64) -> i64;
+   │     ─────────┬─────────  
+   │              ╰─────────── conflicts with the declaration here.
+───╯
+cfg values used:

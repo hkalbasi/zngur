@@ -1,0 +1,17 @@
+Error: Conflicting layout policy found
+   ╭─[ ./conflict.zng:1:6 ]
+   │
+ 1 │ type A {
+   │      ┬  
+   │      ╰── Conflicting layout policy found
+ 2 │     #layout(size = 1, align = 1);
+   │     ──────────────┬─────────────  
+   │                   ╰─────────────── declaration here ...
+   │
+   ├─[ import_has_conflict.zng:4:5 ]
+   │
+ 4 │     #layout(size = 2, align = 2);
+   │     ──────────────┬─────────────  
+   │                   ╰─────────────── conflicts with the declaration here.
+───╯
+cfg values used:

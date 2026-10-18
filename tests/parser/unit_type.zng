@@ -1,0 +1,4 @@
+//@ fail
+type () {
+    #layout(size = 0, align = 1);
+}

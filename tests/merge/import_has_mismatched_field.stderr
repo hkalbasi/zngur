@@ -1,0 +1,18 @@
+Error: Field mismatch
+   ╭─[ ./mismatched_field.zng:1:6 ]
+   │
+ 1 │ type A {
+   │      ┬  
+   │      ╰── Field mismatch
+   │ 
+ 3 │     field x (offset = 0, type = i32);
+   │     ────────────────┬────────────────  
+   │                     ╰────────────────── declaration here ...
+   │
+   ├─[ import_has_mismatched_field.zng:5:5 ]
+   │
+ 5 │     field x (offset = 0, type = i64);
+   │     ────────────────┬────────────────  
+   │                     ╰────────────────── conflicts with the declaration here.
+───╯
+cfg values used:

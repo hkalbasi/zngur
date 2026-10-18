@@ -1,0 +1,107 @@
+Usage: zngur generate [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>
+          Path to the zng file
+
+Options:
+      --cpp-file <CPP_FILE>
+          Path of the generated C++ file, if it is needed
+
+          Default is {ZNG_FILE_PARENT}/generated.cpp
+
+      --h-file <H_FILE>
+          Path of the generated header file
+
+          Default is {ZNG_FILE_PARENT}/generated.h
+
+      --rs-file <RS_FILE>
+          Path of the generated Rust file
+
+          Default is {ZNG_FILE_PARENT}/src/generated.rs
+
+      --depfile <DEPFILE>
+          Path of the dependency file (.d file) to generate
+
+          The dependency file lists all .zng files that were processed. This can be used by build systems to detect when regeneration is needed.
+
+      --mangling-base <MANGLING_BASE>
+          A unique string which is included in zngur symbols to prevent duplicate symbols in linker
+
+          Default is "rust"
+
+  -C, --cfg <RUST_CFG>
+          A rust config value of the form key(=value1(,value2 ...)) to use when generating the zngur spec. i.e.  -C target_os=linux -C target_feature=sse,sse2 -C debug_assertions
+
+          see https://doc.rust-lang.org/reference/conditional-compilation.html for possible values
+
+          combined with any values loaded from rustc (if enabled)
+
+          Default is an empty configuration
+
+  -F, --feature <RUST_FEATURES>
+          A feature name to enable when generating the zngur spec
+
+          combined with any values loaded from rustc (if enabled)
+
+          Default is no features
+
+      --load-cfg-from-rustc
+          Load rust cfg values using `rustc --print cfg`
+
+          values loaded are in addition to any values provided with `--cfg` or `--feature` respects the `RUSTFLAGS` environment variable
+
+      --use-cargo-rustc
+          Use `cargo rustc -- --print cfg` which allows automatically collecting profile flags and features
+
+          WARNING: because `cargo rustc --print` is unstable this uses `cargo rustc -- --print` which may invoke side effects like downloading all crate dependencies
+
+          (requires --load-cfg-from-rustc)
+
+      --rustc-flags <RUSTC_FLAGS>
+          flags to pass to rustc when loading cfg values
+
+          (requires --load-cfg-from-rustc)
+
+      --target <RUSTC_TARGET>
+          A target to provide to `rustc` when loading config values
+
+          (requires --load-cfg-from-rustc)
+
+      --profile <CARGO_PROFILE>
+          cargo profile to use when loading cfg values
+
+          (requires --use-cargo-rustc)
+
+      --package <CARGO_PACKAGE>
+          cargo package to use when loading cfg values
+
+          (requires --use-cargo-rustc)
+
+      --no-default-features
+          passes --no-default-features to cargo
+
+          (requires --use-cargo-rustc)
+
+      --all-features
+          passes --all_features to cargo
+
+          (requires --use-cargo-rustc)
+
+  -i, --in-place
+          When set, the generator will embed the common Zngur types into the generated header.
+
+          The recommended workflow is to generate a `zngur.h` header with `make-zng-header` which should be shared between all of your generated modules and leave this flag unset.
+
+      --cpp-namespace <CPP_NAMESPACE>
+          Set the namespace of the generated C++ types. If not provided it defaults to `rust`
+
+          You may use this to customize overarching namespace for all the generated types in C++, but if your project spans multiple .zng modules, you must use a shared namespace
+
+      --crate-name <CRATE_NAME>
+          Set the crate name to be used in the generated code where `crate` appears.
+
+          If not provided, it tries to read `CARGO_PKG_NAME` and defaults to `crate` if unset.
+
+  -h, --help
+          Print help (see a summary with '-h')

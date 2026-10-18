@@ -1,0 +1,256 @@
+Test dbg works for Ref and RefMut -- started
+[regression_test1.cpp:11] v1 = "foo"
+[regression_test1.cpp:13] v2 = "foo"
+[regression_test1.cpp:15] v3 = "foo"
+[regression_test1.cpp:16] v2 = "foo"
+[regression_test1.cpp:17] v4 = "foo"
+[regression_test1.cpp:19] v5 = "foo"
+[regression_test1.cpp:20] "bar"_rs = "bar"
+[regression_test1.cpp:21] v4 = "foobar"
+Test dbg works for Ref and RefMut -- finished
+
+Test fields and constructor work -- started
+[regression_test1.cpp:31] v1 = Foo {
+    field1: 1,
+    field2: "bar",
+}
+[regression_test1.cpp:32] v1.field2 = "bar"
+[regression_test1.cpp:33] v1.field2.len() = 3
+[regression_test1.cpp:35] v1 = Foo {
+    field1: 1,
+    field2: "barbaz",
+}
+[regression_test1.cpp:39] v2 = (
+    "kkk",
+    Foo {
+        field1: 1,
+        field2: "barbaz",
+    },
+)
+[regression_test1.cpp:40] v2.f0 = "kkk"
+[regression_test1.cpp:41] v2.f1 = Foo {
+    field1: 1,
+    field2: "barbaz",
+}
+[regression_test1.cpp:42] v2.f1.field2 = "barbaz"
+[regression_test1.cpp:46] v3.f0 = "kkk"
+[regression_test1.cpp:47] v3.f1 = Foo {
+    field1: 1,
+    field2: "barbazxxx",
+}
+[regression_test1.cpp:48] v3.f1.field2 = "barbazxxx"
+[regression_test1.cpp:51] v3.f1.field2.len() = 9
+[regression_test1.cpp:55] v4.f0 = "kkk"
+[regression_test1.cpp:56] v4.f1 = Foo {
+    field1: 1,
+    field2: "barbazxxx",
+}
+[regression_test1.cpp:57] v4.f1.field2 = "barbazxxx"
+[regression_test1.cpp:59] v4.f1.field2.len() = 12
+Test fields and constructor work -- finished
+
+Test Field* underlying conversions -- started
+[regression_test1.cpp:71] v0 = 42
+[regression_test1.cpp:75] v1 = "hi"
+[regression_test1.cpp:79] sref.len() = 2
+[regression_test1.cpp:82] int32_t(pref.f0) = 42
+[regression_test1.cpp:83] pref.f1.len() = 2
+[regression_test1.cpp:86] int32_t(pmut.f0) = 42
+[regression_test1.cpp:88] pmut.f1.len() = 3
+Test Field* underlying conversions -- finished
+
+Test floats -- started
+[regression_test1.cpp:98] *r1 = 12.3
+[regression_test1.cpp:100] v1 = 12.3
+[regression_test1.cpp:105] fvec = [
+    42.24,
+    147.0,
+]
+[regression_test1.cpp:106] fvec.get(0) = Some(
+    42.24,
+)
+[regression_test1.cpp:107] fvec.get(2) = None
+[regression_test1.cpp:108] *fvec.get(1).unwrap() = 147
+[regression_test1.cpp:110] fvec = [
+    42.24,
+    5.43,
+]
+Test floats -- finished
+
+Test dyn Fn() with multiple arguments -- started
+scope passed to dyn Fn -- started
+Inner function called
+scope passed to dyn Fn -- finished
+
+End of call_dyn_fn_multi_args
+Test dyn Fn() with multiple arguments -- finished
+
+Test Ref<Ref<T>> -- started
+[regression_test1.cpp:131] strvec = [
+    "a str",
+    "foobar",
+    "a third str",
+]
+[regression_test1.cpp:132] strvec.get(0) = Some(
+    "a str",
+)
+[regression_test1.cpp:133] strvec.get(2) = Some(
+    "a third str",
+)
+[regression_test1.cpp:138] *strvec.get(1).unwrap() = "foobar"
+[regression_test1.cpp:140] strvec = [
+    "a str",
+    "flip flop",
+    "a third str",
+]
+Test Ref<Ref<T>> -- finished
+
+Test zero-sized type -- started
+Method call on ZST
+[regression_test1.cpp:147] zst = ZeroSizedType
+Test zero-sized type -- finished
+
+Test nested Ref<T> where T is #heap_allocated and auto field offsets -- started
+[regression_test1.cpp:162] a = TypeA {
+    foo: 10,
+    bar: FieldTypeA {
+        fizz: FieldTypeC {
+            buzz_1: 20,
+            buzz_2: 30,
+            buzz_3: 40,
+        },
+    },
+    baz: FieldTypeB {
+        fizz: FieldTypeC {
+            buzz_1: 50,
+            buzz_2: 60,
+            buzz_3: 70,
+        },
+    },
+}
+[regression_test1.cpp:163] ::rust::Ref<int32_t>(a.foo) = 10
+[regression_test1.cpp:164] ::rust::Ref<int32_t>(a.bar.fizz.buzz_2) = 30
+[regression_test1.cpp:165] ::rust::RefMut<int32_t>(a.baz.fizz.buzz_3) = 70
+[regression_test1.cpp:168] ::rust::Ref<int32_t>(a_fa_fizz.buzz_1) = 20
+[regression_test1.cpp:170] ::rust::Ref<int32_t>(a_fb_fizz.buzz_2) = 60
+[regression_test1.cpp:181] b = TypeB {
+    foo: 100,
+    bar: FieldTypeA {
+        fizz: FieldTypeC {
+            buzz_1: 200,
+            buzz_2: 300,
+            buzz_3: 400,
+        },
+    },
+    baz: FieldTypeB {
+        fizz: FieldTypeC {
+            buzz_1: 500,
+            buzz_2: 600,
+            buzz_3: 700,
+        },
+    },
+}
+[regression_test1.cpp:182] ::rust::Ref<int32_t>(b.foo) = 100
+[regression_test1.cpp:183] ::rust::Ref<int32_t>(b.bar.fizz.buzz_2) = 300
+[regression_test1.cpp:184] ::rust::RefMut<int32_t>(b.baz.fizz.buzz_3) = 700
+[regression_test1.cpp:187] ::rust::Ref<int32_t>(b_fa_fizz.buzz_1) = 200
+[regression_test1.cpp:189] ::rust::Ref<int32_t>(b_fb_fizz.buzz_2) = 600
+[regression_test1.cpp:194] fa = FieldTypeA {
+    fizz: FieldTypeC {
+        buzz_1: 21,
+        buzz_2: 31,
+        buzz_3: 41,
+    },
+}
+[regression_test1.cpp:195] ::rust::Ref<int32_t>(fa.fizz.buzz_1) = 21
+[regression_test1.cpp:196] ::rust::Ref<int32_t>(fa.fizz.buzz_3) = 41
+[regression_test1.cpp:201] fa = FieldTypeA {
+    fizz: FieldTypeC {
+        buzz_1: 21,
+        buzz_2: 31,
+        buzz_3: 41,
+    },
+}
+[regression_test1.cpp:202] ::rust::Ref<int32_t>(fb.fizz.buzz_2) = 61
+[regression_test1.cpp:203] ::rust::Ref<int32_t>(fb.fizz.buzz_3) = 71
+Test nested Ref<T> where T is #heap_allocated and auto field offsets -- finished
+
+Test #layout_conservative -- started
+[regression_test1.cpp:212] c_layout = ConservativeLayoutType {
+    field1: 3.14159,
+    field2: 42,
+    field3: "A string at some unknown offset",
+}
+Rust( size = 32 , align = 8 )
+c++( size = 48 , align = 8 )
+[regression_test1.cpp:224] layouts = [
+    ConservativeLayoutType {
+        field1: 3.14159,
+        field2: 42,
+        field3: "A string at some unknown offset",
+    },
+    ConservativeLayoutType {
+        field1: 2.71828,
+        field2: 1000,
+        field3: "Another test string",
+    },
+]
+[regression_test1.cpp:225] layouts.get(0) = Some(
+    ConservativeLayoutType {
+        field1: 3.14159,
+        field2: 42,
+        field3: "A string at some unknown offset",
+    },
+)
+[regression_test1.cpp:226] layouts.get(1) = Some(
+    ConservativeLayoutType {
+        field1: 2.71828,
+        field2: 1000,
+        field3: "Another test string",
+    },
+)
+[regression_test1.cpp:227] layouts.get(1).unwrap() = ConservativeLayoutType {
+    field1: 2.71828,
+    field2: 1000,
+    field3: "Another test string",
+}
+[regression_test1.cpp:229] layouts = [
+    ConservativeLayoutType {
+        field1: 3.14159,
+        field2: 42,
+        field3: "A string at some unknown offset",
+    },
+    ConservativeLayoutType {
+        field1: 2.71828,
+        field2: 10,
+        field3: "Another test string",
+    },
+]
+Test #layout_conservative -- finished
+
+Test dbg of Ref<Ref<T>> -- started
+[regression_test1.cpp:241] r = RefHolder(
+    SimpleFoo(
+        42,
+    ),
+)
+[regression_test1.cpp:242] rr = RefHolder(
+    SimpleFoo(
+        42,
+    ),
+)
+[regression_test1.cpp:243] rrr = RefHolder(
+    SimpleFoo(
+        42,
+    ),
+)
+[regression_test1.cpp:244] rust::Ref<rust::Ref<rust::crate::SimpleFoo>>(r.f0) = SimpleFoo(
+    42,
+)
+[regression_test1.cpp:245] rust::Ref<rust::Ref<rust::crate::SimpleFoo>>((*rr).f0) = SimpleFoo(
+    42,
+)
+[regression_test1.cpp:246] rust::Ref<rust::Ref<rust::crate::SimpleFoo>>((**rrr).f0) = SimpleFoo(
+    42,
+)
+Test dbg of Ref<Ref<T>> -- finished

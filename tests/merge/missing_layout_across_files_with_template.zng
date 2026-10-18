@@ -1,0 +1,5 @@
+//@ fail
+#unstable(template_types)
+merge "./missing_layout_template.zng";
+type<T> A<T> {}
+type A<B> {}

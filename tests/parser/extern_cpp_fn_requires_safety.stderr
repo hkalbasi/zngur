@@ -1,0 +1,8 @@
+Error: found 'fn' expected 'safe', 'unsafe', 'impl', or '}'
+   ╭─[ extern_cpp_fn_requires_safety.zng:3:5 ]
+   │
+ 3 │     fn foo();
+   │     ─┬  
+   │      ╰── found 'fn' expected 'safe', 'unsafe', 'impl', or '}'
+───╯
+cfg values used:

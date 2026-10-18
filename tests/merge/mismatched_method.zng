@@ -1,0 +1,1 @@
+type A { #layout(size = 1, align = 1); fn foo(i32) -> i32; }

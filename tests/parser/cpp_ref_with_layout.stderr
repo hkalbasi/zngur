@@ -1,0 +1,8 @@
+Error: Duplicate layout policy found
+   ╭─[ cpp_ref_with_layout.zng:3:5 ]
+   │
+ 3 │     #layout(size = 1, align = 2);
+   │     ──────────────┬─────────────  
+   │                   ╰─────────────── Duplicate layout policy found
+───╯
+cfg values used:

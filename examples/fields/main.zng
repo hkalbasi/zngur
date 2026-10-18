@@ -1,0 +1,19 @@
+type str {
+    wellknown_traits(?Sized);
+
+    fn to_owned(&self) -> ::std::string::String;
+}
+
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+
+    fn len(&self) -> usize;
+    fn push_str(&mut self, &str);
+}
+
+type (i32, ::std::string::String) {
+    #layout(size = 32, align = 8);
+
+    field 0 (offset = 0, type = i32);
+    field 1 (offset = 8, type = ::std::string::String);
+}

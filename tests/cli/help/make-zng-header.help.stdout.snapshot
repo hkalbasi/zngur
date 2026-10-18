@@ -1,0 +1,21 @@
+Generates the zngur.h file that contains shared interop definitions used by all generated zngur bridges
+
+Usage: zngur make-zng-header [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>
+          Path to the generated header file
+
+Options:
+      --panic-to-exception
+          If set, it will generate the "panic to exceptions" mechanism in the generated header.
+
+          Note that each `zng` module will need to use `#convert_panic_to_exception` in order to fully enable it.
+
+      --cpp-namespace <CPP_NAMESPACE>
+          Set the namespace of the generated C++ types. If not provided it defaults to `rust`
+
+          You may use this to customize overarching namespace for all the generated types in C++, but if your project spans multiple .zng modules, you must use a shared namespace
+
+  -h, --help
+          Print help (see a summary with '-h')

@@ -1,0 +1,8 @@
+Error: Duplicate layout policy found
+   ╭─[ duplicate_layout.zng:4:5 ]
+   │
+ 4 │     #heap_allocated;
+   │     ───────┬───────  
+   │            ╰───────── Duplicate layout policy found
+───╯
+cfg values used:

@@ -349,13 +349,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
-name = "cpp_inherit"
-version = "0.11.0"
-dependencies = [
- "zngur-lib",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -504,17 +497,6 @@ name = "example-conditional"
 version = "0.11.0"
 
 [[package]]
-name = "example-cpp-inheritance"
-version = "0.11.0"
-dependencies = [
- "build-rs 0.1.2",
- "cc",
- "cpp_inherit",
- "zngur",
- "zngur-lib",
-]
-
-[[package]]
 name = "example-cxx_demo"
 version = "0.11.0"
 dependencies = [
@@ -534,6 +516,10 @@ dependencies = [
 
 [[package]]
 name = "example-enums"
+version = "0.11.0"
+
+[[package]]
+name = "example-fields"
 version = "0.11.0"
 
 [[package]]
@@ -579,10 +565,6 @@ version = "0.11.0"
 dependencies = [
  "rayon",
 ]
-
-[[package]]
-name = "example-regression-test1"
-version = "0.11.0"
 
 [[package]]
 name = "example-rustyline"
@@ -1707,6 +1689,7 @@ version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",
+ "strip-ansi-escapes",
  "xshell",
 ]
 

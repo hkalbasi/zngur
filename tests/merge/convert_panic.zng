@@ -1,0 +1,4 @@
+#convert_panic_to_exception
+type A {
+    #layout(size = 1, align = 1);
+}

@@ -1,0 +1,5 @@
+//@ fail
+merge "./conflict.zng";
+type A {
+    #layout(size = 2, align = 2);
+}

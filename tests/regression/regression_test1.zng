@@ -1,0 +1,232 @@
+//@ pass
+#convert_panic_to_exception
+
+type bool {
+	#layout(size = 1, align = 1);
+	wellknown_traits(Copy);
+}
+
+type str {
+    wellknown_traits(?Sized, Debug);
+
+    fn as_ptr(&self) -> *const u8;
+    fn len(&self) -> usize;
+    fn to_owned(&self) -> ::std::string::String;
+}
+
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+
+    fn clone(&self) -> ::std::string::String;
+    fn push_str(&mut self, &str);
+    fn len(&self) -> usize;
+}
+
+type crate::Foo {
+    #layout(size = 32, align = 8);
+    wellknown_traits(Debug);
+
+    constructor { field1: i32, field2: ::std::string::String };
+    field field2 (offset = 0, type = ::std::string::String);
+}
+
+type (::std::string::String, crate::Foo) {
+    #layout(size = 56, align = 8);
+    wellknown_traits(Debug);
+
+    field 0 (offset = 0, type = ::std::string::String);
+    field 1 (offset = 24, type = crate::Foo);
+}
+
+type (i32, ::std::string::String) {
+    #layout(size = 32, align = 8);
+    wellknown_traits(Debug);
+
+    field 0 (offset = 0, type = i32);
+    field 1 (offset = 8, type = ::std::string::String);
+}
+
+type (f32, f64) {
+    #layout(size = 16, align = 8);
+    wellknown_traits(Debug);
+
+    field 0 (offset = 0, type = f32);
+    field 1 (offset = 8, type = f64);
+}
+
+mod ::std::option {
+    type Option<&f32> {
+        #layout(size = 8, align = 8);
+        wellknown_traits(Debug, Copy);
+
+        fn is_some(&self) -> bool;
+        fn unwrap(self) -> &f32;
+    }
+
+    type Option<&mut f32> {
+        #layout(size = 8, align = 8);
+        wellknown_traits(Debug);
+
+        fn is_some(&self) -> bool;
+        fn unwrap(self) -> &f32;
+    }
+
+    type Option<&&str> {
+        #layout(size = 8, align = 8);
+        wellknown_traits(Debug, Copy);
+
+        fn is_some(&self) -> bool;
+        fn unwrap(self) -> &&str;
+    }
+
+    type Option<&mut &str> {
+        #layout(size = 8, align = 8);
+        wellknown_traits(Debug);
+
+        fn is_some(&self) -> bool;
+        fn unwrap(self) -> &mut &str;
+    }
+
+    type Option<&crate::ConservativeLayoutType> {
+        #layout(size = 8, align = 8);
+        wellknown_traits(Debug, Copy);
+
+        fn is_some(&self) -> bool;
+        fn unwrap(self) -> &crate::ConservativeLayoutType;
+    }
+
+    type Option<&mut crate::ConservativeLayoutType> {
+        #layout(size = 8, align = 8);
+        wellknown_traits(Debug);
+
+        fn is_some(&self) -> bool;
+        fn unwrap(self) -> &mut crate::ConservativeLayoutType;
+    }
+}
+
+mod ::std::vec {
+    type Vec<f32> {
+        #layout(size = 24, align = 8);
+        wellknown_traits(Debug);
+
+        fn new() -> Vec<f32>;
+        fn get(&self, usize) -> ::std::option::Option<&f32> deref [f32];
+        fn get_mut(&mut self, usize) -> ::std::option::Option<&mut f32> deref [f32];
+        fn push(&mut self, f32);
+    }
+
+    type Vec<&str> {
+        #layout(size = 24, align = 8);
+        wellknown_traits(Debug);
+
+        fn new() -> Vec<&str>;
+        fn get(&self, usize) -> ::std::option::Option<&&str> deref [&str];
+        fn get_mut(&mut self, usize) -> ::std::option::Option<&mut &str> deref [&str];
+        fn push(&mut self, &str);
+    }
+
+    type Vec<crate::ConservativeLayoutType> {
+        #layout(size = 24, align = 8);
+        wellknown_traits(Debug);
+
+        fn new() -> Vec<crate::ConservativeLayoutType>;
+        fn get(&self, usize) -> ::std::option::Option<&crate::ConservativeLayoutType> deref [crate::ConservativeLayoutType];
+        fn get_mut(&mut self, usize) -> ::std::option::Option<&mut crate::ConservativeLayoutType> deref [crate::ConservativeLayoutType];
+        fn push(&mut self, crate::ConservativeLayoutType);
+    }
+}
+
+type crate::Scoped {
+    #layout(size = 16, align = 8);
+
+    fn new(&str) -> crate::Scoped;
+}
+
+type Box<dyn Fn(i32, crate::Scoped, &str)> {
+    #layout(size = 16, align = 8);
+}
+
+type crate::SimpleFoo {
+    #layout(size = 4, align = 4);
+    wellknown_traits(Debug);
+    constructor (i32);
+}
+
+type crate::RefHolder {
+    #layout(size = 8, align = 8);
+    wellknown_traits(Debug);
+    constructor (&crate::SimpleFoo);
+    field 0 (offset = 0, type = &crate::SimpleFoo);
+}
+
+type crate::ZeroSizedType {
+    #layout(size = 0, align = 1);
+    wellknown_traits(Debug);
+    fn new() -> crate::ZeroSizedType;
+    fn method(&self);
+}
+
+mod crate {
+    fn call_dyn_fn_multi_args(Box<dyn Fn(i32, crate::Scoped, &str)>);
+}
+
+type crate::FieldTypeA {
+    #layout(size = 12, align = 4);
+    wellknown_traits(Debug, Copy);
+    constructor { fizz: crate::FieldTypeC };
+
+    field fizz (offset = 0, type = crate::FieldTypeC );
+}
+
+type crate::FieldTypeB {
+    #heap_allocated;
+    wellknown_traits(Debug, Copy);
+    constructor { fizz: crate::FieldTypeC };
+
+    field fizz (offset = 0, type = crate::FieldTypeC );
+}
+
+type crate::FieldTypeC {
+    #layout(size = 12, align = 4);
+    wellknown_traits(Debug, Copy);
+    constructor { buzz_1: i32, buzz_2: i32, buzz_3: i32 };
+
+    field buzz_1 (offset = auto, type = i32 );
+    field buzz_2 (offset = auto, type = i32 );
+    field buzz_3 (offset = auto, type = i32 );
+}
+
+type crate::TypeA {
+    #layout(size = 28, align = 4);
+    wellknown_traits(Debug, Copy);
+    constructor { foo: i32, bar: crate::FieldTypeA, baz: crate::FieldTypeB };
+
+    field foo (offset = 0, type = i32 );
+    field bar (offset = 4, type = crate::FieldTypeA );
+    field baz (offset = 16, type = crate::FieldTypeB );
+}
+
+type crate::TypeB {
+    #heap_allocated;
+    wellknown_traits(Debug, Copy);
+    constructor { foo: i32, bar: crate::FieldTypeA, baz: crate::FieldTypeB };
+
+    field foo (offset = 0, type = i32 );
+    field bar (offset = 4, type = crate::FieldTypeA );
+    field baz (offset = 16, type = crate::FieldTypeB );
+}
+
+type crate::ConservativeLayoutType {
+    // bigger than the real size of 32
+    #layout_conservative(size = 48, align = 8 );
+    wellknown_traits(Debug);
+    constructor { field1: f32, field2: i32, field3: ::std::string::String };
+
+    field field1 (offset = auto, type = f32 );
+    field field2 (offset = auto, type = i32 );
+    field field3 (offset = auto, type = ::std::string::String );
+
+    fn mem_size(&self) -> usize;
+    fn mem_align(&self) -> usize;
+}

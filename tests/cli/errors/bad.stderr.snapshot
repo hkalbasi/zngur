@@ -1,0 +1,8 @@
+Error: found 'cpp_copy' expected 'unstable', 'cpp_additional_includes', 'convert_panic_to_exception', 'if', or 'match'
+   ╭─[ bad.zng:1:2 ]
+   │
+ 1 │ #cpp_copy "::foo::Foo";
+   │  ────┬───
+   │      ╰───── found 'cpp_copy' expected 'unstable', 'cpp_additional_includes', 'convert_panic_to_exception', 'if', or 'match'
+───╯
+cfg values used:

@@ -26,11 +26,10 @@ and I would appreciate contributions in this area.
 
 ## Testing
 
-We (ab)use examples as an end to end test platform. So please add examples for features that you add.
-If your patch is not a feature, you can use `regression_test` example for that.
-You can run the tests using `cargo xtask ci` or let the CI do that for you.
-
-Adding a proper end to end test infra (e.g. with support for failing cases and diagnostics) is appreciated.
+We have an end to end test platform inspired by rustc.
+You can run the tests using `cargo xtask test`.
+If you add a feature, you can also add an example, to both test the feature (examples are checked in CI)
+and make the feature discoverable for users.
 
 ## Is AI allowed in contributing to Zngur?
 

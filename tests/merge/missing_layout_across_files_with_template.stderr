@@ -1,0 +1,22 @@
+Error: No layout policy found for type ::A::<::B>.
+   ╭─[ missing_layout_across_files_with_template.zng:1:1 ]
+   │
+ 5 │ type A<B> {}
+   │      ──┬─  
+   │        ╰─── Type first declared here.
+   │
+   ├─[ ./missing_layout_template.zng:1:6 ]
+   │
+ 1 │ type A<B> {
+   │      ──┬─  
+   │        ╰─── Type also declared here
+   │
+   ├─[ missing_layout_across_files_with_template.zng:1:1 ]
+   │
+ 4 │ type<T> A<T> {}
+   │         ──┬─  
+   │           ╰─── Matching template defined here
+   │ 
+   │ Note: Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.
+───╯
+cfg values used:

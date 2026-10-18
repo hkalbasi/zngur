@@ -1,0 +1,6 @@
+//@ fail
+extern "C++" {
+    impl crate::Foo {
+        fn foo();
+    }
+}

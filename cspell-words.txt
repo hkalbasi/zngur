@@ -8,6 +8,7 @@ blobstore
 cerr
 chumsky
 cloneable
+codegen
 Conds
 constexpr
 coro
@@ -48,6 +49,7 @@ lwasi
 mdformat
 memcpy
 millis
+mktemp
 moveit
 msvc
 newtype
@@ -125,3 +127,9 @@ libstdc
 Deque
 reparsed
 sepc
+trimfile
+ffile
+compl
+consteval
+constinit
+reflexpr

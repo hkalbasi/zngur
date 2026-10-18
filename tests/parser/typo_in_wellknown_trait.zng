@@ -1,0 +1,5 @@
+//@ fail
+type () {
+    #layout(size = 0, align = 1);
+    welcome_traits(Copy);
+}

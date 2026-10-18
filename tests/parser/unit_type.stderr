@@ -1,0 +1,8 @@
+Error: Unit type is declared implicitly. Remove this entirely.
+   ╭─[ unit_type.zng:2:6 ]
+   │
+ 2 │ type () {
+   │      ─┬  
+   │       ╰── Unit type is declared implicitly. Remove this entirely.
+───╯
+cfg values used:

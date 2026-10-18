@@ -1,0 +1,5 @@
+v = 42
+*r = 42
+sref.len() = 2
+rt.f1.len() = 2
+mt.f1.len() = 3

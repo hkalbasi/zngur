@@ -1,0 +1,5 @@
+//@ fail
+merge "./convert_panic.zng";
+type B {
+    #layout(size = 1, align = 1);
+}

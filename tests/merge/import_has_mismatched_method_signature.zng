@@ -1,0 +1,6 @@
+//@ fail
+merge "./mismatched_method.zng";
+type A {
+    #layout(size = 1, align = 1);
+    fn foo(i64) -> i64;
+}

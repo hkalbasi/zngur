@@ -1,0 +1,8 @@
+Error: Module import is not supported. Use a relative path instead.
+   ╭─[ module_import_prohibited.zng:2:1 ]
+   │
+ 2 │ merge "foo/bar.zng";
+   │ ──────────┬─────────  
+   │           ╰─────────── Module import is not supported. Use a relative path instead.
+───╯
+cfg values used:

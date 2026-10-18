@@ -1,0 +1,16 @@
+Error: No layout policy found for type ::A.
+   ╭─[ missing_layout_across_files.zng:1:1 ]
+   │
+ 3 │ type A {}
+   │      ┬  
+   │      ╰── Type first declared here.
+   │
+   ├─[ ./missing_layout.zng:1:6 ]
+   │
+ 1 │ type A {
+   │      ┬  
+   │      ╰── Type also declared here
+   │ 
+   │ Note: Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.
+───╯
+cfg values used:

@@ -2,6 +2,7 @@
 cspell = "9.4.0"
 dprint = "0.50.2"
 wasmtime = "36.0.2"
+"aqua:nushell/nushell" = "0.113.1"
 
 [tools."github:WebAssembly/wasi-sdk"]
 version = "30"

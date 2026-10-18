@@ -59,6 +59,7 @@
                 dprint
                 emscripten
                 wasmtime
+                nushell
                 rustToolchain
                 llvmPackages_latest.lld
               ];

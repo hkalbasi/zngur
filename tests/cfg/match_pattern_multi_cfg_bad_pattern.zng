@@ -1,0 +1,18 @@
+//@ fail
+#unstable(cfg_match)
+
+#match (cfg!(feature.foo), cfg!(target_pointer_width)) {
+    (Some, "32") => type crate::Foo32 {
+        // would succeed if cfg match attempted
+        #layout(size = 1, align = 1);
+    }
+    "64" => type crate::NoFoo64 {
+        // will fail: cardinality of pattern and tuple don't match
+        #layout(size = 1, align = 1);
+    }
+    _ => {
+        type crate::SpecialFoo {
+            #layout(size = 1, align = 1);
+        }
+    }
+}

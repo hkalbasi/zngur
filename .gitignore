@@ -17,3 +17,4 @@ generated*.*
 .direnv/
 *.dSYM/
 .envrc
+fail_list*.txt

@@ -1,0 +1,8 @@
+Error: Using `#convert_panic_to_exception` in imported zngur files is not supported. This directive can only be used in the main zngur file.
+   ╭─[ ./convert_panic.zng:1:2 ]
+   │
+ 1 │ #convert_panic_to_exception
+   │  ─────────────┬────────────  
+   │               ╰────────────── Using `#convert_panic_to_exception` in imported zngur files is not supported. This directive can only be used in the main zngur file.
+───╯
+cfg values used:

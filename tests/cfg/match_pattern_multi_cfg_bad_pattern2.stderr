@@ -1,0 +1,8 @@
+Error: Number of patterns and number of scrutinees do not match.
+   ╭─[ match_pattern_multi_cfg_bad_pattern2.zng:9:5 ]
+   │
+ 9 │     (None, "64") => type crate::NoFoo64 {
+   │     ──────┬─────  
+   │           ╰─────── Number of patterns and number of scrutinees do not match.
+───╯
+cfg values used:

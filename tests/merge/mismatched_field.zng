@@ -1,0 +1,4 @@
+type A {
+    #layout(size = 1, align = 1);
+    field x (offset = 0, type = i32);
+}

@@ -1,0 +1,6 @@
+//@ fail
+type crate::Way {
+    #layout(size = 1, align = 2);
+
+    #cpp_ref "::osmium::Way";
+}

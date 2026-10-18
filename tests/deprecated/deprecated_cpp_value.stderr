@@ -1,0 +1,7 @@
+Warning: #cpp_value is deprecated; use #cpp_heap_allocated instead
+   ╭─[ deprecated_cpp_value.zng:9:5 ]
+   │
+ 9 │     #cpp_value "0" "::cpp_accumulator::Accumulator";
+   │     ────────────────────────┬───────────────────────  
+   │                             ╰───────────────────────── #cpp_value is deprecated; use #cpp_heap_allocated instead
+───╯

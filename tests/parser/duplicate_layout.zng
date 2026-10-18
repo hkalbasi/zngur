@@ -1,0 +1,5 @@
+//@ fail
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    #heap_allocated;
+}

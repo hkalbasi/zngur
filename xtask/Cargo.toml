@@ -12,3 +12,4 @@ publish = false
 xshell = "0.2.7"
 anyhow = "1.0"
 clap = { version = "4.3.12", features = ["derive"] }
+strip-ansi-escapes = { workspace = true }

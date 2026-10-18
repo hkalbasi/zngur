@@ -36,7 +36,7 @@ rust::RefMut<decltype(t)> mt = t;
 mt.f1.push_str("!"_rs);
 ```
 
-See `examples/regression_test1` for a runnable demonstration.
+See `examples/fields` for a runnable demonstration.
 
 ## `offset = auto`
 

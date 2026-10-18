@@ -1,0 +1,27 @@
+!IFNDEF EXAMPLES_CARGO_PROFILE
+EXAMPLES_CARGO_PROFILE = debug
+!ENDIF
+
+CXX = cl.exe
+CXXFLAGS = /W4 /DEBUG /EHsc /std:c++20 /Zc:__cplusplus
+WINLIBS = ntdll.lib Ws2_32.lib Userenv.lib
+
+EXAMPLE_NAME = fields
+
+GENERATED = generated.h src/generated.rs
+
+RUSTLIB_PATH = ../../target/$(EXAMPLES_CARGO_PROFILE)/
+
+RUSTLIB = example_$(EXAMPLE_NAME).lib
+
+a.exe : main.cpp src/lib.rs $(GENERATED) $(RUSTLIB_PATH)/$(RUSTLIB)
+	$(CXX) $(CXXFLAGS) main.cpp /Fe:a.exe /link $(WINLIBS) $(RUSTLIB) /LIBPATH:$(RUSTLIB_PATH)
+
+$(RUSTLIB_PATH)/$(RUSTLIB) :
+	cargo build --profile $(EXAMPLES_CARGO_PROFILE:debug=dev)
+
+$(GENERATED) : main.zng
+	cd ../../zngur-cli && cargo run g -i ../examples/$(EXAMPLE_NAME)/main.zng --crate-name "crate"
+
+clean :
+	- del /f /q generated.h generated.cpp src\generated.rs a.exe main.obj actual_output.txt 2>nul

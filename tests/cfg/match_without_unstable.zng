@@ -1,0 +1,11 @@
+//@ fail
+#match cfg!(feature) {
+    "foo" => type crate::Foo {
+        #layout(size = 1, align = 1);
+    }
+    _ => {
+        type crate::Bar {
+            #layout(size = 1, align = 1);
+        }
+    }
+}

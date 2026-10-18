@@ -1,0 +1,8 @@
+Error: Can not match single pattern against multiple cfg values.
+   ╭─[ match_pattern_multi_cfg_bad_pattern.zng:9:5 ]
+   │
+ 9 │     "64" => type crate::NoFoo64 {
+   │     ──┬─  
+   │       ╰─── Can not match single pattern against multiple cfg values.
+───╯
+cfg values used:

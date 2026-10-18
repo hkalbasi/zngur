@@ -1734,6 +1734,15 @@ pub trait ImportResolver {
 /// A default implementation of ImportResolver which uses conventional filesystem paths and semantics.
 pub struct DefaultImportResolver;
 
+/// Make snapshot stable for windows.
+fn import_error_message(error: std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        "No such file or directory".to_owned()
+    } else {
+        error.to_string()
+    }
+}
+
 impl ImportResolver for DefaultImportResolver {
     fn resolve_import(
         &self,
@@ -1743,8 +1752,8 @@ impl ImportResolver for DefaultImportResolver {
         let path = cwd
             .join(relpath)
             .canonicalize()
-            .map_err(|e| e.to_string())?;
-        std::fs::read_to_string(path).map_err(|e| e.to_string())
+            .map_err(import_error_message)?;
+        std::fs::read_to_string(path).map_err(import_error_message)
     }
 }
 
