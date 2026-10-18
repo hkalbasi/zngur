@@ -303,7 +303,7 @@ impl AutozngContextData {
 
 #[derive(Debug, Default)]
 pub struct AutozngContext {
-    cfg: Config,
+    cfg: RefCell<Config>,
     data: AutozngContextData,
 }
 
@@ -356,13 +356,22 @@ impl AutozngContext {
     /// Create a context that carries the driver's [`Config`].
     pub fn new(cfg: Config) -> Self {
         AutozngContext {
-            cfg,
+            cfg: RefCell::new(cfg),
             data: AutozngContextData::default(),
         }
     }
 
-    pub fn config(&self) -> &Config {
-        &self.cfg
+    /// The driver [`Config`], as adjusted by any `#[autozng::policy]` seen so far.
+    pub fn config(&self) -> std::cell::Ref<'_, Config> {
+        self.cfg.borrow()
+    }
+
+    /// The driver [`Config`], mutably.
+    ///
+    /// Used by `#[autozng::policy]` (see [`crate::attrs::attributes::policy`]) to adjust the
+    /// configuration from the crate root.
+    pub fn config_mut(&self) -> std::cell::RefMut<'_, Config> {
+        self.cfg.borrow_mut()
     }
 
     /// All types recorded so far, keyed by their (base) `Ty`.

@@ -168,9 +168,12 @@ fn visit_emitted_ty(ctx: &AutozngContext, ty: Ty) {
     // Record the *concrete* type (`Vec<u32>`, not the `Vec<T, A>` definition `record_adt` would
     // give), so it renders with its generic arguments.
     ctx.record_ty(&ty, span_of_def(adt.def_id()));
-    // Only the local crate's ADTs are walked: an external type (`Vec<u32>`, `String`, ...)
-    // contributes just its `type` block, not the unreachable internals of another crate.
-    if adt.krate().is_local {
+    // By default only the local crate's ADTs are walked: an external type (`Vec<u32>`, `String`,
+    // ...) contributes just its `type` block, not the internals of another crate. The
+    // `implicitly_emit_external_interfaces` policy turns that on (see
+    // `attrs::attributes::policy`).
+    let walk_children = adt.krate().is_local || ctx.config().implicitly_emit_external_interfaces;
+    if walk_children {
         visit_adt_children(&adt, ctx);
     }
 }
