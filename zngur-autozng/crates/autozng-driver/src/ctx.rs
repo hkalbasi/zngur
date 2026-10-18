@@ -11,16 +11,18 @@
 
 use indexmap::{IndexMap, IndexSet};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_public::CrateDef;
+use rustc_public::CrateDefType;
 use rustc_public::abi::Layout;
 use rustc_public::ty::{
-    AdtDef, FieldDef, FnDef, GenericArgs, ImplDef, TraitDecl, TraitDef, TraitRef,
+    AdtDef, FieldDef, FnDef, FnSig, GenericArgs, ImplDef, TraitDecl, TraitDef, TraitRef,
 };
 use rustc_public::{DefId, ty::Ty};
 use rustc_span::Span;
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::hash::Hash;
 
 use crate::config::Config;
@@ -31,8 +33,10 @@ use crate::metadata::{
     ExportName, IntoMetadataKey, MetadataKey, MetadataMap, MetadataRecordRefMut,
 };
 use crate::rustc_ext::{
-    ClausesOfExt, GenericClauses, GetAssocInfoExt, RustcInternalEx, RustcPublicTyExt, stable_trait,
+    ClausesOfExt, FnDefExt, GenericClauses, GetAssocInfoExt, RustcInternalEx, RustcPublicTyExt,
+    Visibility, VisibilityExt, stable_trait,
 };
+use crate::type_map::{is_type_block_less, map_rustc_public_ty_to_zngur};
 
 #[derive(Debug)]
 pub struct FnRecord {
@@ -248,6 +252,17 @@ struct AutozngContextData {
     /// Traits / trait impls tagged `#[autozng::emit_on_implementers]`, in discovery order. Their
     /// functions are emitted on every implementing type (see [`EmitForRecord`]).
     emit_for: RefCell<Vec<EmitForRecord>>,
+    /// Types exposed by an emitted interface (a field's type, or a function / method signature)
+    /// that still need their own `type` block, in discovery order.
+    ///
+    /// Drained by the third analysis pass (see [`crate::analyze`]); visiting a type may queue
+    /// further types.
+    visit_queue: RefCell<VecDeque<Ty>>,
+    /// Every type already recorded, or already requested for a third-pass visit.
+    ///
+    /// Guards [`AutozngContextData::visit_queue`]: a type is queued at most once, so a cyclic
+    /// interface (or a type reached through several paths) is never visited twice.
+    seen_tys: RefCell<FxHashSet<Ty>>,
 }
 
 impl AutozngContextData {
@@ -261,7 +276,14 @@ impl AutozngContextData {
         self.tys.borrow().contains_key(ty)
     }
 
+    /// Mark `ty` as seen, so it is never queued for a third-pass visit.
+    fn mark_seen(&self, ty: Ty) {
+        self.seen_tys.borrow_mut().insert(ty.base_ty());
+    }
+
     fn ty_record_mut(&self, ty: Ty, span: Span) -> std::cell::RefMut<'_, TyRecord> {
+        // Every type that gets a record is seen: it must not be queued for a third-pass visit.
+        self.mark_seen(ty);
         let adt = ty.adt_def();
         std::cell::RefMut::map(self.tys.borrow_mut(), |tys| {
             tys.entry(ty).or_insert_with(|| TyRecord {
@@ -283,6 +305,51 @@ impl AutozngContextData {
 pub struct AutozngContext {
     cfg: Config,
     data: AutozngContextData,
+}
+
+/// Whether `ty` can be declared as its own `.zng` `type` block.
+///
+/// A numeric primitive is translated by zngur to a native C++ numeric type and the unit tuple
+/// (`()`) is specialised, so neither is ever declared; a type with no `.zng` representation at
+/// all (an array, a fn pointer, a type parameter, ...) has no block either. A type with escaping
+/// bound vars (e.g. a late-bound lifetime lifted out of a method signature) cannot be named on
+/// its own at all. Such types remain usable in method / function signatures — they are simply not
+/// queued for a visit.
+fn can_have_type_block(ty: Ty) -> bool {
+    with_ctxt(|driver| {
+        use rustc_middle::ty::TypeVisitableExt;
+
+        if ty.internal(driver.tcx).has_escaping_bound_vars() {
+            return false;
+        }
+        match map_rustc_public_ty_to_zngur(ty, driver.tcx) {
+            Ok(rust_ty) => !is_type_block_less(&rust_ty),
+            Err(_) => false,
+        }
+    })
+}
+
+/// The signature of `fn_def` with `args` applied when they cover every generic parameter of the
+/// function, or its identity signature otherwise (see [`FnDefExt::instantiate_sig`]).
+///
+/// Used when a function / method is recorded, so the types its interface exposes can be queued
+/// for a third-pass visit even for a monomorphization whose arguments are not known yet (a
+/// method on a generic impl keeps its identity signature, whose type parameters are simply not
+/// queueable).
+fn instantiate_signature(fn_def: FnDef, args: Option<&GenericArgs>) -> FnSig {
+    match args.filter(|args| args.0.len() == fn_def.generics_len()) {
+        Some(args) => fn_def.instantiate_sig(args),
+        None => fn_def.fn_sig().skip_binder(),
+    }
+}
+
+/// Whether `fn_def` is a method with a `self` receiver (so its first signature input is the
+/// receiver and should not be queued as an interface type of its own).
+fn fn_has_self(fn_def: &FnDef) -> bool {
+    matches!(
+        fn_def.associated_item().map(|item| item.kind),
+        Some(rustc_public::ty::AssocKind::Fn { has_self: true, .. })
+    )
 }
 
 impl AutozngContext {
@@ -364,12 +431,87 @@ impl AutozngContext {
         }
     }
 
+    /// Request that `ty` get its own `.zng` `type` block by queueing it for the third analysis
+    /// pass (see [`crate::analyze`]).
+    ///
+    /// Called for every type an emitted interface exposes: a field's type, or the inputs and
+    /// output of a function / method signature. The type is treated as if it carried an explicit
+    /// `#[autozng::emit]` when it is visited, so a type reached only through an interface still
+    /// gets a `type` block.
+    ///
+    /// A type is queued at most once (`seen_tys` covers both recorded types and already-requested
+    /// ones). A local type that is not visible from the crate root is **not** queued: the
+    /// generated code cannot name it, so the field / function that exposed it is skipped during
+    /// rendering instead (see `render`). Numeric primitives and the unit tuple (translated /
+    /// specialised by zngur) and types with no `.zng` spelling are likewise never queued.
+    pub fn request_ty_visit(&self, ty: Ty) {
+        let ty = ty.base_ty();
+        if let Some(adt) = ty.adt_def()
+            && matches!(adt.visibility(), Visibility::PrivateAPI)
+        {
+            return;
+        }
+        if !can_have_type_block(ty) {
+            return;
+        }
+        // `insert` returns `false` when the type was already recorded or requested.
+        if self.data.seen_tys.borrow_mut().insert(ty) {
+            self.data.visit_queue.borrow_mut().push_back(ty);
+        }
+    }
+
+    /// Pop the next type waiting for a third-pass visit, if any.
+    ///
+    /// The caller visits it as if it carried an explicit `emit` (see [`crate::analyze`]); that
+    /// visit may queue further types. The queue is empty once every interface type has been
+    /// recorded.
+    pub fn pop_ty_visit(&self) -> Option<Ty> {
+        self.data.visit_queue.borrow_mut().pop_front()
+    }
+
+    /// Queue every type exposed by `fn_def`'s signature (its inputs and its output) for a
+    /// third-pass visit.
+    ///
+    /// `args` are the function's explicitly-enumerated generic arguments, if any; when they cover
+    /// every generic parameter the signature is instantiated first, so a monomorphization queues
+    /// its concrete argument types rather than its type parameters.
+    fn request_signature_types(&self, fn_def: FnDef, args: Option<&GenericArgs>) {
+        let signature = instantiate_signature(fn_def, args);
+        // A method's receiver is its `self` type, which is already part of the interface (the
+        // method hangs off it). Queueing `Box<Self>` / `Pin<&Self>` would add orphan types for a
+        // receiver that is unsupported (and so skipped) anyway.
+        let skip = usize::from(fn_has_self(&fn_def));
+        let output = signature.output();
+        for ty in signature
+            .inputs()
+            .iter()
+            .skip(skip)
+            .copied()
+            .chain(std::iter::once(output))
+        {
+            self.request_ty_visit(ty);
+        }
+    }
+
+    /// Queue every type exposed by the signature of each of `fns` for a third-pass visit.
+    ///
+    /// Used by the `emit_on_implementers` records, whose functions are emitted on every matching
+    /// type (the concrete `Self` is only known while rendering, but a concrete argument / return
+    /// type like `String` is already queueable here).
+    fn request_trait_fn_records_types(&self, fns: &IndexSet<TraitFnRecord>) {
+        for trait_fn in fns {
+            self.request_signature_types(trait_fn.def, Some(&trait_fn.generics));
+        }
+    }
+
     /// Record a field as selected for emission onto `ty`'s [`TyRecord`].
     ///
     /// Called while walking an ADT's fields in `analyze.rs` (through
     /// [`rustc_public::ty::FieldDef`]'s `EmitTarget` impl), after the `emit`/`skip` action and
     /// the field's visibility have been resolved.
     pub fn record_field(&self, ty: Ty, field: FieldDef, span: Span) {
+        // A field's type is part of the type's interface: it must get its own `type` block.
+        self.request_ty_visit(field.ty());
         let mut record = self.data.ty_record_mut(ty, span);
         record
             .fields
@@ -389,6 +531,9 @@ impl AutozngContext {
     /// [`FnRecord::partial_args`]); the ordinary crate walk passes `None`. `span` is the span of
     /// the item that selected the function.
     pub fn record_fn(&self, fn_def: FnDef, partial_args: Option<GenericArgs>, span: Span) {
+        // Every type the function exposes is part of the interface: queue it for a third-pass
+        // visit so it gets its own `type` block.
+        self.request_signature_types(fn_def, partial_args.as_ref());
         self.data.funcs.borrow_mut().insert(FnRecord {
             def: fn_def,
             clauses: fn_def.clauses_of(),
@@ -411,6 +556,8 @@ impl AutozngContext {
         partial_args: Option<GenericArgs>,
         span: Span,
     ) {
+        // Every type the method exposes is part of the interface: queue it for a third-pass visit.
+        self.request_signature_types(fn_def, partial_args.as_ref());
         let mut record = self.data.ty_record_mut(ty, span);
         let impl_record = record
             .impls
@@ -440,6 +587,8 @@ impl AutozngContext {
         generics: GenericArgs,
         span: Span,
     ) {
+        // Every type the trait method exposes is part of the interface.
+        self.request_signature_types(def, Some(&generics));
         let ty = trait_ref.self_ty().base_ty();
         let mut record = self.data.ty_record_mut(ty, span);
         record.trait_fns.insert(TraitFnRecord {
@@ -507,6 +656,9 @@ impl AutozngContext {
         let mut fns = IndexSet::default();
         for assoc_item in def.associated_items() {
             if let Some((fn_def, _identity_generics)) = assoc_item.opt_fn_def() {
+                // The instantiation's arguments are concrete, so the method's interface types are
+                // queued as concrete types.
+                self.request_signature_types(fn_def, Some(&generics));
                 fns.insert(TraitFnRecord {
                     def: fn_def,
                     trait_def: def,
@@ -544,6 +696,7 @@ impl AutozngContext {
             return;
         }
         let fns = trait_fn_records(trait_def, span);
+        self.request_trait_fn_records_types(&fns);
         self.data.emit_for.borrow_mut().push(EmitForRecord {
             trait_def,
             impl_def: None,
@@ -571,6 +724,7 @@ impl AutozngContext {
         }
         let trait_def = trait_ref.def_id;
         let fns = trait_fn_records(trait_def, span);
+        self.request_trait_fn_records_types(&fns);
         self.data.emit_for.borrow_mut().push(EmitForRecord {
             trait_def,
             impl_def: Some(impl_def),
@@ -616,6 +770,8 @@ impl AutozngContext {
         generics: GenericArgs,
         span: Span,
     ) {
+        // Every type the trait method exposes is part of the interface.
+        self.request_signature_types(fn_def, Some(&generics));
         let mut traits = self.data.traits.borrow_mut();
         let Some(record) = traits
             .iter_mut()

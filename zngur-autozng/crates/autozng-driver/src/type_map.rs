@@ -52,6 +52,26 @@ impl std::fmt::Display for MapTypeError {
     }
 }
 
+/// Whether a mapped type must **never** be declared as its own `.zng` `type` block.
+///
+/// Numeric primitives are translated by zngur to native C++ numeric types, and the unit tuple
+/// (`()`) is specialised by zngur. Both are only usable in method / function signatures, so
+/// declaring them as `type` blocks would generate broken C++ (or a redundant declaration).
+pub fn is_type_block_less(ty: &RustType) -> bool {
+    match ty {
+        // The unit tuple (`()`), i.e. `RustType::UNIT`.
+        RustType::Tuple(tys) if tys.is_empty() => true,
+        RustType::Primitive(primitive) => matches!(
+            primitive,
+            PrimitiveRustType::Int(_)
+                | PrimitiveRustType::Uint(_)
+                | PrimitiveRustType::Usize
+                | PrimitiveRustType::Float(_)
+        ),
+        _ => false,
+    }
+}
+
 pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, MapTypeError> {
     match ty.kind() {
         // An unresolved associated-type projection or a higher-ranked variable has no `.zng`
@@ -189,13 +209,17 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                     let mut named_generics: Vec<(String, RustType)> = Vec::new();
                     let mut auto_traits = Vec::new();
 
-                    let path: Vec<String> = trait_ref
+                    let mut path: Vec<String> = trait_ref
                         .def_id
                         .name()
                         .as_str()
                         .split(PATH_SEP)
                         .map(Into::into)
                         .collect();
+                    // A local trait is spelled `crate::...`, mirroring the ADT arm above.
+                    if trait_ref.def_id.krate().is_local && !path.is_empty() {
+                        path[0] = "crate".to_string();
+                    }
                     // The trait's own generic arguments. `ExistentialTraitRef::generic_args`
                     // excludes `Self` (the object type), which is not a `.zng` argument.
                     let generics = trait_ref

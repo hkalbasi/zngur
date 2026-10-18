@@ -26,6 +26,11 @@ impl Greet for Person {
     // `Person` implements `Greet`, so `greet` is attached to it with the trait as its `use_path`.
     // The trait itself is not `emit`-tagged, so no `trait` block is rendered.
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::Person {
             #layout(size = 24, align = 8);
 
@@ -57,6 +62,11 @@ impl Greet for Person {
     // `emit` renders the trait block; `emit_on_implementers` additionally attaches `greet` to
     // `Person`.
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::Person {
             #layout(size = 0, align = 1);
 
@@ -89,6 +99,11 @@ const _: [&str; 0] = [];
 "#);
     // `str` is a non-ADT type; the trait method is attached to it just the same.
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type str {
             wellknown_traits(?Sized, Debug);
 
@@ -122,6 +137,11 @@ const _: [Wrapper<u32>; 0] = [];
     // The impl block's `T` is resolved against the concrete `Wrapper<u32>` (and its `T: Debug`
     // clause holds), so the trait's method is emitted on the instantiation.
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::Wrapper<u32> {
             #layout(size = 4, align = 4);
 
@@ -154,6 +174,11 @@ impl<T: Marker> Describe for T {
     // `Marked: Marker` holds, so it receives `describe`; `Unmarked` does not satisfy the impl's
     // clause and is left untouched.
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::Marked {
             #layout(size = 0, align = 1);
 
@@ -193,6 +218,11 @@ const _: () = {
     // The method is reachable both through `emit_items` and `emit_on_implementers`; it is
     // emitted only once.
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::Thing {
             #layout(size = 4, align = 4);
 
@@ -324,6 +354,11 @@ impl<T: Marker> Describe<T> for Foo {
     // `T` is not determined by `Foo`'s `Self` type, so there is no concrete `Foo: Describe<T>`
     // to emit; the impl is skipped instead of producing an ill-formed `.zng` (or crashing).
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::Foo {
             #layout(size = 4, align = 4);
 

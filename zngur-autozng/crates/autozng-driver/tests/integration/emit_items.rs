@@ -74,6 +74,11 @@ impl<T: Clone + std::fmt::Debug> Generic<T> {
 const _: [(Generic<i32>, Generic<String>); 0] = [];
 "#);
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::Generic<::std::string::String> {
             #layout(size = 24, align = 8);
             wellknown_traits(Debug);
@@ -115,6 +120,11 @@ const _: [(Generic<i32>, Generic<NotDebug>); 0] = [];
     // `Generic<NotDebug>` does not satisfy `T: Debug`, so the impl's methods are dropped; the
     // type itself is still emitted.
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::Generic<crate::NotDebug> {
             #layout(size = 0, align = 1);
         }
@@ -253,6 +263,11 @@ const _: () = {
     // monomorphization: its own generic args are recorded, listed as the turbofish and used to
     // instantiate the signature (the clause `u8: Clone` holds).
     out.assert_zng(expect![[r#"
+        type (u8, u8) {
+            #layout(size = 2, align = 1);
+            wellknown_traits(Copy, Debug);
+        }
+
         fn crate::twice<u8>(u8) -> (u8, u8);
     "#]]);
 }
@@ -277,6 +292,11 @@ const _: () = {
     // `S::to_string` resolves to the `ToString` trait method; it is attached to `S` and keeps
     // the trait as its `use_path`.
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::S {
             #layout(size = 0, align = 1);
 
