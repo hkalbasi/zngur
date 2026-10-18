@@ -385,7 +385,12 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
 
     Some(ZngurType {
         ty: rust_ty,
-        layout: record.layout.and_then(layout_policy),
+        // An explicit `#[autozng::layout(...)]` replaces the automatic `StackAllocated` policy
+        // derived from the type's real size and alignment.
+        layout: match record.adt.and_then(|adt| ctx.layout_override_for(&adt)) {
+            Some(over) => Some(over.policy),
+            None => record.layout.and_then(layout_policy),
+        },
         wellknown_traits: wellknown_traits(record.ty),
         // Only ADTs can be `#[non_exhaustive]`; every other type is exhaustive.
         exhaustive: adt.is_none_or(|adt| adt.is_exhaustive()),

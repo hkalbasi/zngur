@@ -139,6 +139,16 @@ pub fn emit_warning_for_span(span: Span, msg: impl Into<DiagMessage>) {
     })
 }
 
+/// Emit an error attached to an internal [`Span`].
+///
+/// Used when a semantic error's primary span comes from an attribute (e.g. a
+/// `#[autozng::layout(...)]` whose size does not match the type's real layout).
+pub fn emit_error_for_span(span: Span, msg: impl Into<DiagMessage>) {
+    with_ctxt(|ctx| {
+        ctx.tcx.dcx().struct_span_err(span, msg).emit();
+    })
+}
+
 /// Warn that a private item (or one of its functions) was selected for the interface.
 ///
 /// `#[autozng::emit]`, `#[autozng::emit_on_implementers]` and `#[autozng::emit_items]` may name an

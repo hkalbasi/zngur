@@ -14,6 +14,7 @@ mod emit_on_implementers;
 mod emit_skip;
 mod enums;
 mod free_functions;
+mod layout;
 mod methods;
 mod policy;
 mod recursive_types;

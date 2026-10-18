@@ -11,6 +11,7 @@ use crate::{
         attributes::{
             emit::{EmitOnImplParser, EmitParser},
             emit_items::EmitItemsParser,
+            layout::LayoutParser,
             policy::PolicyParser,
             rename::RenameParser,
         },
@@ -47,6 +48,7 @@ static ATTR_BUILDERS: &[&DynAttrBuilder] = &[
     &ParserBuilder::<EmitItemsParser>::new(),
     &ParserBuilder::<RenameParser>::new(),
     &ParserBuilder::<PolicyParser>::new(),
+    &ParserBuilder::<LayoutParser>::new(),
 ];
 
 /// given a partially parsed attr select a builder by the attr's path
