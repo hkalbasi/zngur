@@ -34,11 +34,17 @@ pub struct OutputConfig {
 
 /// Driver configuration.
 ///
-/// `crate::run` builds this from the command line (output location) and the driver is
-/// constructed with it; `#[autozng::policy]` is a placeholder and does not modify it yet.
+/// `crate::run` builds this from the command line (output location); `#[autozng::policy]` adjusts
+/// it during analysis (see [`crate::attrs::attributes::policy`]).
 #[derive(Debug, Default, Clone)]
 pub struct Config {
     pub default_emit_policy: DefaultEmitPolicy,
     pub use_doc_comment_tool_attrs: bool,
     pub output: OutputConfig,
+    /// `#![autozng::policy(implicitly_emit_external_interfaces)]`.
+    ///
+    /// When set, the recursive interface pass also walks the children of a **non-local** ADT (see
+    /// `analyze::visit_emitted_ty`), so an external type reached through an interface exposes its
+    /// own fields/methods rather than just its `type` block.
+    pub implicitly_emit_external_interfaces: bool,
 }

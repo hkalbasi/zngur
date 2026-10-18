@@ -1,9 +1,16 @@
 #![cfg_attr(autozng, feature(register_tool, custom_inner_attributes))]
 #![cfg_attr(autozng, register_tool(autozng))]
-#![cfg_attr(autozng, autozng::policy("test"))]
 #![allow(dead_code)]
-//! #[autozng::policy("test")]
-//! #[autozng::policy("test_2")]
+// Set a config flag to walk and expose all external types in the interface
+//
+// this is SLOW, walking all the external adts and recording the interface types
+// touches a lot of types along the way and does a fair bit of type-checking to
+// identify well known types.
+// as is it needs refinement (max depth?)
+// real world usage probably wants to use template types in a supporting merged `.zng`
+// and explicit method selection for the interfaces needed
+#![cfg_attr(autozng, autozng::policy(implicitly_emit_external_interfaces))]
+//! #[autozng::policy(implicitly_emit_external_interfaces)]
 
 #![allow(unused_variables)]
 
