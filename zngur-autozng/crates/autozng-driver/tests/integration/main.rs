@@ -15,6 +15,7 @@ mod emit_skip;
 mod enums;
 mod free_functions;
 mod methods;
+mod recursive_types;
 mod structs;
 mod traits;
 mod visibility;

@@ -32,6 +32,14 @@ pub(crate) trait FnDefExt {
     /// `generics` are the fn item's generic args (`FnDef(fn_def, generics)`); for a trait method
     /// they start with `Self`, followed by the trait's own args.
     fn trait_ref(&self, generics: &GenericArgs) -> Option<TraitRef>;
+
+    /// The total number of generic parameters of the function, including the ones inherited from
+    /// its enclosing impl block / trait.
+    ///
+    /// A signature can only be instantiated with exactly this many arguments (see
+    /// [`FnDefExt::instantiate_sig`]), so callers use it to check that the arguments they have
+    /// cover every parameter before instantiating.
+    fn generics_len(&self) -> usize;
 }
 
 impl FnDefExt for FnDef {
@@ -78,6 +86,11 @@ impl FnDefExt for FnDef {
             let rest = GenericArgs(args.cloned().collect());
             Some(TraitRef::new(trait_def, self_ty, &rest))
         })
+    }
+
+    fn generics_len(&self) -> usize {
+        let generics = self.generics_of();
+        generics.parent_count + generics.params.len()
     }
 }
 

@@ -135,6 +135,18 @@ impl Callbacks {
     // arguments as a single `Args` tuple, so it must be unwrapped: otherwise the input parameters
     // are silently dropped (`FnOnce(u32) -> bool` would print as `FnOnce() -> bool`).
     out.assert_zng(expect![[r#"
+        type ::std::boxed::Box<dyn Fn()> {
+            #layout(size = 16, align = 8);
+        }
+
+        type ::std::boxed::Box<dyn FnMut(&str) -> bool> {
+            #layout(size = 16, align = 8);
+        }
+
+        type ::std::boxed::Box<dyn FnOnce(u32) -> bool> {
+            #layout(size = 16, align = 8);
+        }
+
         type crate::Callbacks {
             #layout(size = 0, align = 1);
 

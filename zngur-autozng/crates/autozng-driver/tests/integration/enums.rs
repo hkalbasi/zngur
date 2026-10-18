@@ -39,6 +39,11 @@ pub enum Payload {
 }
 "#);
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
         type crate::Payload {
             #layout(size = 24, align = 8);
             variant Text {

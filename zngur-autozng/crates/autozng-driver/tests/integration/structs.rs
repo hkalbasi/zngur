@@ -31,6 +31,11 @@ pub struct Flag {
 }
 "#);
     out.assert_zng(expect![[r#"
+        type bool {
+            #layout(size = 1, align = 1);
+            wellknown_traits(Copy, Debug);
+        }
+
         type crate::Flag {
             #layout(size = 1, align = 1);
             wellknown_traits(Copy, Debug);

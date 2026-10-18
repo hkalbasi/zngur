@@ -29,9 +29,9 @@ use rustc_public::{CrateDef, CrateDefType, DefId};
 use rustc_span::Span;
 use zngur_def::printing::IDLPrinter;
 use zngur_def::{
-    LayoutPolicy, PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurField,
-    ZngurFn, ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver, ZngurSpec, ZngurTrait,
-    ZngurType, ZngurVariant, ZngurWellknownTrait,
+    LayoutPolicy, RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurField, ZngurFn,
+    ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver, ZngurSpec, ZngurTrait, ZngurType,
+    ZngurVariant, ZngurWellknownTrait,
 };
 
 use crate::ctx::{
@@ -44,7 +44,7 @@ use crate::rustc_ext::{
     AdtDefExt, EmitForExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKnownTrait,
     WellKownTraitsExt,
 };
-use crate::type_map::{MapTypeError, map_rustc_public_ty_to_zngur};
+use crate::type_map::{MapTypeError, is_type_block_less, map_rustc_public_ty_to_zngur};
 
 /// Build the [`ZngurSpec`] from everything the analysis pass recorded into `ctx`.
 ///
@@ -268,7 +268,7 @@ fn build_trait_decl_method(trait_fn: &TraitFnRecord, concrete: bool) -> Option<Z
     // signature is used and the method is skipped as an unsupported type parameter.
     let args = concrete
         .then_some(&trait_fn.generics)
-        .filter(|args| args.0.len() == fn_generics_len(&def));
+        .filter(|args| args.0.len() == def.generics_len());
     if let Some(args) = args
         && !trait_fn.clauses.clone().instantiate(args).all_hold()
     {
@@ -361,7 +361,7 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     // implicit return type of a function); zngur specialises it and it is never a `type` block.
     // Numeric primitives are likewise translated to native C++ numeric types, so declaring them
     // as `type` blocks would generate broken C++; they are only usable in signatures.
-    if rust_ty == RustType::UNIT || is_native_numeric(&rust_ty) {
+    if is_type_block_less(&rust_ty) {
         return None;
     }
 
@@ -399,24 +399,6 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
         cpp_ref: None,
         cpp_stack_owned: None,
     })
-}
-
-/// Whether `ty` is a numeric primitive that zngur maps to a native C++ numeric type.
-///
-/// Such a type must never be declared as a `type` block (zngur would emit broken C++); it is
-/// only usable in method / function signatures. `bool`, `char` and `str` are ordinary `.zng`
-/// types and *are* declared (the hand-written examples have `type bool { .. }` and
-/// `type str { .. }`).
-fn is_native_numeric(ty: &RustType) -> bool {
-    matches!(
-        ty,
-        RustType::Primitive(
-            PrimitiveRustType::Int(_)
-                | PrimitiveRustType::Uint(_)
-                | PrimitiveRustType::Usize
-                | PrimitiveRustType::Float(_)
-        )
-    )
 }
 
 /// Build the `field` entries for a struct/union.
@@ -659,14 +641,6 @@ fn concrete_ty_args(record: &TyRecord) -> Option<GenericArgs> {
     }
 }
 
-/// The total number of generic parameters of `fn_def`, including the ones inherited from its
-/// enclosing impl block / trait. `fn_sig` can only be instantiated with exactly this many
-/// arguments.
-fn fn_generics_len(fn_def: &FnDef) -> usize {
-    let generics = fn_def.generics_of();
-    generics.parent_count + generics.params.len()
-}
-
 /// The turbofish generic arguments to print for `fn_def` (`fn foo<u8>(..)`), given the args
 /// available for it (`None` when it was not monomorphized).
 ///
@@ -724,7 +698,7 @@ fn combine_method_args(
         (None, Some(instance)) => combined.extend(instance.0.iter().cloned()),
         (None, None) => return None,
     }
-    (combined.len() == fn_generics_len(def)).then_some(GenericArgs(combined))
+    (combined.len() == def.generics_len()).then_some(GenericArgs(combined))
 }
 
 fn build_method(
@@ -958,7 +932,7 @@ fn build_trait_method(
     // The named generic args (Self first) must cover every generic parameter of the trait
     // method; the trait's clauses must then hold for them, or the method would be emitted with
     // unmet bounds.
-    let args = (trait_fn.generics.0.len() == fn_generics_len(&def)).then_some(&trait_fn.generics);
+    let args = (trait_fn.generics.0.len() == def.generics_len()).then_some(&trait_fn.generics);
     if let Some(args) = args
         && !trait_fn.clauses.clone().instantiate(args).all_hold()
     {
@@ -1016,7 +990,7 @@ fn build_fn(ctx: &AutozngContext, record: &FnRecord) -> Option<ZngurFn> {
     let args = record
         .partial_args
         .as_ref()
-        .filter(|args| args.0.len() == fn_generics_len(&fn_def));
+        .filter(|args| args.0.len() == fn_def.generics_len());
 
     if let Some(args) = args
         && !record.clauses.clone().instantiate(args).all_hold()

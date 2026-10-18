@@ -22,6 +22,15 @@ pub fn into_string(value: u32) -> String {
 fn private() {}
 "#);
     out.assert_zng(expect![[r#"
+        type ::std::string::String {
+            #layout(size = 24, align = 8);
+            wellknown_traits(Debug);
+        }
+
+        type str {
+            wellknown_traits(?Sized, Debug);
+        }
+
         fn crate::add(i32, i32) -> i32;
         fn crate::borrow(&str) -> usize;
         fn crate::into_string(u32) -> ::std::string::String;

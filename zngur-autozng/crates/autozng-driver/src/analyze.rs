@@ -22,7 +22,9 @@ use rustc_public::{
     CrateDef,
     mir::mono::StaticDef,
     rustc_internal::{internal, stable},
+    ty::Ty,
 };
+use rustc_span::Span;
 use rustc_trait_selection::infer::InferCtxtExt;
 
 use crate::{
@@ -31,7 +33,7 @@ use crate::{
     driver::{AnalyzeReport, with_ctxt},
     error::span_of_def,
     render,
-    rustc_ext::GetAssocInfoExt,
+    rustc_ext::{GetAssocInfoExt, RustcPublicTyExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
 };
 use zngur_def::ZngurSpec;
@@ -59,18 +61,7 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
         // implicitly creates its type's `TyRecord`, so walking children of a `skip`-ed type
         // would leak it into the output.
         if self.ctx.is_ty_recorded(&adt.ty()) {
-            for variant in adt.variants() {
-                for field in variant.fields() {
-                    let field_attrs = field.autozng_attrs();
-                    field_attrs.visit(&field, self.ctx);
-                }
-            }
-
-            // Methods live in the ADT's inherent impl blocks.
-            for impl_def in adt.inherent_impls() {
-                let impl_attrs = impl_def.autozng_attrs();
-                impl_attrs.visit(&impl_def, self.ctx);
-            }
+            visit_adt_children(adt, self.ctx);
         }
 
         adt.super_visit(self)
@@ -135,6 +126,55 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
     }
 }
 
+/// Record an emitted ADT's children: its fields (struct/union and enum variant alike) and its
+/// inherent impl blocks, each through its own `emit`/`skip` action and visibility.
+///
+/// Shared by `CrateAnalysisVisitor::visit_adt` (an ADT the crate walk selected) and the third
+/// pass's [`visit_emitted_ty`] (a type an emitted interface exposed). Recording a field or a
+/// method queues the types it exposes for a third-pass visit (see
+/// [`AutozngContext::request_ty_visit`]).
+fn visit_adt_children(adt: &rustc_public::ty::AdtDef, ctx: &AutozngContext) {
+    for variant in adt.variants() {
+        for field in variant.fields() {
+            let field_attrs = field.autozng_attrs();
+            field_attrs.visit(&field, ctx);
+        }
+    }
+
+    // Methods live in the ADT's inherent impl blocks.
+    for impl_def in adt.inherent_impls() {
+        let impl_attrs = impl_def.autozng_attrs();
+        impl_attrs.visit(&impl_def, ctx);
+    }
+}
+
+/// Visit a type that an emitted interface exposed (see [`AutozngContext::request_ty_visit`]), as
+/// if it carried an explicit `#[autozng::emit]`.
+///
+/// A type that already has a record was handled by the crate walk (or an earlier iteration), so
+/// it is left alone. Otherwise it is recorded and — for a local ADT — its fields and inherent
+/// methods are walked, which may queue further types.
+fn visit_emitted_ty(ctx: &AutozngContext, ty: Ty) {
+    let ty = ty.base_ty();
+    if ctx.is_ty_recorded(&ty) {
+        return;
+    }
+    let Some(adt) = ty.adt_def() else {
+        // A non-ADT (`str`, a slice, a tuple, `bool`, a `dyn Trait`, ...) is just its own `type`
+        // block; it has no fields or methods to walk.
+        ctx.record_ty(&ty, Span::default());
+        return;
+    };
+    // Record the *concrete* type (`Vec<u32>`, not the `Vec<T, A>` definition `record_adt` would
+    // give), so it renders with its generic arguments.
+    ctx.record_ty(&ty, span_of_def(adt.def_id()));
+    // Only the local crate's ADTs are walked: an external type (`Vec<u32>`, `String`, ...)
+    // contributes just its `type` block, not the unreachable internals of another crate.
+    if adt.krate().is_local {
+        visit_adt_children(&adt, ctx);
+    }
+}
+
 pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
     // NOTE: the context borrows `tcx`, so the `ZngurSpec` is built from it before this
     // function returns, while the `TyCtxt` is still alive. Printing happens later (see
@@ -147,6 +187,14 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
 
     tcx.hir_visit_all_item_likes_in_crate(&mut visit::HirVisitor { ctx: &mut ctx, tcx });
     CrateAnalysisVisitor { ctx: &ctx }.visit_all_rustc_public_items()?;
+
+    // Third pass: every type an emitted interface exposed (a field's type, or a function / method
+    // signature) gets its own `type` block, as if it carried an explicit `emit`. Visiting it may
+    // expose further types, so the queue is drained to a fixpoint; once it is empty, every
+    // interface type has been recorded.
+    while let Some(ty) = ctx.pop_ty_visit() {
+        visit_emitted_ty(&ctx, ty);
+    }
 
     // eprintln!("AFTER VISIT CTX: {ctx:#?}");
 

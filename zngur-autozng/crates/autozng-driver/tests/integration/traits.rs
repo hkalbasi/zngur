@@ -19,6 +19,10 @@ pub trait Store {
     // The trait's methods are emitted with their Rust receiver (`&self`/`self`/none), in
     // declaration order.
     out.assert_zng(expect![[r#"
+        type str {
+            wellknown_traits(?Sized, Debug);
+        }
+
         trait crate::Store {
             fn put(&self, u64) -> u64;
             fn tag(&self, u64, &str);
