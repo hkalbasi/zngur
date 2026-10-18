@@ -119,6 +119,30 @@ impl<T: Clone + std::fmt::Debug> GenericExample<T> {
 #[derive(Debug)]
 pub struct NonCloneType(pub u32);
 
+/// Explicit layout policies (`#[autozng::layout(...)]`), one type per policy.
+///
+/// `stack` must reproduce the real size/alignment exactly; `conservative` only has to cover it.
+#[cfg_attr(autozng, autozng::layout(stack(size = 8, align = 4)))]
+pub struct LayoutStack {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[cfg_attr(autozng, autozng::layout(conservative(size = 16, align = 8)))]
+pub struct LayoutConservative {
+    pub x: i32,
+}
+
+#[cfg_attr(autozng, autozng::layout(heap_allocated))]
+pub struct LayoutHeap {
+    pub x: i32,
+}
+
+#[cfg_attr(autozng, autozng::layout(only_by_ref))]
+pub struct LayoutRef {
+    pub x: i32,
+}
+
 #[cfg(autozng)]
 #[autozng::emit_items]
 const _: &[(

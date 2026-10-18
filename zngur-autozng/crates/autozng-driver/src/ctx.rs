@@ -30,7 +30,7 @@ use crate::config::Config;
 use crate::driver::with_ctxt;
 use crate::error::span_of_def;
 use crate::metadata::{
-    ExportName, IntoMetadataKey, MetadataKey, MetadataMap, MetadataRecordRefMut,
+    ExportName, IntoMetadataKey, LayoutOverride, MetadataKey, MetadataMap, MetadataRecordRefMut,
 };
 use crate::rustc_ext::{
     ClausesOfExt, FnDefExt, GenericClauses, GetAssocInfoExt, RustcInternalEx, RustcPublicTyExt,
@@ -411,6 +411,21 @@ impl AutozngContext {
             .borrow()
             .get(&key.to_metadata_key())
             .and_then(|record| record.export_name.clone())
+    }
+
+    /// The `#[autozng::layout(...)]` override recorded for `key`, if any.
+    ///
+    /// Consulted while rendering a type: when present it replaces the automatic
+    /// `StackAllocated` layout derived from the type's real size and alignment.
+    pub fn layout_override_for<T: IntoMetadataKey + ?Sized>(
+        &self,
+        key: &T,
+    ) -> Option<LayoutOverride> {
+        self.data
+            .metadata
+            .borrow()
+            .get(&key.to_metadata_key())
+            .and_then(|record| record.layout.clone())
     }
 
     pub fn with_metadata_mut<T: IntoMetadataKey + ?Sized, R>(

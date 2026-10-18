@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 use rustc_public::ty::GenericArgs;
 use rustc_public::{CrateDef, DefId, rustc_internal::stable};
 use rustc_span::Span;
+use zngur_def::LayoutPolicy;
 
 use crate::driver::with_ctxt;
 
@@ -125,9 +126,23 @@ pub struct ExportName {
     pub span: Span,
 }
 
+/// A `#[autozng::layout(...)]` override recorded for a type.
+///
+/// Kept on the type's [`MetadataRecord`] and consulted during spec generation, where it replaces
+/// the automatic `StackAllocated` layout (`render::build_type`). The span of the attribute is
+/// retained so a size/alignment mismatch can point at it (see `attrs::attributes::layout`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutOverride {
+    pub policy: LayoutPolicy,
+    /// Span of the `#[autozng::layout(...)]` attribute that produced `policy`.
+    pub span: Span,
+}
+
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct MetadataRecord {
     pub export_name: Option<ExportName>,
+    /// `#[autozng::layout(...)]` override, if the item is a type that carries one.
+    pub layout: Option<LayoutOverride>,
 }
 
 pub type MetadataMap = FxHashMap<MetadataKey, MetadataRecord>;

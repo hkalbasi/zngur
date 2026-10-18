@@ -15,6 +15,7 @@ use crate::{
         AttrCollectionExt, AutozngAttrsExt,
         attributes::{
             emit::{EmitAction, EmitOnImplTarget, EmitTarget},
+            layout::LayoutTarget,
             policy::PolicyTarget,
             rename::RenameTarget,
         },
@@ -67,7 +68,30 @@ impl RenameTarget for rustc_public::ty::AdtDef {
     }
 }
 
-impl_attr_target!(rustc_public::ty::AdtDef, EmitTarget, RenameTarget);
+/// `#[autozng::layout(...)]` on an ADT: record the chosen layout policy on the type's metadata
+/// (keyed by its `DefId`), where `render::build_type` picks it up in place of the automatic
+/// `StackAllocated` layout.
+impl LayoutTarget for rustc_public::ty::AdtDef {
+    fn real_layout(&self) -> Option<rustc_public::abi::Layout> {
+        // A generic ADT has no single real layout, and an unsized ADT has no size; neither can be
+        // validated, so the override is recorded without a check.
+        self.ty()
+            .layout()
+            .ok()
+            .filter(|layout| !layout.shape().is_unsized())
+    }
+
+    fn layout_type_name(&self) -> String {
+        CrateDef::name(self).to_string()
+    }
+}
+
+impl_attr_target!(
+    rustc_public::ty::AdtDef,
+    EmitTarget,
+    RenameTarget,
+    LayoutTarget
+);
 
 /// A free (non-associated) function in the crate, emitted as a `fn` entry in the `.zng` spec.
 impl EmitTarget for rustc_public::ty::FnDef {
