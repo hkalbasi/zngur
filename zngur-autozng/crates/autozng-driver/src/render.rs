@@ -42,7 +42,7 @@ use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_r
 use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
 use crate::rustc_ext::{
     AdtDefExt, EmitForExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKnownTrait,
-    WellKownTraitsExt,
+    WellKownTraitsExt, visible_path,
 };
 use crate::type_map::{MapTypeError, is_type_block_less, map_rustc_public_ty_to_zngur};
 
@@ -159,7 +159,7 @@ fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec
 /// The trait's full path as `.zng` path segments: the local crate is spelled `crate`, external
 /// crates keep their name (the printer adds the leading `::`).
 fn trait_path(def: TraitDef) -> Vec<String> {
-    let mut path: Vec<String> = def.name().split("::").map(Into::into).collect();
+    let mut path = visible_path(&def);
     if def.krate().is_local && !path.is_empty() {
         path[0] = "crate".to_string();
     }
@@ -1040,7 +1040,7 @@ fn build_fn(ctx: &AutozngContext, record: &FnRecord) -> Option<ZngurFn> {
         }
     };
 
-    let mut path: Vec<String> = fn_def.name().split("::").map(Into::into).collect();
+    let mut path = visible_path(&fn_def);
     if fn_def.krate().is_local && !path.is_empty() {
         // Local paths are marked with a leading `crate` segment (see `type_map`).
         path[0] = "crate".to_string();

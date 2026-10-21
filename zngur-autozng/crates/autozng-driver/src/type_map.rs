@@ -22,7 +22,7 @@ use rustc_public::{
 };
 use zngur_def::{PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType};
 
-use crate::rustc_ext::{Visibility, VisibilityExt};
+use crate::rustc_ext::{Visibility, VisibilityExt, visible_path};
 
 const PATH_SEP: &str = "::";
 
@@ -135,8 +135,9 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                         "types with nested generics are not currently supported in a zngur interface",
                     ))
                 } else {
-                    let mut path: Vec<String> =
-                        adt_def.name().split(PATH_SEP).map(Into::into).collect();
+                    // The path the type is *visible* by (a `pub use` re-export path when the crate
+                    // exposes it that way), not its definition path.
+                    let mut path = visible_path(&adt_def);
                     if adt_def.krate().is_local && !path.is_empty() {
                         // `rustc_public` reports the local crate's own items under the crate
                         // name, whereas the Zngur IR marks local paths with a leading `crate`
@@ -209,13 +210,7 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                     let mut named_generics: Vec<(String, RustType)> = Vec::new();
                     let mut auto_traits = Vec::new();
 
-                    let mut path: Vec<String> = trait_ref
-                        .def_id
-                        .name()
-                        .as_str()
-                        .split(PATH_SEP)
-                        .map(Into::into)
-                        .collect();
+                    let mut path = visible_path(&trait_ref.def_id);
                     // A local trait is spelled `crate::...`, mirroring the ADT arm above.
                     if trait_ref.def_id.krate().is_local && !path.is_empty() {
                         path[0] = "crate".to_string();

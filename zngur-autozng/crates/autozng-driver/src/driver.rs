@@ -11,7 +11,7 @@ use rustc_interface::interface;
 use rustc_middle::ty::TyCtxt;
 use rustc_public::CompilerError;
 use rustc_public::rustc_internal;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 
@@ -20,11 +20,30 @@ use zngur_def::ZngurSpec;
 
 use crate::config::Config;
 use crate::render;
+use crate::rustc_ext::VisiblePaths;
 
 /// Ambient state made available to [`with_ctxt`] for the duration of the analysis callback.
 pub struct DriverContext<'tcx, 'cfg> {
     pub tcx: TyCtxt<'tcx>,
     pub cfg: &'cfg Config,
+    /// The re-export map, built on first use (see [`DriverContext::visible_path`]).
+    visible_paths: RefCell<Option<VisiblePaths>>,
+}
+
+impl DriverContext<'_, '_> {
+    /// The path a definition is *visible* by when a public `pub use` re-export exposes it under a
+    /// different path than its definition path, else `None`.
+    ///
+    /// Built once per analysis and cached.
+    pub(crate) fn visible_path(&self, def_id: rustc_span::def_id::DefId) -> Option<Vec<String>> {
+        if self.visible_paths.borrow().is_none() {
+            *self.visible_paths.borrow_mut() = Some(crate::rustc_ext::compute(self.tcx));
+        }
+        self.visible_paths
+            .borrow()
+            .as_ref()
+            .and_then(|map| map.get(&def_id).cloned())
+    }
 }
 
 // Type-erased `&DriverContext<'_, '_>` (as a raw pointer) so `with_ctxt` can recover it
@@ -125,6 +144,7 @@ where
             let driver_ctx = &DriverContext {
                 tcx,
                 cfg: &self.cfg,
+                visible_paths: RefCell::new(None),
             };
             set_ctxt(driver_ctx, || {
                 self.result = Some((self.analyze_callback)(tcx));
