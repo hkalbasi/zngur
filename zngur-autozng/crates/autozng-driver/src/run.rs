@@ -27,6 +27,10 @@
 //! ([`is_info_query`]); the injected flags are skipped on those queries so the answers are the
 //! real compiler's and cargo's cache is not poisoned.
 //!
+//! Outside wrapper mode a direct `<driver> --version` answers with the autozng identity
+//! ([`crate::version`]) rather than rustc's, which is how `cargo-autozng` detects a driver and
+//! learns which toolchain it needs.
+//!
 //! It is intended to be invoked as `RUSTC_WORKSPACE_WRAPPER`, so the process must exit 0
 //! whenever the *compiler* succeeded even if autozng had nothing to do: `Skipped` and
 //! `Interrupted` (analysis-side) still map to `SUCCESS`, and only a failed compile is
@@ -42,13 +46,32 @@ use crate::analyze::analyze;
 use crate::config::{self, Config};
 
 pub fn run() -> ExitCode {
-    let (config, mut rustc_args) = parse_args(std::env::args());
+    let raw_args: Vec<String> = std::env::args().collect();
+
+    // A direct invocation asking for `--version` gets autozng's identity (the handshake
+    // `cargo-autozng` reads). In wrapper mode `--version` belongs to the real compiler.
+    if !is_wrapper_mode(&raw_args) && wants_own_version(&raw_args) {
+        print!("{}", crate::version::handshake());
+        return ExitCode::SUCCESS;
+    }
+
+    let (config, mut rustc_args) = parse_args(raw_args);
 
     // Cargo's information queries (`-vV`, `--print=…`) must be answered by the compiler
     // unchanged: an injected `--cfg autozng` would leak into the cached `--print=cfg` output (and
     // a query carrying unexpected flags poisons cargo's cache).
     if !is_info_query(&rustc_args) {
         rustc_args.extend(["--cfg".to_string(), "autozng".to_string()]);
+
+        // Belt-and-braces: point the compiler at the sysroot `cargo-autozng` resolved. The
+        // sysroot already follows the `librustc_driver` the driver loaded, so this is a second
+        // route to the same answer, and an explicit user `--sysroot` always wins.
+        if let Some(sysroot) = std::env::var_os(config::ENV_SYSROOT)
+            && !has_sysroot(&rustc_args)
+        {
+            rustc_args.push("--sysroot".to_string());
+            rustc_args.push(sysroot.to_string_lossy().into_owned());
+        }
     }
 
     let result = crate::driver::RustcPublic::new(analyze, config).run(&rustc_args);
@@ -71,6 +94,13 @@ fn is_wrapper_mode(args: &[String]) -> bool {
         == Some("rustc")
 }
 
+/// Whether the direct invocation asked for the autozng version handshake.
+fn wants_own_version(args: &[String]) -> bool {
+    args.iter()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+}
+
 /// Whether `args` is one of cargo's information queries.
 ///
 /// Cargo learns about the compiler with `rustc -vV` and `rustc --print …` (both the split
@@ -79,6 +109,12 @@ fn is_wrapper_mode(args: &[String]) -> bool {
 fn is_info_query(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "-vV" || arg == "--print" || arg.starts_with("--print="))
+}
+
+/// Whether a `--sysroot` is already present, in either the split or the joined form.
+fn has_sysroot(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "--sysroot" || arg.starts_with("--sysroot="))
 }
 
 /// Split autozng's own flags out of the incoming rustc argument list.

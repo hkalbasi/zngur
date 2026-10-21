@@ -48,6 +48,8 @@ mod config;
 
 mod driver;
 
+mod version;
+
 // fn analyze_instance(instance: Instance) {
 //     eprintln!("--- Analyzing instance: {}", instance.name());
 //     eprintln!("  - Mangled name: {}", instance.mangled_name());
