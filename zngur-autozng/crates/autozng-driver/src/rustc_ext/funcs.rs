@@ -119,6 +119,12 @@ impl GetAssocInfoExt for rustc_public::ty::AssocItem {
         })
     }
     fn opt_fn_def(&self) -> Option<(rustc_public::ty::FnDef, GenericArgs)> {
+        // The kind has to be checked *before* the `type_of` query: an associated type (or const)
+        // has no `type_of` in another crate's metadata, so querying it for an external trait
+        // aborts the compilation (see `opt_fn_sig`, which checks first for the same reason).
+        if !matches!(self.kind, rustc_public::ty::AssocKind::Fn { .. }) {
+            return None;
+        }
         with_ctxt(|ctx| {
             stable(ctx.tcx.type_of(self.def_id.def_id().internal(ctx.tcx)))
                 .value
