@@ -20,7 +20,7 @@ use zngur_def::ZngurSpec;
 
 use crate::config::Config;
 use crate::render;
-use crate::rustc_ext::VisiblePaths;
+use crate::rustc_ext::{VisiblePaths, WellKnownTrait};
 
 /// Ambient state made available to [`with_ctxt`] for the duration of the analysis callback.
 pub struct DriverContext<'tcx, 'cfg> {
@@ -28,6 +28,9 @@ pub struct DriverContext<'tcx, 'cfg> {
     pub cfg: &'cfg Config,
     /// The re-export map, built on first use (see [`DriverContext::visible_path`]).
     visible_paths: RefCell<Option<VisiblePaths>>,
+    /// The well-known-trait declarations, resolved on first use, indexed by
+    /// `WellKnownTrait as usize` (see [`DriverContext::wellknown_trait_decl`]).
+    wellknown_trait_decls: RefCell<Vec<Option<rustc_public::ty::TraitDecl>>>,
 }
 
 impl DriverContext<'_, '_> {
@@ -43,6 +46,33 @@ impl DriverContext<'_, '_> {
             .borrow()
             .as_ref()
             .and_then(|map| map.get(&def_id).cloned())
+    }
+
+    /// The `TraitDecl` for a well-known trait, resolved on first use and cached for the rest of
+    /// the analysis.
+    ///
+    /// `WellKnownTrait::resolve_decl` scans every trait in the crate graph by def path for
+    /// `Debug` and `IntoIterator`, and the lookup is reached once per recorded type *and* once
+    /// per trait impl considered; without this cache it dominates the whole run.
+    pub(crate) fn wellknown_trait_decl(&self, kind: WellKnownTrait) -> rustc_public::ty::TraitDecl {
+        let index = kind as usize;
+        let cached = self
+            .wellknown_trait_decls
+            .borrow()
+            .get(index)
+            .cloned()
+            .flatten();
+        if let Some(decl) = cached {
+            return decl;
+        }
+
+        let decl = kind.resolve_decl(self.tcx);
+        let mut cache = self.wellknown_trait_decls.borrow_mut();
+        if cache.len() <= index {
+            cache.resize(index + 1, None);
+        }
+        cache[index] = Some(decl.clone());
+        decl
     }
 }
 
@@ -145,6 +175,7 @@ where
                 tcx,
                 cfg: &self.cfg,
                 visible_paths: RefCell::new(None),
+                wellknown_trait_decls: RefCell::new(Vec::new()),
             };
             set_ctxt(driver_ctx, || {
                 self.result = Some((self.analyze_callback)(tcx));

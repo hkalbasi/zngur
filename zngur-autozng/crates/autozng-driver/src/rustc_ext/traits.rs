@@ -56,40 +56,53 @@ const WELLKNOWNTRAITS: &[WellKnownTrait] = {
 };
 
 impl WellKnownTrait {
+    /// The `TraitDecl` for this well-known trait, resolved once per analysis and cached.
+    ///
+    /// `Debug` and `IntoIterator` have no lang item, so they are found by scanning every trait in
+    /// the crate graph for a def path; that is far too expensive to repeat for every type (and
+    /// every trait impl), so the result is cached on the [`DriverContext`]. See
+    /// [`WellKnownTrait::resolve_decl`] for the resolution itself.
+    ///
+    /// [`DriverContext`]: crate::driver::DriverContext
     pub fn trait_decl(&self) -> rustc_public::ty::TraitDecl {
-        with_ctxt(|ctx| {
-            let tcx = ctx.tcx;
-            let def_id = match self {
-                Self::Debug => tcx
-                    .all_traits_including_private()
-                    .find(|def_id| tcx.def_path_str(*def_id) == "std::fmt::Debug")
-                    .expect("std::fmt::Debug is not defined"),
-                Self::Copy => tcx.require_lang_item(rustc_attr_ir::LangItem::Copy, DUMMY_SP),
-                Self::Unsized => tcx.require_lang_item(rustc_attr_ir::LangItem::Sized, DUMMY_SP),
-                Self::PartialEq => {
-                    tcx.require_lang_item(rustc_attr_ir::LangItem::PartialEq, DUMMY_SP)
-                }
-                Self::PartialOrd => {
-                    tcx.require_lang_item(rustc_attr_ir::LangItem::PartialOrd, DUMMY_SP)
-                }
-                Self::Add => tcx.require_lang_item(rustc_attr_ir::LangItem::Add, DUMMY_SP),
-                Self::Sub => tcx.require_lang_item(rustc_attr_ir::LangItem::Sub, DUMMY_SP),
-                Self::Mul => tcx.require_lang_item(rustc_attr_ir::LangItem::Mul, DUMMY_SP),
-                Self::Div => tcx.require_lang_item(rustc_attr_ir::LangItem::Div, DUMMY_SP),
-                Self::Rem => tcx.require_lang_item(rustc_attr_ir::LangItem::Rem, DUMMY_SP),
-                Self::BitAnd => tcx.require_lang_item(rustc_attr_ir::LangItem::BitAnd, DUMMY_SP),
-                Self::BitOr => tcx.require_lang_item(rustc_attr_ir::LangItem::BitOr, DUMMY_SP),
-                Self::BitXor => tcx.require_lang_item(rustc_attr_ir::LangItem::BitXor, DUMMY_SP),
-                Self::Shl => tcx.require_lang_item(rustc_attr_ir::LangItem::Shl, DUMMY_SP),
-                Self::Shr => tcx.require_lang_item(rustc_attr_ir::LangItem::Shr, DUMMY_SP),
-                Self::Drop => tcx.require_lang_item(rustc_attr_ir::LangItem::Drop, DUMMY_SP),
-                Self::IntoIterator => tcx
-                    .all_traits_including_private()
-                    .find(|def_id| tcx.def_path_str(*def_id) == "std::iter::IntoIterator")
-                    .expect("std::iter::IntoIterator is not defined"),
-            };
-            stable(tcx.trait_def(def_id))
-        })
+        with_ctxt(|ctx| ctx.wellknown_trait_decl(*self))
+    }
+
+    /// Resolve this well-known trait's declaration against `tcx` (uncached).
+    ///
+    /// Prefer [`WellKnownTrait::trait_decl`], which caches the result.
+    pub(crate) fn resolve_decl(
+        &self,
+        tcx: rustc_middle::ty::TyCtxt<'_>,
+    ) -> rustc_public::ty::TraitDecl {
+        let def_id = match self {
+            Self::Debug => tcx
+                .all_traits_including_private()
+                .find(|def_id| tcx.def_path_str(*def_id) == "std::fmt::Debug")
+                .expect("std::fmt::Debug is not defined"),
+            Self::Copy => tcx.require_lang_item(rustc_attr_ir::LangItem::Copy, DUMMY_SP),
+            Self::Unsized => tcx.require_lang_item(rustc_attr_ir::LangItem::Sized, DUMMY_SP),
+            Self::PartialEq => tcx.require_lang_item(rustc_attr_ir::LangItem::PartialEq, DUMMY_SP),
+            Self::PartialOrd => {
+                tcx.require_lang_item(rustc_attr_ir::LangItem::PartialOrd, DUMMY_SP)
+            }
+            Self::Add => tcx.require_lang_item(rustc_attr_ir::LangItem::Add, DUMMY_SP),
+            Self::Sub => tcx.require_lang_item(rustc_attr_ir::LangItem::Sub, DUMMY_SP),
+            Self::Mul => tcx.require_lang_item(rustc_attr_ir::LangItem::Mul, DUMMY_SP),
+            Self::Div => tcx.require_lang_item(rustc_attr_ir::LangItem::Div, DUMMY_SP),
+            Self::Rem => tcx.require_lang_item(rustc_attr_ir::LangItem::Rem, DUMMY_SP),
+            Self::BitAnd => tcx.require_lang_item(rustc_attr_ir::LangItem::BitAnd, DUMMY_SP),
+            Self::BitOr => tcx.require_lang_item(rustc_attr_ir::LangItem::BitOr, DUMMY_SP),
+            Self::BitXor => tcx.require_lang_item(rustc_attr_ir::LangItem::BitXor, DUMMY_SP),
+            Self::Shl => tcx.require_lang_item(rustc_attr_ir::LangItem::Shl, DUMMY_SP),
+            Self::Shr => tcx.require_lang_item(rustc_attr_ir::LangItem::Shr, DUMMY_SP),
+            Self::Drop => tcx.require_lang_item(rustc_attr_ir::LangItem::Drop, DUMMY_SP),
+            Self::IntoIterator => tcx
+                .all_traits_including_private()
+                .find(|def_id| tcx.def_path_str(*def_id) == "std::iter::IntoIterator")
+                .expect("std::iter::IntoIterator is not defined"),
+        };
+        stable(tcx.trait_def(def_id))
     }
 
     pub fn must_impl_trait(&self) -> bool {
@@ -163,31 +176,38 @@ impl WellKnownTraitsExt for Ty {
                     }
                 })
                 .collect();
-            let generic_wellknown = WELLKNOWNTRAITS
+            // Traits with their own generic parameters (`PartialEq<Rhs>`, `Add<Rhs>`,
+            // `IntoIterator`, ...): `Self` alone does not determine the implementation, so the
+            // trait is reported when an impl of it has exactly this `Self` type. Only that
+            // trait's impls are searched (`tcx.all_impls`, a cached query) rather than every impl
+            // in the crate graph, and the `Self` types are compared internally so the
+            // `rustc_public` conversion only runs for the impls that actually match.
+            for trait_enm in WELLKNOWNTRAITS
                 .iter()
                 .copied()
                 .filter(|trt| trt.need_generic())
-                .collect::<Vec<_>>();
-            results.extend(
-                rustc_public::all_trait_impls()
-                    .into_iter()
-                    .flat_map(|impl_def| {
-                        let trt_ref = impl_def.trait_impl().value;
-                        generic_wellknown
-                            .iter()
-                            .filter_map(|trt_enm| {
-                                let known_trt_decl = trt_enm.trait_decl();
-                                if known_trt_decl.def_id.def_id() == trt_ref.def_id.def_id()
-                                    && trt_ref.self_ty() == *self
-                                {
-                                    Some((*trt_enm, trt_ref.clone()))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    }),
-            );
+            {
+                let trait_decl = trait_enm.trait_decl();
+                let trait_def_id = trait_decl.def_id.def_id().internal(tcx);
+                for impl_id in tcx.all_impls(trait_def_id) {
+                    if !is_trait_impl(tcx, impl_id) {
+                        continue;
+                    }
+                    let impl_self_ty = tcx
+                        .type_of(impl_id)
+                        .instantiate_identity()
+                        .skip_normalization();
+                    if impl_self_ty != rustc_ty {
+                        continue;
+                    }
+                    let trt_ref = stable(
+                        tcx.impl_trait_ref(impl_id)
+                            .instantiate_identity()
+                            .skip_normalization(),
+                    );
+                    results.push((trait_enm, trt_ref));
+                }
+            }
             results
         })
     }
