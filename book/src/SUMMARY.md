@@ -26,3 +26,8 @@
 - [How it compares to other tools](./how_it_compares.md)
 - [Design decisions](./philosophy.md)
 - [How it works](./how_it_works.md)
+- [Autozng](./autozng/index.md)
+  - [Installation](./autozng/installation.md)
+  - [Usage](./autozng/usage.md)
+  - [Default visibility](./autozng/visibility.md)
+  - [Attributes](./autozng/attributes.md)
