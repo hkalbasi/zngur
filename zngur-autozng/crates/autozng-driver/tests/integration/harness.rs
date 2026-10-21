@@ -183,7 +183,7 @@ fn is_autozng_diagnostic(block: &str) -> bool {
 /// directory on `PATH` and the toolchain root in `RUSTC_TOOLCHAIN` (see `AGENTS.md`). The
 /// sysroot is discovered from `rustc`, which resolves the pinned toolchain via
 /// `rust-toolchain.toml`; `AUTOZNG_TEST_SYSROOT` overrides it for unusual setups.
-fn toolchain() -> &'static Path {
+pub(crate) fn toolchain() -> &'static Path {
     static TOOLCHAIN: OnceLock<PathBuf> = OnceLock::new();
     TOOLCHAIN
         .get_or_init(|| {
@@ -207,27 +207,24 @@ fn toolchain() -> &'static Path {
         .as_path()
 }
 
-fn invoke_driver(dir: &Path) -> std::process::Output {
+/// The real `rustc` of the toolchain, as cargo passes it to a wrapper as `argv[1]`.
+pub(crate) fn rustc_path() -> PathBuf {
+    toolchain()
+        .join("bin")
+        .join(format!("rustc{}", env::consts::EXE_SUFFIX))
+}
+
+/// A [`Command`] for the driver binary with the environment it needs to start already set.
+///
+/// The driver links against the toolchain's rustc libraries. On Windows those DLLs live in
+/// `bin` (found through `PATH`); on Unix the shared objects live in `lib` (found through the
+/// loader path). Prepend the right one so the driver can start, then let the OS search the
+/// existing path as before. Callers set their own arguments and current directory.
+pub(crate) fn driver_command() -> Command {
     let toolchain = toolchain();
-
     let mut command = Command::new(env!("CARGO_BIN_EXE_autozng-driver"));
-    command
-        .current_dir(dir)
-        .arg("--edition=2024")
-        .arg("--crate-type=lib")
-        .arg("--crate-name=scratch_crate")
-        .arg("--output-zng")
-        .arg("out.zng")
-        .arg("src/lib.rs")
-        .env("RUSTC_TOOLCHAIN", toolchain)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.env("RUSTC_TOOLCHAIN", toolchain);
 
-    // The driver links against the toolchain's rustc libraries. On Windows those DLLs live in
-    // `bin` (found through `PATH`); on Unix the shared objects live in `lib` (found through the
-    // loader path). Prepend the right one so the driver can start, then let the OS search the
-    // existing path as before.
     let library_dir = if cfg!(windows) {
         toolchain.join("bin")
     } else {
@@ -247,6 +244,23 @@ fn invoke_driver(dir: &Path) -> std::process::Output {
     }
 
     command
+}
+
+fn invoke_driver(dir: &Path) -> std::process::Output {
+    let mut command = driver_command();
+    command
+        .current_dir(dir)
+        .arg("--edition=2024")
+        .arg("--crate-type=lib")
+        .arg("--crate-name=scratch_crate")
+        .arg("--output-zng")
+        .arg("out.zng")
+        .arg("src/lib.rs")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    command
         .output()
         .expect("failed to spawn the autozng driver")
 }
@@ -258,7 +272,7 @@ fn prepend_to_path(dir: &Path, env_var: &str) -> std::ffi::OsString {
     env::join_paths(entries).expect("invalid path entries")
 }
 
-fn write_files(root: &Path, files: &[(&str, &str)]) {
+pub(crate) fn write_files(root: &Path, files: &[(&str, &str)]) {
     assert!(!files.is_empty(), "a scratch crate needs at least one file");
     for (rel, contents) in files {
         let path = root.join(rel);
@@ -273,12 +287,15 @@ fn write_files(root: &Path, files: &[(&str, &str)]) {
 
 /// A scratch crate directory, deleted when dropped unless `AUTOZNG_TEST_KEEP` is set or the
 /// test is already unwinding (so a failing test leaves its crate behind for inspection).
-struct Scratch {
-    path: PathBuf,
+///
+/// Public within the test crate so modules with their own invocation shape (e.g. wrapper-mode
+/// tests that cannot use [`run_files`]) can share the layout and lifetime rules.
+pub(crate) struct Scratch {
+    pub(crate) path: PathBuf,
 }
 
 impl Scratch {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
         let thread = std::thread::current()

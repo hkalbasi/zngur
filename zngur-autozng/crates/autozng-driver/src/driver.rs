@@ -144,9 +144,10 @@ where
 
 /// Decide where the `.zng` file for `crate_name` should be written.
 ///
-/// An explicit `--output-zng` path is used verbatim. Otherwise the file is named after the
-/// crate and placed in rustc's `--out-dir` (or the current directory when rustc would have
-/// defaulted to it). rustc's own `-o` argument is intentionally ignored.
+/// Precedence: an explicit `--output-zng` (or `AUTOZNG_OUTPUT_ZNG`) path is used verbatim;
+/// otherwise the crate-named file goes into `AUTOZNG_OUTPUT_DIR`, then rustc's `--out-dir`, and
+/// finally the current directory (rustc's own default). rustc's `-o` argument is intentionally
+/// ignored.
 fn output_path(config: &Config, crate_name: &str) -> PathBuf {
     if let Some(explicit) = &config.output.output_zng {
         return explicit.clone();
@@ -154,8 +155,9 @@ fn output_path(config: &Config, crate_name: &str) -> PathBuf {
 
     let dir = config
         .output
-        .out_dir
+        .output_dir
         .clone()
+        .or_else(|| config.output.out_dir.clone())
         .unwrap_or_else(|| PathBuf::from("."));
     dir.join(format!("{crate_name}.zng"))
 }
