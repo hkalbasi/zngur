@@ -1,11 +1,19 @@
 //! The `cargo-autozng` command frontend.
 //!
-//! This crate holds the logic of the `cargo-autozng` executable.
-//! It's job is to run cargo with the [`autozng-driver`](../autozng_driver/index.html) as
-//! the rustc wrapper. Similar to `cargo-clippy` and `cargo-driver`
+//! `cargo autozng` runs `cargo check` with [`autozng-driver`](../autozng_driver/index.html)
+//! installed as the rustc workspace wrapper, so every workspace member is analysed and a `.zng`
+//! interface file is emitted per crate. It mirrors `cargo clippy` / `clippy-driver`.
 //!
-//! The driver understands `--output-zng <path>` (explicit `.zng` file) and honours rustc's
-//! `--out-dir`; `cargo-autozng` is responsible for forwarding that information to the driver
-//! once the wrapper plumbing exists (see [`run`]).
+//! # Contract
+//!
+//! * **Analysis only.** The driver stops the compilation after the compiler's analysis phase, so
+//!   no binaries or libraries are produced even though cargo reports success.
+//! * **Nothing is cached.** No dep-info file is written, so the analysis runs on every
+//!   invocation and `cargo autozng` is never reported as up to date.
+//! * **The toolchain is the driver's.** The compiler forced for the wrapped build is the one the
+//!   installed driver was built against — not the frontend's, and not the project's.
 
+pub mod args;
+pub mod config;
+pub mod help;
 pub mod run;
