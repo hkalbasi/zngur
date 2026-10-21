@@ -15,6 +15,7 @@
 
 pub mod args;
 pub mod config;
+pub mod generate;
 pub mod help;
 pub mod launch;
 pub mod run;
