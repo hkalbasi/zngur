@@ -19,6 +19,7 @@ mod layout;
 mod methods;
 mod policy;
 mod recursive_types;
+mod reexports;
 mod structs;
 mod traits;
 mod visibility;

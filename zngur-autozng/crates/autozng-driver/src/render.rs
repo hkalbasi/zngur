@@ -154,14 +154,10 @@ fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec
     Some(generics)
 }
 
-/// The trait's full path as `.zng` path segments: the local crate is spelled `crate`, external
-/// crates keep their name (the printer adds the leading `::`).
+/// The trait's full path as `.zng` path segments: anything this crate can name from its root is
+/// spelled `crate::...`, an external crate keeps its own name (the printer adds the leading `::`).
 fn trait_path(def: TraitDef) -> Vec<String> {
-    let mut path = visible_path(&def);
-    if def.krate().is_local && !path.is_empty() {
-        path[0] = "crate".to_string();
-    }
-    path
+    visible_path(&def)
 }
 
 /// The name of the `Fn*` trait this path denotes, if any (`Fn`/`FnMut`/`FnOnce` in `std`/`core`).
@@ -951,11 +947,7 @@ fn build_trait_method(
     )?;
 
     // The trait is rendered as the method's `use_path`.
-    let trait_def = trait_fn.trait_def;
-    let mut use_path: Vec<String> = trait_def.name().split("::").map(Into::into).collect();
-    if trait_def.krate().is_local && !use_path.is_empty() {
-        use_path[0] = "crate".to_string();
-    }
+    let use_path = trait_path(trait_fn.trait_def);
 
     Some(ZngurMethodDetails {
         data: ZngurMethod {
@@ -1026,11 +1018,7 @@ fn build_fn(ctx: &AutozngContext, record: &FnRecord) -> Option<ZngurFn> {
         }
     };
 
-    let mut path = visible_path(&fn_def);
-    if fn_def.krate().is_local && !path.is_empty() {
-        // Local paths are marked with a leading `crate` segment (see `type_map`).
-        path[0] = "crate".to_string();
-    }
+    let path = visible_path(&fn_def);
 
     Some(ZngurFn {
         path: RustPathAndGenerics {
