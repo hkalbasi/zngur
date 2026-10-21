@@ -26,7 +26,7 @@ use crate::{
         AUTOZNG_NAMESPACE, Attr, AttrPath,
         parse::{
             context::AcceptContext,
-            parser::{ArgParser, AttrtibuteParser, MetaItemParser, NameValueParser},
+            parser::{ArgParser, AttributeParser, MetaItemParser, NameValueParser},
         },
     },
     ctx::AutozngContext,
@@ -274,7 +274,7 @@ fn expect_usize(cx: &mut AcceptContext, value: &NameValueParser) -> Option<usize
     }
 }
 
-impl AttrtibuteParser for LayoutParser {
+impl AttributeParser for LayoutParser {
     type Attr = Layout;
 
     const ATTRIBUTES: crate::attrs::parse::parser::AcceptAttrMap<Self> = &[(

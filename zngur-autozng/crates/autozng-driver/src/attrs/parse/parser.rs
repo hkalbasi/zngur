@@ -409,7 +409,7 @@ pub type AcceptAttrMap<T> = &'static [(AttrPath, AttributeTemplate, AcceptFn<T>)
 
 #[allow(dead_code)] // used by the `ASSERTION` below; kept as part of the framework
 pub const MAX_PARSER_ATTRS: usize = 4;
-pub trait AttrtibuteParser: Default + 'static {
+pub trait AttributeParser: Default + 'static {
     type Attr: Attr;
     const ATTRIBUTES: AcceptAttrMap<Self>;
 
@@ -417,15 +417,15 @@ pub trait AttrtibuteParser: Default + 'static {
 }
 
 #[derive(Default)]
-pub struct ParserBuilder<T: AttrtibuteParser>(PhantomData<T>);
+pub struct ParserBuilder<T: AttributeParser>(PhantomData<T>);
 
-impl<T: AttrtibuteParser> ParserBuilder<T> {
+impl<T: AttributeParser> ParserBuilder<T> {
     pub const fn new() -> Self {
         ParserBuilder(PhantomData)
     }
 }
 
-impl<T: AttrtibuteParser> std::fmt::Debug for ParserBuilder<T> {
+impl<T: AttributeParser> std::fmt::Debug for ParserBuilder<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("ParserBuilder<")?;
         f.write_str(std::any::type_name::<T>())?;
@@ -433,12 +433,12 @@ impl<T: AttrtibuteParser> std::fmt::Debug for ParserBuilder<T> {
     }
 }
 
-impl<T: AttrtibuteParser> ParserBuilder<T> {
+impl<T: AttributeParser> ParserBuilder<T> {
     #[allow(dead_code)] // compile-time sanity check, not referenced at runtime
     const ASSERTION: () = assert!(MAX_PARSER_ATTRS >= T::ATTRIBUTES.len());
 }
 
-impl<T: AttrtibuteParser> AttrBuilder for ParserBuilder<T> {
+impl<T: AttributeParser> AttrBuilder for ParserBuilder<T> {
     fn valid_for(&self, path: &AttrPath) -> bool {
         T::ATTRIBUTES.iter().find(|(p, _, _)| p == path).is_some()
     }

@@ -9,7 +9,7 @@ use crate::{
         AUTOZNG_NAMESPACE, Attr, AttrPath, DynAttr,
         parse::{
             context::AcceptContext,
-            parser::{AcceptAttrMap, ArgParser, AttrtibuteParser, ExpectIdent},
+            parser::{AcceptAttrMap, ArgParser, AttributeParser, ExpectIdent},
         },
     },
     config::DefaultEmitPolicy,
@@ -220,7 +220,7 @@ pub struct EmitParser {
     span: Option<Span>,
 }
 
-impl AttrtibuteParser for EmitParser {
+impl AttributeParser for EmitParser {
     type Attr = Emit;
     const ATTRIBUTES: AcceptAttrMap<Self> = &[
         (
@@ -346,7 +346,7 @@ impl EmitOnImplParser {
     }
 }
 
-impl AttrtibuteParser for EmitOnImplParser {
+impl AttributeParser for EmitOnImplParser {
     type Attr = EmitOnImpl;
     const ATTRIBUTES: AcceptAttrMap<Self> = &[(
         EMIT_ON_IMPL_PATH,

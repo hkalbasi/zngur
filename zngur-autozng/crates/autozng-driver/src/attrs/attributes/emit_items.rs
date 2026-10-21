@@ -5,7 +5,7 @@ use crate::{
         AUTOZNG_NAMESPACE, Attr, AttrPath,
         parse::{
             context::AcceptContext,
-            parser::{ArgParser, AttrtibuteParser},
+            parser::{ArgParser, AttributeParser},
         },
     },
     ctx::AutozngContext,
@@ -203,7 +203,7 @@ impl EmitItemsParser {
     }
 }
 
-impl AttrtibuteParser for EmitItemsParser {
+impl AttributeParser for EmitItemsParser {
     type Attr = EmitItems;
     const ATTRIBUTES: crate::attrs::parse::parser::AcceptAttrMap<Self> = &[(
         EMIT_ITEMS_PATH,

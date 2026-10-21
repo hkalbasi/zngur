@@ -100,23 +100,23 @@ impl OffsetRustcSpanExt for Span {
     }
 }
 
-pub trait RespanedInsideExt {
-    fn respaned_inside(&self, outer: Span) -> Self;
+pub trait RespannedInsideExt {
+    fn respanned_inside(&self, outer: Span) -> Self;
 }
 
-impl RespanedInsideExt for rustc_ast::tokenstream::TokenStream {
-    fn respaned_inside(&self, outer: Span) -> Self {
+impl RespannedInsideExt for rustc_ast::tokenstream::TokenStream {
+    fn respanned_inside(&self, outer: Span) -> Self {
         self.iter()
-            .map(|tree| tree.respaned_inside(outer))
+            .map(|tree| tree.respanned_inside(outer))
             .collect()
     }
 }
 
-impl RespanedInsideExt for rustc_ast::tokenstream::TokenTree {
-    fn respaned_inside(&self, outer: Span) -> Self {
+impl RespannedInsideExt for rustc_ast::tokenstream::TokenTree {
+    fn respanned_inside(&self, outer: Span) -> Self {
         match self.clone() {
             rustc_ast::tokenstream::TokenTree::Token(token, spacing) => {
-                rustc_ast::tokenstream::TokenTree::Token(token.respaned_inside(outer), spacing)
+                rustc_ast::tokenstream::TokenTree::Token(token.respanned_inside(outer), spacing)
             }
             rustc_ast::tokenstream::TokenTree::Delimited(
                 delim_span,
@@ -124,17 +124,17 @@ impl RespanedInsideExt for rustc_ast::tokenstream::TokenTree {
                 delim,
                 stream,
             ) => rustc_ast::tokenstream::TokenTree::Delimited(
-                delim_span.respaned_inside(outer),
+                delim_span.respanned_inside(outer),
                 delim_spacing,
                 delim,
-                stream.respaned_inside(outer),
+                stream.respanned_inside(outer),
             ),
         }
     }
 }
 
-impl RespanedInsideExt for rustc_ast::token::Token {
-    fn respaned_inside(&self, outer: Span) -> Self {
+impl RespannedInsideExt for rustc_ast::token::Token {
+    fn respanned_inside(&self, outer: Span) -> Self {
         rustc_ast::token::Token {
             kind: self.kind,
             span: self.span.offset_inside(outer),
@@ -142,8 +142,8 @@ impl RespanedInsideExt for rustc_ast::token::Token {
     }
 }
 
-impl RespanedInsideExt for rustc_ast::tokenstream::DelimSpan {
-    fn respaned_inside(&self, outer: Span) -> Self {
+impl RespannedInsideExt for rustc_ast::tokenstream::DelimSpan {
+    fn respanned_inside(&self, outer: Span) -> Self {
         rustc_ast::tokenstream::DelimSpan {
             open: self.open.offset_inside(outer),
             close: self.close.offset_inside(outer),

@@ -117,12 +117,12 @@ impl WellKnownTrait {
     }
 }
 
-pub trait WellKownTraitsExt {
-    fn implimented_wellknown_traits(&self) -> Vec<(WellKnownTrait, TraitRef)>;
+pub trait WellKnownTraitsExt {
+    fn implemented_wellknown_traits(&self) -> Vec<(WellKnownTrait, TraitRef)>;
 }
 
-impl WellKownTraitsExt for Ty {
-    fn implimented_wellknown_traits(&self) -> Vec<(WellKnownTrait, TraitRef)> {
+impl WellKnownTraitsExt for Ty {
+    fn implemented_wellknown_traits(&self) -> Vec<(WellKnownTrait, TraitRef)> {
         with_ctxt(|ctx| {
             use rustc_middle::ty::TypingMode;
             use rustc_trait_selection::infer::InferCtxtExt;

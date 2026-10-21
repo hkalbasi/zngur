@@ -203,7 +203,7 @@ impl RustcPublicVisitable for rustc_public::ty::AdtDef {
         //     });
 
         //     eprintln!("Trait Impls of {}", name);
-        //     let traits = self.ty().implimented_wellknown_traits();
+        //     let traits = self.ty().implemented_wellknown_traits();
         //     let wellknown_traits = traits
         //         .iter()
         //         .filter_map(|(trt_enm, trt_ref)| {

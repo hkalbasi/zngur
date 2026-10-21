@@ -14,6 +14,6 @@ pub(crate) use funcs::{FnDefExt, GetAssocInfoExt};
 pub(crate) use generics::{ClausesOfExt, GenericClauses};
 pub(crate) use hir::{HirConstBodyExt, HirConstItem, HirItemExt, HirLetBindStmt, HirTyAlias};
 pub(crate) use reexports::{VisiblePaths, compute, visible_path};
-pub(crate) use traits::{EmitForExt, ImplDefExt, WellKnownTrait, WellKownTraitsExt};
+pub(crate) use traits::{EmitForExt, ImplDefExt, WellKnownTrait, WellKnownTraitsExt};
 pub(crate) use ty::RustcPublicTyExt;
 pub(crate) use vis::{Visibility, VisibilityExt};

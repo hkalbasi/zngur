@@ -42,7 +42,7 @@ use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_r
 use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
 use crate::rustc_ext::{
     AdtDefExt, EmitForExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKnownTrait,
-    WellKownTraitsExt, visible_path,
+    WellKnownTraitsExt, visible_path,
 };
 use crate::type_map::{MapTypeError, is_type_block_less, map_rustc_public_ty_to_zngur};
 
@@ -517,7 +517,7 @@ fn layout_policy(layout: rustc_public::abi::Layout) -> Option<LayoutPolicy> {
 
 /// The subset of well-known traits that `zngur-def` understands.
 fn wellknown_traits(ty: Ty) -> Vec<ZngurWellknownTrait> {
-    ty.implimented_wellknown_traits()
+    ty.implemented_wellknown_traits()
         .into_iter()
         .filter_map(|(trait_kind, _)| match trait_kind {
             WellKnownTrait::Debug => Some(ZngurWellknownTrait::Debug),

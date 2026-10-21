@@ -8,7 +8,7 @@ use rustc_span::{ErrorGuaranteed, Span};
 use crate::{
     attrs::{AUTOZNG_NAMESPACE, AttrPath, PATH_SEP},
     driver::with_ctxt,
-    span_tools::{OffsetRustcSpanExt, RespanedInsideExt},
+    span_tools::{OffsetRustcSpanExt, RespannedInsideExt},
 };
 
 pub mod context;
@@ -183,7 +183,7 @@ pub fn parse_attr_str(source: &str, span: Span) -> Result<PartialParsedAttr, Err
             source.to_string(),
             None,
         ) {
-            Ok(stream) => stream.respaned_inside(span),
+            Ok(stream) => stream.respanned_inside(span),
             Err(diags) => {
                 for diag in diags {
                     let _ = diag.emit();
