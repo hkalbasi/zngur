@@ -12,7 +12,7 @@ use rustc_attr_parsing::template;
 use crate::attrs::AttrPath;
 
 use crate::attrs::parse::context::AcceptContext;
-use crate::attrs::parse::parser::{ArgParser, AttrtibuteParser, ExpectIdent};
+use crate::attrs::parse::parser::{ArgParser, AttributeParser, ExpectIdent};
 use crate::{
     attrs::{AUTOZNG_NAMESPACE, Attr},
     ctx::AutozngContext,
@@ -104,7 +104,7 @@ impl PolicyParser {
     }
 }
 
-impl AttrtibuteParser for PolicyParser {
+impl AttributeParser for PolicyParser {
     type Attr = Policy;
 
     const ATTRIBUTES: crate::attrs::parse::parser::AcceptAttrMap<Self> = &[(

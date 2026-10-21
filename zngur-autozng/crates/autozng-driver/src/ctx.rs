@@ -75,18 +75,18 @@ impl Hash for FnRecord {
 
 /// A method of a *trait*, attached to one concrete implementing type.
 ///
-/// Recorded when an `emit_items` const names a trait method (`let _ = Example::to_string;`,
-/// `<Example as YarrExt>::yarrrr`), which the impl walk cannot see because trait visiting is
-/// stubbed. Emitted as a method of the self type, with the trait as the `use_path`
-/// (`fn to_string(&self) -> ::std::string::String use ::std::string::ToString;`), and only if
-/// the trait's clauses hold for the concrete arguments.
+/// Recorded when an `emit_items` const names a trait method (`let _ = Example::to_string;`, or a
+/// user trait through its impl: `<Example as SomeTrait>::method`), which the impl walk cannot see
+/// because trait visiting is stubbed. Emitted as a method of the self type, with the trait as the
+/// `use_path` (`fn to_string(&self) -> ::std::string::String use ::std::string::ToString;`), and
+/// only if the trait's clauses hold for the concrete arguments.
 #[derive(Debug)]
 pub struct TraitFnRecord {
     /// The trait method itself (e.g. `ToString::to_string`).
     pub def: FnDef,
-    /// the the Trait assoceated with this function
+    /// the the Trait associated with this function
     pub trait_def: TraitDef,
-    /// Trait will qualifed generic args like the `Self` of the implementing type
+    /// Trait will qualified generic args like the `Self` of the implementing type
     /// impls that the function is form an impl block and not just the definition from the trait decl
     #[allow(dead_code)]
     // consumed once trait rendering lands; currently only `trait_def` is read

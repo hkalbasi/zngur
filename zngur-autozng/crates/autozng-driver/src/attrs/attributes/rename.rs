@@ -7,7 +7,7 @@ use crate::{
         AUTOZNG_NAMESPACE, Attr, AttrPath,
         parse::{
             context::AcceptContext,
-            parser::{ArgParser, AttrtibuteParser},
+            parser::{ArgParser, AttributeParser},
         },
     },
     ctx::AutozngContext,
@@ -125,7 +125,7 @@ const RENAME_PATH_TARGETS: &[(AttrPath, RenameTargetType)] = &[
     (RENAME_ALL_PATH, RenameTargetType::Children),
 ];
 
-impl AttrtibuteParser for RenameParser {
+impl AttributeParser for RenameParser {
     type Attr = Rename;
 
     const ATTRIBUTES: crate::attrs::parse::parser::AcceptAttrMap<Self> = &[
@@ -176,7 +176,7 @@ impl AttrtibuteParser for RenameParser {
     }
 }
 
-mod diagnotics {
+mod diagnostics {
 
     use rustc_errors::into_diag_arg_using_display;
     use rustc_macros::Diagnostic;
@@ -289,10 +289,10 @@ impl RenameParser {
                             None
                         }
                     }) else {
-                        cx.dcx.emit_err(diagnotics::UnknownRenameAction {
+                        cx.dcx.emit_err(diagnostics::UnknownRenameAction {
                             span: action.span,
                             name: action.value,
-                            valid_actions: diagnotics::ValidRenameActions(
+                            valid_actions: diagnostics::ValidRenameActions(
                                 RENAME_ACTION_NAMES
                                     .iter()
                                     .map(|(_, a)| -> &'static str { a })
@@ -365,10 +365,10 @@ impl RenameParser {
                 None
             }
         }) else {
-            cx.dcx.emit_err(diagnotics::UnknownConvertCase {
+            cx.dcx.emit_err(diagnostics::UnknownConvertCase {
                 span,
                 case: name,
-                valid_cases: diagnotics::ValidConvertCases(valid_cases()),
+                valid_cases: diagnostics::ValidConvertCases(valid_cases()),
             });
             return None;
         };
