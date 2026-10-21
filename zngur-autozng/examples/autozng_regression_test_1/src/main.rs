@@ -271,7 +271,7 @@ impl Example {
     }
 
     pub async fn do_async(&self) -> String {
-        "a suposably async message".to_owned()
+        "a supposedly async message".to_owned()
     }
 }
 
