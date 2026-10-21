@@ -3,3 +3,4 @@
 
 pub mod driver_path;
 pub mod dylib;
+pub mod preflight;
