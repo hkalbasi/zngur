@@ -322,7 +322,7 @@ fn can_have_type_block(ty: Ty) -> bool {
         if ty.internal(driver.tcx).has_escaping_bound_vars() {
             return false;
         }
-        match map_rustc_public_ty_to_zngur(ty, driver.tcx) {
+        match map_rustc_public_ty_to_zngur(ty) {
             Ok(rust_ty) => !is_type_block_less(&rust_ty),
             Err(_) => false,
         }

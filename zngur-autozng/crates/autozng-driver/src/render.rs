@@ -37,7 +37,6 @@ use zngur_def::{
 use crate::ctx::{
     AutozngContext, ExportedTraitRecord, FnRecord, ImplRecord, TraitFnRecord, TyRecord,
 };
-use crate::driver::with_ctxt;
 use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_rustc_public_span};
 use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
 use crate::rustc_ext::{
@@ -147,8 +146,7 @@ fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec
             // spelling, so the whole trait is dropped.
             GenericArgKind::Lifetime(_) => {}
             GenericArgKind::Type(ty) => {
-                generics
-                    .push(with_ctxt(|driver| map_rustc_public_ty_to_zngur(*ty, driver.tcx)).ok()?);
+                generics.push(map_rustc_public_ty_to_zngur(*ty).ok()?);
             }
             GenericArgKind::Const(_) => return None,
         }
@@ -334,7 +332,7 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
 
     let adt = record.adt;
 
-    let rust_ty = match with_ctxt(|driver| map_rustc_public_ty_to_zngur(record.ty, driver.tcx)) {
+    let rust_ty = match map_rustc_public_ty_to_zngur(record.ty) {
         Ok(ty) => ty,
         Err(MapTypeError::Unsupported(msg)) => {
             // An ADT has a `DefId` to point the primary warning at, with an `emitted here` note at
@@ -470,7 +468,7 @@ fn build_field(
         &format!("field `{name}` of `{}`", adt.name()),
     );
     let field_ty = field.ty();
-    match with_ctxt(|driver| map_rustc_public_ty_to_zngur(field_ty, driver.tcx)) {
+    match map_rustc_public_ty_to_zngur(field_ty) {
         Ok(ty) => Some(ZngurField { name, ty, offset }),
         Err(MapTypeError::Unsupported(msg)) => {
             warn(
@@ -661,9 +659,7 @@ fn own_generic_args(fn_def: FnDef, args: Option<&GenericArgs>) -> Vec<RustType> 
         .iter()
         .skip(fn_def.generics_of().parent_count)
         .filter_map(|arg| match arg {
-            GenericArgKind::Type(ty) => {
-                with_ctxt(|driver| map_rustc_public_ty_to_zngur(*ty, driver.tcx).ok())
-            }
+            GenericArgKind::Type(ty) => map_rustc_public_ty_to_zngur(*ty).ok(),
             _ => None,
         })
         .collect()
@@ -824,18 +820,13 @@ fn method_signature_parts(
         ZngurMethodReceiver::Static
     };
 
-    let inputs = with_ctxt(|driver| {
-        signature
-            .inputs()
-            .iter()
-            .skip(usize::from(has_self))
-            .map(|input| map_rustc_public_ty_to_zngur(*input, driver.tcx))
-            .collect::<Result<Vec<_>, _>>()
-    });
-    let (inputs, output) = match (
-        inputs,
-        with_ctxt(|driver| map_rustc_public_ty_to_zngur(signature.output(), driver.tcx)),
-    ) {
+    let inputs = signature
+        .inputs()
+        .iter()
+        .skip(usize::from(has_self))
+        .map(|input| map_rustc_public_ty_to_zngur(*input))
+        .collect::<Result<Vec<_>, _>>();
+    let (inputs, output) = match (inputs, map_rustc_public_ty_to_zngur(signature.output())) {
         (Ok(inputs), Ok(output)) => (inputs, output),
         (Err(MapTypeError::Unsupported(msg)), _) | (_, Err(MapTypeError::Unsupported(msg))) => {
             warn(
@@ -1015,17 +1006,12 @@ fn build_fn(ctx: &AutozngContext, record: &FnRecord) -> Option<ZngurFn> {
         &format!("fn `{}`", fn_def.name()),
     );
 
-    let inputs = with_ctxt(|driver| {
-        signature
-            .inputs()
-            .iter()
-            .map(|input| map_rustc_public_ty_to_zngur(*input, driver.tcx))
-            .collect::<Result<Vec<_>, _>>()
-    });
-    let (inputs, output) = match (
-        inputs,
-        with_ctxt(|driver| map_rustc_public_ty_to_zngur(signature.output(), driver.tcx)),
-    ) {
+    let inputs = signature
+        .inputs()
+        .iter()
+        .map(|input| map_rustc_public_ty_to_zngur(*input))
+        .collect::<Result<Vec<_>, _>>();
+    let (inputs, output) = match (inputs, map_rustc_public_ty_to_zngur(signature.output())) {
         (Ok(inputs), Ok(output)) => (inputs, output),
         (Err(MapTypeError::Unsupported(msg)), _) | (_, Err(MapTypeError::Unsupported(msg))) => {
             warn(

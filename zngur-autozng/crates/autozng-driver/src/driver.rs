@@ -7,20 +7,23 @@
 //! (see `render.rs`).
 
 use rustc_driver::{Callbacks, Compilation, run_compiler};
+use rustc_hash::FxHashMap;
 use rustc_interface::interface;
 use rustc_middle::ty::TyCtxt;
 use rustc_public::CompilerError;
 use rustc_public::rustc_internal;
+use rustc_public::ty::Ty;
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use scoped_tls::scoped_thread_local;
-use zngur_def::ZngurSpec;
+use zngur_def::{RustType, ZngurSpec};
 
 use crate::config::Config;
 use crate::render;
 use crate::rustc_ext::{VisiblePaths, WellKnownTrait};
+use crate::type_map::MapTypeError;
 
 /// Ambient state made available to [`with_ctxt`] for the duration of the analysis callback.
 pub struct DriverContext<'tcx, 'cfg> {
@@ -31,6 +34,9 @@ pub struct DriverContext<'tcx, 'cfg> {
     /// The well-known-trait declarations, resolved on first use, indexed by
     /// `WellKnownTrait as usize` (see [`DriverContext::wellknown_trait_decl`]).
     wellknown_trait_decls: RefCell<Vec<Option<rustc_public::ty::TraitDecl>>>,
+    /// Memoized [`crate::type_map::map_rustc_public_ty_to_zngur`] results, keyed by the mapped
+    /// `Ty` (see [`DriverContext::map_ty`]).
+    ty_map_cache: RefCell<FxHashMap<Ty, Result<RustType, MapTypeError>>>,
 }
 
 impl DriverContext<'_, '_> {
@@ -73,6 +79,23 @@ impl DriverContext<'_, '_> {
         }
         cache[index] = Some(decl.clone());
         decl
+    }
+
+    /// Convert a `rustc_public` type into its `.zng` representation, memoized for the analysis.
+    ///
+    /// The conversion ([`crate::type_map::map_rustc_public_ty_to_zngur`]) is recursive and
+    /// reaches the same type many times — through different wrappers (`&Vec<T>`, `Box<Vec<T>>`,
+    /// ...) and from many different items — so its result is cached here instead of recomputed.
+    /// The cache lives on the context, so its keys cannot outlive the `TyCtxt` they belong to.
+    pub(crate) fn map_ty(&self, ty: Ty) -> Result<RustType, MapTypeError> {
+        let cached = self.ty_map_cache.borrow().get(&ty).cloned();
+        if let Some(cached) = cached {
+            return cached;
+        }
+
+        let mapped = crate::type_map::map_rustc_public_ty_to_zngur_uncached(ty, self.tcx);
+        self.ty_map_cache.borrow_mut().insert(ty, mapped.clone());
+        mapped
     }
 }
 
@@ -176,6 +199,7 @@ where
                 cfg: &self.cfg,
                 visible_paths: RefCell::new(None),
                 wellknown_trait_decls: RefCell::new(Vec::new()),
+                ty_map_cache: RefCell::new(FxHashMap::default()),
             };
             set_ctxt(driver_ctx, || {
                 self.result = Some((self.analyze_callback)(tcx));
