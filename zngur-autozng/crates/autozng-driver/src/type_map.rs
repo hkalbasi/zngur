@@ -22,6 +22,7 @@ use rustc_public::{
 };
 use zngur_def::{PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType};
 
+use crate::driver::with_ctxt;
 use crate::rustc_ext::{Visibility, VisibilityExt, visible_path};
 
 const PATH_SEP: &str = "::";
@@ -72,7 +73,21 @@ pub fn is_type_block_less(ty: &RustType) -> bool {
     }
 }
 
-pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, MapTypeError> {
+/// Convert a `rustc_public` type into its `.zng` representation, memoized for the analysis.
+///
+/// The conversion is recursive, and the same type is reached over and over — through different
+/// wrappers (`&Vec<T>`, `Box<Vec<T>>`, ...) and from many different items — so the result is
+/// cached on the [`DriverContext`](crate::driver::DriverContext) (see
+/// [`DriverContext::map_ty`](crate::driver::DriverContext::map_ty)) rather than recomputed.
+pub fn map_rustc_public_ty_to_zngur(ty: Ty) -> Result<RustType, MapTypeError> {
+    with_ctxt(|ctx| ctx.map_ty(ty))
+}
+
+/// The conversion itself; callers go through [`map_rustc_public_ty_to_zngur`] for the memoization.
+pub(crate) fn map_rustc_public_ty_to_zngur_uncached(
+    ty: Ty,
+    tcx: TyCtxt,
+) -> Result<RustType, MapTypeError> {
     match ty.kind() {
         // An unresolved associated-type projection or a higher-ranked variable has no `.zng`
         // spelling; drop the item silently (the concrete instantiation already happened where
@@ -170,7 +185,7 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                                     // non-lifetime argument is a concrete `RigidTy`; an
                                     // unresolved parameter (`Param`/`Alias`/`Bound`) bubbles up
                                     // from the recursive call (warned or skipped silently).
-                                    GenericArgKind::Type(param_ty) => Some(map_rustc_public_ty_to_zngur(*param_ty, tcx)),
+                                    GenericArgKind::Type(param_ty) => Some(map_rustc_public_ty_to_zngur(*param_ty)),
                                 }
                             }
                         })
@@ -184,21 +199,21 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
             }
             RigidTy::Str => Ok(RustType::Primitive(PrimitiveRustType::Str)),
             RigidTy::Slice(slice_ty) => Ok(RustType::Slice(Box::new(
-                map_rustc_public_ty_to_zngur(slice_ty, tcx)?,
+                map_rustc_public_ty_to_zngur(slice_ty)?,
             ))),
             RigidTy::RawPtr(ptr_ty, mutability) => Ok(RustType::Raw(
                 match mutability {
                     Mutability::Mut => zngur_def::Mutability::Mut,
                     Mutability::Not => zngur_def::Mutability::Not,
                 },
-                Box::new(map_rustc_public_ty_to_zngur(ptr_ty, tcx)?),
+                Box::new(map_rustc_public_ty_to_zngur(ptr_ty)?),
             )),
             RigidTy::Ref(_region, ref_ty, mutability) => Ok(RustType::Ref(
                 match mutability {
                     Mutability::Mut => zngur_def::Mutability::Mut,
                     Mutability::Not => zngur_def::Mutability::Not,
                 },
-                Box::new(map_rustc_public_ty_to_zngur(ref_ty, tcx)?),
+                Box::new(map_rustc_public_ty_to_zngur(ref_ty)?),
             )),
             RigidTy::Dynamic(predicates, _region) => {
                 let mut pred_iter = predicates.into_iter();
@@ -226,9 +241,7 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                             GenericArgKind::Const(_) => Some(Err(MapTypeError::unsupported(
                                 "const generics are not supported in zngur interfaces",
                             ))),
-                            GenericArgKind::Type(ty) => {
-                                Some(map_rustc_public_ty_to_zngur(*ty, tcx))
-                            }
+                            GenericArgKind::Type(ty) => Some(map_rustc_public_ty_to_zngur(*ty)),
                         })
                         .collect::<Result<Vec<_>, _>>()?;
 
@@ -245,8 +258,10 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
                                         .to_string(),
                                     map_rustc_public_ty_to_zngur(match projection.term {
                                         TermKind::Type(term_ty) => Ok(term_ty),
-                                        TermKind::Const(_) => Err(MapTypeError::unsupported("const generics are not supported in zngur interfaces"))
-                                    }?, tcx)?,
+                                        TermKind::Const(_) => Err(MapTypeError::unsupported(
+                                            "const generics are not supported in zngur interfaces",
+                                        )),
+                                    }?)?,
                                 ));
                             }
                             ExistentialPredicate::AutoTrait(auto_trait_def) => {
@@ -303,7 +318,7 @@ pub fn map_rustc_public_ty_to_zngur(ty: Ty, tcx: TyCtxt) -> Result<RustType, Map
             }
             RigidTy::Tuple(tys) => Ok(RustType::Tuple(
                 tys.into_iter()
-                    .map(|ty| map_rustc_public_ty_to_zngur(ty, tcx))
+                    .map(map_rustc_public_ty_to_zngur)
                     .collect::<Result<Vec<_>, _>>()?,
             )),
             RigidTy::FnDef(_fn_def, _generics) => Err(MapTypeError::unsupported(
