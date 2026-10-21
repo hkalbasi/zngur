@@ -65,25 +65,30 @@ pub(crate) fn compute(tcx: TyCtxt<'_>) -> VisiblePaths {
                 let Res::Def(DefKind::Mod, module_def_id) = res else {
                     continue;
                 };
-                let Some(local) = module_def_id.as_local() else {
-                    continue;
-                };
-                let Some(children) = collector
-                    .module_items
-                    .get(&LocalModId::new_unchecked(local))
-                else {
-                    continue;
-                };
-                for def_id in children {
-                    let name = tcx
-                        .def_path_str(*def_id)
-                        .rsplit("::")
-                        .next()
-                        .unwrap_or_default()
-                        .to_string();
-                    let mut path = module_path.clone();
-                    path.push(name);
-                    insert(&mut map, *def_id, path);
+                match module_def_id.as_local() {
+                    // A glob of a local module: the collector already knows the module's items.
+                    Some(local) => {
+                        let Some(children) = collector
+                            .module_items
+                            .get(&LocalModId::new_unchecked(local))
+                        else {
+                            continue;
+                        };
+                        for def_id in children {
+                            let name = tcx
+                                .def_path_str(*def_id)
+                                .rsplit("::")
+                                .next()
+                                .unwrap_or_default()
+                                .to_string();
+                            let mut path = module_path.clone();
+                            path.push(name);
+                            insert(&mut map, *def_id, path);
+                        }
+                    }
+                    // A glob of *another* crate's module (`pub use png::*;`): the items are
+                    // defined elsewhere, so this crate's HIR has no record of them.
+                    None => collect_external_glob(tcx, module_def_id, &module_path, &mut map),
                 }
             }
             // A degenerate list import (`use foo::{a, b}`); the leaves are separate `Single`
@@ -95,22 +100,75 @@ pub(crate) fn compute(tcx: TyCtxt<'_>) -> VisiblePaths {
     map
 }
 
-/// The `.zng` path segments for `def`: the visible (re-export) path when one exists, else the
-/// definition path. The first segment is the crate name; callers replace it with `crate` for a
-/// local definition.
+/// The `.zng` path segments for `def`.
+///
+/// A definition the analysed crate can name from its own root — a local one, or an external one a
+/// public `pub use` re-exports — is spelled `crate::...`: Zngur's generated code is compiled
+/// inside the crate (`mod generated;`), so that is the path it uses. A definition the crate
+/// cannot name keeps its own crate's path, which the printer renders with a leading `::`.
 pub(crate) fn visible_path(def: &impl CrateDef) -> Vec<String> {
-    let mut path: Vec<String> = def.name().split("::").map(Into::into).collect();
-    if def.krate().is_local
-        && let Some(visible) = with_ctxt(|ctx| {
-            ctx.visible_path(rustc_public::rustc_internal::internal(
-                ctx.tcx,
-                def.def_id(),
-            ))
-        })
-    {
-        path = visible;
+    let visible = with_ctxt(|ctx| {
+        ctx.visible_path(rustc_public::rustc_internal::internal(
+            ctx.tcx,
+            def.def_id(),
+        ))
+    });
+    // A re-exported definition is nameable from the crate root even when it is defined in another
+    // crate, so its re-export path is localized exactly like a local definition's.
+    let nameable_from_root = visible.is_some() || def.krate().is_local;
+    let mut path = visible.unwrap_or_else(|| def.name().split("::").map(Into::into).collect());
+    if nameable_from_root && !path.is_empty() {
+        path[0] = "crate".to_string();
     }
     path
+}
+
+/// The definitions in `paths` that live in *another* crate, in a deterministic order.
+///
+/// These are the items a `pub use` makes part of this crate's public API without defining them
+/// here. The crate walk only visits the local crate, so they are recorded by a dedicated pass
+/// (`analyze::visit_reexported_items`) rather than by the visitor.
+pub(crate) fn external_reexports(paths: &VisiblePaths) -> Vec<DefId> {
+    let mut defs: Vec<DefId> = paths
+        .keys()
+        .copied()
+        .filter(|def_id| def_id.as_local().is_none())
+        .collect();
+    defs.sort_by_cached_key(|def_id| paths.get(def_id).cloned());
+    defs
+}
+
+/// Record the public items a glob import of an *external* module (`pub use png::*;`) brings into
+/// this crate, under the path the re-export exposes them by.
+///
+/// The items are defined in another crate, so this crate's HIR has no record of them; the
+/// module's *resolved* children are read from its metadata instead. A public submodule is
+/// descended into, because re-exporting a module also makes its public contents nameable through
+/// the re-exporting crate (`crate::text_metadata::TEXtChunk`).
+fn collect_external_glob(
+    tcx: TyCtxt<'_>,
+    module_def_id: DefId,
+    module_path: &[String],
+    map: &mut VisiblePaths,
+) {
+    for child in tcx.module_children(module_def_id) {
+        // Only the module's public interface is re-exported. A private child (`png::common` is
+        // `Restricted`) is reachable only through the re-export of the items it exposes.
+        if !child.vis.is_public() {
+            continue;
+        }
+        let Some(def_id) = child.res.opt_def_id() else {
+            continue;
+        };
+        let seen = map.contains_key(&def_id);
+        let mut path = module_path.to_vec();
+        path.push(child.ident.to_string());
+        insert(map, def_id, path.clone());
+        // A module reached through several re-exports needs descending into only once.
+        if !seen && matches!(child.res, Res::Def(DefKind::Mod, _)) && def_id.as_local().is_none() {
+            collect_external_glob(tcx, def_id, &path, map);
+        }
+    }
 }
 
 /// Collects the crate's `use` items and, for glob expansion, the items each module declares.

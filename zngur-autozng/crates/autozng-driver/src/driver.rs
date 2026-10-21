@@ -45,13 +45,33 @@ impl DriverContext<'_, '_> {
     ///
     /// Built once per analysis and cached.
     pub(crate) fn visible_path(&self, def_id: rustc_span::def_id::DefId) -> Option<Vec<String>> {
-        if self.visible_paths.borrow().is_none() {
-            *self.visible_paths.borrow_mut() = Some(crate::rustc_ext::compute(self.tcx));
-        }
+        self.ensure_visible_paths();
         self.visible_paths
             .borrow()
             .as_ref()
             .and_then(|map| map.get(&def_id).cloned())
+    }
+
+    /// The definitions this crate re-exports from *other* crates, i.e. the part of its public API
+    /// that is not defined in it (see [`crate::rustc_ext::external_reexports`]).
+    ///
+    /// The crate walk only visits the local crate, so these are recorded by a dedicated pass
+    /// (`analyze::visit_reexported_items`).
+    pub(crate) fn external_reexports(&self) -> Vec<rustc_span::def_id::DefId> {
+        self.ensure_visible_paths();
+        crate::rustc_ext::external_reexports(
+            self.visible_paths
+                .borrow()
+                .as_ref()
+                .expect("the re-export map is built above"),
+        )
+    }
+
+    /// Build the re-export map on first use.
+    fn ensure_visible_paths(&self) {
+        if self.visible_paths.borrow().is_none() {
+            *self.visible_paths.borrow_mut() = Some(crate::rustc_ext::compute(self.tcx));
+        }
     }
 
     /// The `TraitDecl` for a well-known trait, resolved on first use and cached for the rest of

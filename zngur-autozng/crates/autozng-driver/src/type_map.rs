@@ -151,14 +151,9 @@ pub(crate) fn map_rustc_public_ty_to_zngur_uncached(
                     ))
                 } else {
                     // The path the type is *visible* by (a `pub use` re-export path when the crate
-                    // exposes it that way), not its definition path.
-                    let mut path = visible_path(&adt_def);
-                    if adt_def.krate().is_local && !path.is_empty() {
-                        // `rustc_public` reports the local crate's own items under the crate
-                        // name, whereas the Zngur IR marks local paths with a leading `crate`
-                        // segment (the generator substitutes the real crate name back in).
-                        path[0] = "crate".to_string();
-                    }
+                    // exposes it that way), not its definition path; `visible_path` spells a path
+                    // the crate root can name as `crate::...`.
+                    let path = visible_path(&adt_def);
 
                     let rustc_generic_args =
                         rustc_public::rustc_internal::internal(tcx, &generics_args);
@@ -225,11 +220,7 @@ pub(crate) fn map_rustc_public_ty_to_zngur_uncached(
                     let mut named_generics: Vec<(String, RustType)> = Vec::new();
                     let mut auto_traits = Vec::new();
 
-                    let mut path = visible_path(&trait_ref.def_id);
-                    // A local trait is spelled `crate::...`, mirroring the ADT arm above.
-                    if trait_ref.def_id.krate().is_local && !path.is_empty() {
-                        path[0] = "crate".to_string();
-                    }
+                    let path = visible_path(&trait_ref.def_id);
                     // The trait's own generic arguments. `ExistentialTraitRef::generic_args`
                     // excludes `Self` (the object type), which is not a `.zng` argument.
                     let generics = trait_ref

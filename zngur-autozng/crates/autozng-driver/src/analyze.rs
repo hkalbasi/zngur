@@ -74,28 +74,7 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
         let attrs = trait_def.autozng_attrs();
         attrs.visit(trait_def, self.ctx);
 
-        // A trait is only recorded when it carries an explicit `emit` (its implicit action is
-        // `None`); when it is, record every associated function. A trait's functions are at most
-        // as visible as the trait itself, so there is nothing further to filter. Only descend
-        // once the trait is recorded: recording a method implicitly records its trait, so
-        // walking a `skip`-ed trait's methods would leak it into the output. A trait recorded as a
-        // concrete instantiation (`emit_items(emit_traits = true)`) already has its functions
-        // recorded with concrete arguments, so it is not walked again here.
-        if self.ctx.is_trait_recorded(trait_def)
-            && !self.ctx.is_trait_concretely_recorded(trait_def)
-        {
-            for assoc_item in trait_def.associated_items() {
-                if let Some((fn_def, generics)) = assoc_item.opt_fn_def() {
-                    self.ctx.record_trait_method(
-                        assoc_item.opt_trait_def().unwrap(),
-                        assoc_item.opt_trait_ref(),
-                        fn_def,
-                        generics,
-                        span_of_def(fn_def.def_id()),
-                    );
-                }
-            }
-        }
+        record_trait_methods(trait_def, self.ctx);
 
         trait_def.super_visit(self)
     }
@@ -123,6 +102,30 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
 
     fn visit_static(&mut self, st: &StaticDef) -> ControlFlow<Self::Break> {
         st.super_visit(self)
+    }
+}
+
+/// Record every associated function of a *recorded* trait declaration.
+///
+/// A trait's functions are at most as visible as the trait itself, so there is nothing further to
+/// filter. Only descend once the trait is recorded: recording a method implicitly records its
+/// trait, so walking a `skip`-ed trait's methods would leak it into the output. A trait recorded
+/// as a concrete instantiation (`emit_items(emit_traits = true)`) already has its functions
+/// recorded with concrete arguments, so it is not walked again here.
+fn record_trait_methods(trait_def: &rustc_public::ty::TraitDef, ctx: &AutozngContext) {
+    if !ctx.is_trait_recorded(trait_def) || ctx.is_trait_concretely_recorded(trait_def) {
+        return;
+    }
+    for assoc_item in trait_def.associated_items() {
+        if let Some((fn_def, generics)) = assoc_item.opt_fn_def() {
+            ctx.record_trait_method(
+                assoc_item.opt_trait_def().unwrap(),
+                assoc_item.opt_trait_ref(),
+                fn_def,
+                generics,
+                span_of_def(fn_def.def_id()),
+            );
+        }
     }
 }
 
@@ -178,6 +181,47 @@ fn visit_emitted_ty(ctx: &AutozngContext, ty: Ty) {
     }
 }
 
+/// Record the items this crate re-exports from *other* crates (`pub use png::*;`), as if each
+/// carried an explicit `#[autozng::emit]`.
+///
+/// The crate walk only visits the local crate, so an external item a public `pub use` makes part
+/// of the public API would otherwise never be recorded — a crate whose entire API is re-exported
+/// would emit an empty `.zng`. A re-export is an explicit statement that the item is public API,
+/// so it is recorded like an `emit`: the type / function / trait is recorded, and a trait's
+/// associated functions with it (`CrateAnalysisVisitor::visit_trait` never sees an external
+/// trait). Recording is idempotent — `is_ty_recorded` / `seen_tys` / `is_trait_recorded` mean a
+/// re-export of something the crate walk (or another re-export) already recorded adds nothing.
+fn visit_reexported_items(ctx: &AutozngContext) {
+    use crate::attrs::attributes::emit::{EmitAction, EmitTarget};
+    use rustc_hir::def::DefKind;
+    use rustc_public::rustc_internal::stable;
+
+    for def_id in with_ctxt(|driver| driver.external_reexports()) {
+        with_ctxt(|driver| match driver.tcx.def_kind(def_id) {
+            DefKind::Struct | DefKind::Enum | DefKind::Union => {
+                // `visit_emitted_ty` is the "record a type as if it carried an explicit `emit`"
+                // path, and it already decides whether an *external* ADT's children are walked
+                // (the `implicitly_emit_external_interfaces` policy).
+                let adt = rustc_public::ty::AdtDef(stable(def_id));
+                visit_emitted_ty(ctx, adt.ty());
+            }
+            DefKind::Fn => {
+                let fn_def = rustc_public::ty::FnDef(stable(def_id));
+                fn_def.emit(EmitAction::Emit, fn_def.emit_span(), ctx);
+            }
+            DefKind::Trait => {
+                let trait_def = rustc_public::ty::TraitDef(stable(def_id));
+                if trait_def.emit(EmitAction::Emit, trait_def.emit_span(), ctx) {
+                    record_trait_methods(&trait_def, ctx);
+                }
+            }
+            // A module has no `.zng` spelling of its own, and every other kind (a const, a type
+            // alias, a macro, ...) is not exported yet.
+            _ => {}
+        });
+    }
+}
+
 pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
     // NOTE: the context borrows `tcx`, so the `ZngurSpec` is built from it before this
     // function returns, while the `TyCtxt` is still alive. Printing happens later (see
@@ -190,6 +234,11 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
 
     tcx.hir_visit_all_item_likes_in_crate(&mut visit::HirVisitor { ctx: &mut ctx, tcx });
     CrateAnalysisVisitor { ctx: &ctx }.visit_all_rustc_public_items()?;
+
+    // A pass between the crate walk and the interface drain: the items this crate re-exports from
+    // *other* crates. The crate walk only visits the local crate, so they need their own pass
+    // (see `visit_reexported_items`).
+    visit_reexported_items(&ctx);
 
     // Third pass: every type an emitted interface exposed (a field's type, or a function / method
     // signature) gets its own `type` block, as if it carried an explicit `emit`. Visiting it may

@@ -152,6 +152,7 @@ wasip
 wasmtime
 xshell
 xtask
+Zeroable
 zngur
 Zngur
 Zngur's
