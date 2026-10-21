@@ -27,17 +27,18 @@ pub(crate) trait VisibilityExt {
 
 /// Classify a definition's visibility for the `.zng` interface.
 ///
-/// Zngur's generated code lives in the crate root, so an item is usable only when it is visible
-/// from there (or from outside the crate). Three cases:
+/// Zngur's generated code is compiled *inside* the analysed crate (`mod generated;`), so a `.zng`
+/// path only has to be nameable from the crate root; it is the default emission policy that wants
+/// the crate's *public* interface. Three cases:
 ///
-/// - [`Visibility::Public`] — the item and its whole module chain are `pub`, i.e. it is part of
-///   the crate's public interface. Emitted by default.
+/// - [`Visibility::Public`] — the item is part of the crate's public interface: it is directly
+///   public, or it is reachable through a `pub use` re-export. Emitted by default.
 /// - [`Visibility::PublicInternal`] — the item is visible from the crate root (`pub(crate)`,
 ///   `pub(super)` resolving to the root, or private at the crate root), but not outside. Fine to
 ///   emit, but only when explicitly tagged `emit` / reached through an emitted item's interface.
-/// - [`Visibility::PrivateAPI`] — the item is **not** visible from the crate root (a private item
-///   in a nested module, or a `pub` item whose module chain is not all `pub`). The generated code
-///   cannot see it, so it must not be emitted.
+/// - [`Visibility::PrivateAPI`] — the item is not usable: it is not visible from the crate root,
+///   or it is `pub` without being part of the public interface (a `pub` item behind a non-`pub`
+///   module that is never re-exported).
 fn visibility(tcx: TyCtxt, id: RustcDefId) -> Visibility {
     let Some(local_id) = id.as_local() else {
         // An external item is part of another crate's public interface.
@@ -52,11 +53,17 @@ fn visibility(tcx: TyCtxt, id: RustcDefId) -> Visibility {
         return Visibility::PrivateAPI;
     }
 
-    // A `pub` item is part of the crate's public interface only when every enclosing module is
-    // `pub` too: a `pub` item behind a non-`pub` module is not reachable from the crate root's
-    // public interface, so it is treated as private.
     if vis.is_public() {
-        if enclosing_modules_are_all_public(tcx, local_id) {
+        // Directly public: `pub` with an all-`pub` module chain. This also covers a `pub` member
+        // (field / method) of an item the module chain reaches, which is why an explicitly emitted
+        // `PublicInternal` type keeps its public fields.
+        //
+        // Or part of the public interface through a `pub use` re-export, which the module-chain
+        // test misses (`mod inner; pub use inner::Thing;`). The `.zng` path for such an item is
+        // its *visible* (re-export) path, resolved by [`crate::rustc_ext::visible_path`].
+        if enclosing_modules_are_all_public(tcx, local_id)
+            || tcx.effective_visibilities(()).is_exported(local_id)
+        {
             Visibility::Public
         } else {
             Visibility::PrivateAPI
@@ -72,7 +79,7 @@ fn visibility(tcx: TyCtxt, id: RustcDefId) -> Visibility {
 ///
 /// An item's own `pub` only reaches outside the crate when the whole module chain is `pub`; a
 /// non-`pub` module in between hides it from the crate root's public interface.
-fn enclosing_modules_are_all_public(
+pub(crate) fn enclosing_modules_are_all_public(
     tcx: TyCtxt<'_>,
     def_id: rustc_span::def_id::LocalDefId,
 ) -> bool {
@@ -81,7 +88,7 @@ fn enclosing_modules_are_all_public(
         if module.is_top_level_module() {
             return true;
         }
-        if !tcx.visibility(module).expect_local().is_public() {
+        if !tcx.visibility(module).is_public() {
             return false;
         }
         module = tcx.parent_module_from_def_id(module.into());
