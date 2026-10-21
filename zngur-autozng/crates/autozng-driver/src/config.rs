@@ -14,6 +14,13 @@ pub const ENV_OUTPUT_DIR: &str = "AUTOZNG_OUTPUT_DIR";
 /// the same file otherwise.
 pub const ENV_OUTPUT_ZNG: &str = "AUTOZNG_OUTPUT_ZNG";
 
+/// Environment variable naming the sysroot to pass to `rustc` as `--sysroot`.
+///
+/// Belt-and-braces: the driver already loads `librustc_driver` from the toolchain it needs, so
+/// the sysroot follows the loaded library; this is a second, independent route to the same
+/// answer. See [`ENV_OUTPUT_DIR`] for why the name is duplicated with `cargo-autozng`.
+pub const ENV_SYSROOT: &str = "AUTOZNG_SYSROOT";
+
 /// How an item with no explicit `emit`/`skip` attribute is treated, based on its visibility.
 ///
 /// Ordering is least-to-most permissive: `None` emits nothing by default, `PubCrateVis`
