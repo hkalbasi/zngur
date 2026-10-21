@@ -24,6 +24,6 @@ pub fn run() -> Result<i32, String> {
             println!("{}", help::version_text());
             Ok(0)
         }
-        Command::Generate => Err("generating `.zng` files is not implemented yet".to_string()),
+        Command::Generate => crate::generate::generate(&invocation.args),
     }
 }

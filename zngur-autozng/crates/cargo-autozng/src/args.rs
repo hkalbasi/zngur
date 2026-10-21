@@ -163,3 +163,20 @@ fn take_value(iter: &mut impl Iterator<Item = String>, flag: &str) -> Result<Str
     iter.next()
         .ok_or_else(|| format!("`{flag}` requires a value"))
 }
+
+/// The `--manifest-path` among the arguments forwarded to cargo, if any.
+///
+/// The frontend needs it for its own `cargo metadata` query, which has to look at the same
+/// project the wrapped build will.
+pub fn manifest_path(cargo_args: &[String]) -> Option<PathBuf> {
+    let mut args = cargo_args.iter();
+    while let Some(arg) = args.next() {
+        if let Some(value) = arg.strip_prefix("--manifest-path=") {
+            return Some(PathBuf::from(value));
+        }
+        if arg == "--manifest-path" {
+            return args.next().map(PathBuf::from);
+        }
+    }
+    None
+}
