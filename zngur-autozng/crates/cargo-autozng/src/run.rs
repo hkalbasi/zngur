@@ -1,18 +1,29 @@
-/// Entry point for the `cargo autozng` / `cargo-autozng` command.
-///
-/// Planned flow (mirrors `cargo-clippy`):
-/// 1. strip `env::args` so both `cargo autozng ...` and `cargo-autozng ...` normalize,
-/// 2. locate/build the [`autozng-driver`](../autozng_driver/index.html) executable,
-/// 3. re-invoke `cargo` with `RUSTC_WORKSPACE_WRAPPER=<autozng-driver>` so the driver runs
-///    as the compiler wrapper for workspace crates.
-///
-/// TODO(cargo-autozng): forward the autozng output selection to the driver. The driver
-/// already accepts `--output-zng <path>` and reads rustc's `--out-dir`, but a workspace
-/// wrapper is invoked by cargo with only the rustc arguments, so those flags need an
-/// out-of-band channel (e.g. an environment variable) to reach it.
+//! Entry point for the `cargo autozng` / `cargo-autozng` command.
+//!
+//! The flow mirrors `cargo-clippy`:
+//!
+//! 1. normalise `env::args` so `cargo autozng …` and `cargo-autozng …` behave identically;
+//! 2. locate the [`autozng-driver`](../autozng_driver/index.html) executable;
+//! 3. re-invoke cargo with the driver as `RUSTC_WORKSPACE_WRAPPER`, so a `.zng` interface file
+//!    is emitted per workspace member.
+
+use crate::args::{self, Command};
+use crate::help;
+
+/// Parse the command line, dispatch, and return the exit code.
 pub fn run() -> Result<i32, String> {
-    // strip env::args to normalize calling via `cargo-autozng` or `cargo autozng`
-    // then dispatch then ensure driver is in place
-    // then dispatch driver call
-    todo!()
+    let raw_args: Vec<String> = std::env::args().collect();
+    let invocation = args::parse(&raw_args)?;
+
+    match invocation.command {
+        Command::Help => {
+            println!("{}", help::help_text());
+            Ok(0)
+        }
+        Command::Version => {
+            println!("{}", help::version_text());
+            Ok(0)
+        }
+        Command::Generate => Err("generating `.zng` files is not implemented yet".to_string()),
+    }
 }
