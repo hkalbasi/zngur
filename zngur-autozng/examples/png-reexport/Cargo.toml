@@ -1,0 +1,10 @@
+[package]
+name = "png-reexport"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+png = "0.18.1"
+
+[lints.rust]
+unexpected_cfgs = {level = "warn", check-cfg = ["cfg(autozng)"]}
