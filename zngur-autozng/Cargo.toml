@@ -2,7 +2,8 @@
 resolver = "3"
 members = [
     "crates/cargo-autozng", "crates/autozng-driver",
-    "examples/autozng_regression_test_1"
+    "examples/autozng_regression_test_1",
+    "examples/png-reexport"
 ]
 
 [workspace.package]
