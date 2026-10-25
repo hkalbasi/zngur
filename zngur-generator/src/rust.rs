@@ -430,6 +430,7 @@ fn mangle_name(name: &str, mangling_base: &str) -> String {
         (2, ")", 'q'),
         (2, "@", 'z'),
         (2, "-", 'h'),
+        (2, "*", 'd'),
     ];
     while let Some((pos, which)) = bads.iter().filter_map(|x| Some((name.find(x.1)?, x))).min() {
         name.replace_range(pos..pos + which.1.len(), "_");

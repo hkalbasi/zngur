@@ -48,7 +48,7 @@ impl CppPath {
     }
 
     fn need_header(&self) -> bool {
-        if self.0.len() == 1 && self.0[0].ends_with("_t") {
+        if self.0.len() == 1 && (self.0[0].ends_with("_t") || self.0[0].contains('*')) {
             return false;
         }
         // Top level namespace and type...

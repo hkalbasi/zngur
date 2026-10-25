@@ -1,0 +1,9 @@
+//@ pass
+type (*mut u8, usize, usize) {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Copy);
+}
+
+extern "C++" {
+    safe fn make_tuple() -> (*mut u8, usize, usize);
+}
