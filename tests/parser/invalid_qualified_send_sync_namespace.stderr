@@ -1,0 +1,8 @@
+Error: qualified trait bounds must use `std::marker` or `core::marker`
+   ╭─[ invalid_qualified_send_sync_namespace.zng:3:39 ]
+   │
+ 3 │ type Box<dyn Fn() + std::invalid::Sync> {}
+   │                                       ┬  
+   │                                       ╰── qualified trait bounds must use `std::marker` or `core::marker`
+───╯
+cfg values used:

@@ -2435,18 +2435,33 @@ fn rust_type<'a>() -> Boxed<'a, 'a, ParserInput<'a>, ParsedRustType<'a>, ZngPars
         let pg = rust_path_and_generics(parser.clone());
         let adt = pg.clone().map(ParsedRustType::Adt);
 
+        let trait_bound = just(Token::Plus)
+            .ignore_then(path())
+            .try_map_with(|path, extra| {
+                let qualified = path.segments.len() > 1 || path.start != ParsedPathStart::Relative;
+                let valid_qualified_path = matches!(
+                    (path.start, path.segments.as_slice()),
+                    (
+                        ParsedPathStart::Relative | ParsedPathStart::Absolute,
+                        ["std" | "core", "marker", _]
+                    )
+                );
+                if qualified && !valid_qualified_path {
+                    return Err(Rich::custom(
+                        extra.span(),
+                        "qualified trait bounds must use `std::marker` or `core::marker`",
+                    ));
+                }
+                path.segments
+                    .last()
+                    .copied()
+                    .ok_or_else(|| Rich::custom(extra.span(), "expected a trait bound path"))
+            });
+
         let dyn_trait = just(Token::KwDyn)
             .or(just(Token::KwImpl))
             .then(rust_trait(parser.clone()))
-            .then(
-                just(Token::Plus)
-                    .ignore_then(select! {
-                        Token::Ident(c) => c,
-                    })
-                    .repeated()
-                    .collect::<Vec<_>>()
-                    .boxed(),
-            )
+            .then(trait_bound.repeated().collect::<Vec<_>>().boxed())
             .map(|((token, first), rest)| match token {
                 Token::KwDyn => ParsedRustType::Dyn(first, rest),
                 Token::KwImpl => ParsedRustType::Impl(first, rest),
