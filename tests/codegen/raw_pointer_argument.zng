@@ -1,0 +1,6 @@
+//@ pass
+
+extern "C++" {
+    safe fn read_mut_pointer(*mut u8) -> u8;
+    safe fn read_const_pointer(*const u8) -> u8;
+}

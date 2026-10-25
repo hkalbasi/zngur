@@ -732,7 +732,7 @@ namespace {{ self.cpp_namespace }} {
     static inline void assume_deinit({{ ty }}*&) noexcept {}
     static inline void check_init({{ ty }}*&) noexcept {}
     static inline size_t size_of() noexcept {
-      return sizeof({{ ty }});
+      return sizeof({{ ty }}*);
     }
   };
 
@@ -745,7 +745,7 @@ namespace {{ self.cpp_namespace }} {
     static inline void assume_deinit({{ ty }} const*&) noexcept {}
     static inline void check_init({{ ty }} const*&) noexcept {}
     static inline size_t size_of() noexcept {
-      return sizeof({{ ty }});
+      return sizeof({{ ty }} const*);
     }
   };
 
