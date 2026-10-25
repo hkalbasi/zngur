@@ -292,7 +292,7 @@ enum ParsedItem<'a> {
     },
     Fn {
         is_safe: Option<bool>,
-        method: Spanned<ParsedMethod<'a>>,
+        function: Spanned<ParsedFunction<'a>>,
     },
     ExternCpp(Vec<ParsedExternCppItem<'a>>),
     Alias(ParsedAlias<'a>),
@@ -324,7 +324,7 @@ enum ProcessedItem<'a> {
     },
     Fn {
         is_safe: Option<bool>,
-        method: Spanned<ParsedMethod<'a>>,
+        function: Spanned<ParsedFunction<'a>>,
     },
     ExternCpp(Vec<ParsedExternCppItem<'a>>),
     Import(ParsedImportPath),
@@ -413,6 +413,12 @@ struct ParsedMethod<'a> {
     generics: Vec<ParsedRustType<'a>>,
     inputs: Vec<ParsedRustType<'a>>,
     output: ParsedRustType<'a>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedFunction<'a> {
+    path: ParsedPath<'a>,
+    signature: ParsedMethod<'a>,
 }
 
 impl ParsedMethod<'_> {
@@ -1007,11 +1013,21 @@ impl ProcessedItem<'_> {
                 ctx.record_span(&trt, tr.span.into_range());
                 checked_merge(trt, &mut r.spec, tr.span, ctx, None);
             }
-            ProcessedItem::Fn { is_safe, method: f } => {
-                let method = f.inner.to_zngur(scope);
+            ProcessedItem::Fn {
+                is_safe,
+                function: f,
+            } => {
+                let function = f.inner;
+                let method = function.signature.to_zngur(scope);
                 let func = ZngurFn {
                     path: RustPathAndGenerics {
-                        path: scope.simple_relative_path(&method.name),
+                        path: if function.path.start == ParsedPathStart::Relative
+                            && function.path.segments.len() == 1
+                        {
+                            scope.simple_relative_path(function.path.segments[0])
+                        } else {
+                            scope.resolve_path(function.path)
+                        },
                         generics: method.generics,
                         named_generics: vec![],
                     },
@@ -2025,7 +2041,9 @@ fn process_parsed_item<'a>(
             type_vars,
         }),
         ParsedItem::Trait { tr, methods } => Ret::Processed(ProcessedItem::Trait { tr, methods }),
-        ParsedItem::Fn { is_safe, method } => Ret::Processed(ProcessedItem::Fn { is_safe, method }),
+        ParsedItem::Fn { is_safe, function } => {
+            Ret::Processed(ProcessedItem::Fn { is_safe, function })
+        }
         ParsedItem::ExternCpp(items) => Ret::Processed(ProcessedItem::ExternCpp(items)),
         ParsedItem::Import(path) => Ret::Processed(ProcessedItem::Import(path)),
         ParsedItem::ModuleImport { path, span } => {
@@ -2649,47 +2667,96 @@ fn method_signature<'a>()
         )
         .then(fn_args(rust_type()))
         .map(|(((opt_async, name), generics), args)| {
-            let is_self = |c: &ParsedRustType<'_>| {
-                if let ParsedRustType::Adt(c) = c {
-                    c.path.start == ParsedPathStart::Relative
-                        && &c.path.segments == &["self"]
-                        && c.generics.is_empty()
-                } else {
-                    false
-                }
-            };
-            let (inputs, receiver) = match args.0.get(0) {
-                Some(x) if is_self(&x) => (args.0[1..].to_vec(), ZngurMethodReceiver::Move),
-                Some(ParsedRustType::Ref(m, x)) if is_self(&x) => {
-                    (args.0[1..].to_vec(), ZngurMethodReceiver::Ref(*m))
-                }
-                _ => (args.0, ZngurMethodReceiver::Static),
-            };
-            let mut output = args.1;
-            if let Some(async_kw) = opt_async {
-                output = ParsedRustType::Impl(
-                    ParsedRustTrait::Normal(ParsedRustPathAndGenerics {
-                        path: ParsedPath {
-                            start: ParsedPathStart::Absolute,
-                            segments: vec!["std", "future", "Future"],
-                            span: async_kw.span,
-                        },
-                        generics: vec![],
-                        named_generics: vec![("Output", output)],
-                    }),
-                    vec![],
-                )
-            }
-            ParsedMethod {
-                name,
-                is_safe: None,
-                receiver,
-                generics,
-                inputs,
-                output,
+            parsed_method_from_signature(name, opt_async.map(|x| x.span), generics, args)
+        })
+        .boxed()
+}
+
+fn function_signature<'a>()
+-> impl Parser<'a, ParserInput<'a>, ParsedFunction<'a>, ZngParserExtra<'a>> + Clone {
+    let function_path = path().try_map_with(|path, extra| {
+        if path.segments.is_empty() {
+            Err(Rich::custom(extra.span(), "expected function name"))
+        } else {
+            Ok(path)
+        }
+    });
+    spanned(just(Token::KwAsync))
+        .or_not()
+        .then_ignore(just(Token::KwFn))
+        .then(function_path)
+        .then(
+            rust_type()
+                .separated_by(just(Token::Comma))
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::AngleOpen), just(Token::AngleClose))
+                .or(empty().to(vec![]))
+                .boxed(),
+        )
+        .then(fn_args(rust_type()))
+        .map(|(((opt_async, path), generics), args)| {
+            let name = *path
+                .segments
+                .last()
+                .expect("function paths must contain a name");
+            ParsedFunction {
+                path,
+                signature: parsed_method_from_signature(
+                    name,
+                    opt_async.map(|x| x.span),
+                    generics,
+                    args,
+                ),
             }
         })
         .boxed()
+}
+
+fn parsed_method_from_signature<'a>(
+    name: &'a str,
+    async_span: Option<Span>,
+    generics: Vec<ParsedRustType<'a>>,
+    args: (Vec<ParsedRustType<'a>>, ParsedRustType<'a>),
+) -> ParsedMethod<'a> {
+    let is_self = |ty: &ParsedRustType<'_>| {
+        if let ParsedRustType::Adt(ty) = ty {
+            ty.path.start == ParsedPathStart::Relative
+                && &ty.path.segments == &["self"]
+                && ty.generics.is_empty()
+        } else {
+            false
+        }
+    };
+    let (inputs, receiver) = match args.0.first() {
+        Some(ty) if is_self(ty) => (args.0[1..].to_vec(), ZngurMethodReceiver::Move),
+        Some(ParsedRustType::Ref(mutability, ty)) if is_self(ty) => {
+            (args.0[1..].to_vec(), ZngurMethodReceiver::Ref(*mutability))
+        }
+        _ => (args.0, ZngurMethodReceiver::Static),
+    };
+    let mut output = args.1;
+    if let Some(async_span) = async_span {
+        output = ParsedRustType::Impl(
+            ParsedRustTrait::Normal(ParsedRustPathAndGenerics {
+                path: ParsedPath {
+                    start: ParsedPathStart::Absolute,
+                    segments: vec!["std", "future", "Future"],
+                    span: async_span,
+                },
+                generics: vec![],
+                named_generics: vec![("Output", output)],
+            }),
+            vec![],
+        )
+    }
+    ParsedMethod {
+        name,
+        is_safe: None,
+        receiver,
+        generics,
+        inputs,
+        output,
+    }
 }
 
 fn inner_type_item<'a>()
@@ -2946,13 +3013,15 @@ fn trait_item<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedItem<'a>, ZngParse
 }
 
 fn fn_item<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedItem<'a>, ZngParserExtra<'a>> + Clone {
-    spanned(method())
-        .then_ignore(just(Token::Semicolon))
-        .map(|method| ParsedItem::Fn {
-            is_safe: method.inner.is_safe,
-            method,
-        })
-        .boxed()
+    choice((
+        just(Token::KwSafe).to(true),
+        just(Token::KwUnsafe).to(false),
+    ))
+    .or_not()
+    .then(spanned(function_signature()))
+    .then_ignore(just(Token::Semicolon))
+    .map(|(is_safe, function)| ParsedItem::Fn { is_safe, function })
+    .boxed()
 }
 
 fn additional_include_item<'a>()

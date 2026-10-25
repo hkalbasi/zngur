@@ -1,0 +1,9 @@
+//@ pass
+mod crate::nested {
+    fn relative() -> i32;
+    fn ::std::convert::identity<i32>(i32) -> i32;
+}
+
+extern "C++" {
+    safe fn verify() -> i32;
+}
