@@ -1,0 +1,7 @@
+//@ compile_fail
+//@ error_code: E0133
+//@ error_contains: call to unsafe function
+
+mod crate {
+    safe fn unsafe_implementation() -> i32;
+}

@@ -1,8 +1,8 @@
-Error: found 'welcome_traits' expected '#', 'variant', 'wellknown_traits', 'non_exhaustive', 'constructor', 'field', 'async', 'fn', or '}'
+Error: found 'welcome_traits' expected '#', 'variant', 'wellknown_traits', 'non_exhaustive', 'constructor', 'field', 'safe', 'unsafe', 'async', 'fn', or '}'
    ╭─[ typo_in_wellknown_trait.zng:4:5 ]
    │
  4 │     welcome_traits(Copy);
    │     ───────┬──────  
-   │            ╰──────── found 'welcome_traits' expected '#', 'variant', 'wellknown_traits', 'non_exhaustive', 'constructor', 'field', 'async', 'fn', or '}'
+   │            ╰──────── found 'welcome_traits' expected '#', 'variant', 'wellknown_traits', 'non_exhaustive', 'constructor', 'field', 'safe', 'unsafe', 'async', 'fn', or '}'
 ───╯
 cfg values used:

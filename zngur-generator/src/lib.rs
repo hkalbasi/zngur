@@ -308,8 +308,9 @@ impl ZngurGenerator {
                     ),
                     &rusty_inputs,
                     &method.output,
+                    method.is_safe,
                     use_path,
-                    deref.map(|x| x.1),
+                    deref,
                     default_ns,
                     &sanitized_crate_name,
                 );
@@ -388,6 +389,7 @@ pub mod cpp {{
                 &func.path.to_string(),
                 &func.inputs,
                 &func.output,
+                func.is_safe,
                 None,
                 None,
                 default_ns,

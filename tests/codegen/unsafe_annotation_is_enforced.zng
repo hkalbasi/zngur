@@ -1,0 +1,6 @@
+//@ compile_fail
+//@ error_contains: unnecessary `unsafe` block
+
+mod crate {
+    unsafe fn safe_implementation() -> i32;
+}

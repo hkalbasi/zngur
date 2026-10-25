@@ -356,7 +356,12 @@ impl WriteIDL for crate::ZngurSpec {
 impl WriteIDL for crate::ZngurFn {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::Function) {
-            write!(p, "fn ")?;
+            let safety = match self.is_safe {
+                Some(true) => "safe ",
+                Some(false) => "unsafe ",
+                None => "",
+            };
+            write!(p, "{safety}fn ")?;
             p.write_idl(&self.path)?;
             write!(p, "(")?;
             p.write_idl(&self.inputs)?;
@@ -462,6 +467,11 @@ impl WriteIDL for crate::ZngurTrait {
                 p.indent();
                 for method in &self.methods {
                     p.write_indent()?;
+                    match method.is_safe {
+                        Some(true) => write!(p, "safe ")?,
+                        Some(false) => write!(p, "unsafe ")?,
+                        None => {}
+                    }
                     p.write_idl(method)?;
                 }
                 p.dedent();
@@ -504,7 +514,11 @@ impl WriteIDL for crate::ZngurExternCppImpl {
             p.indent();
             for method in &self.methods {
                 p.write_indent()?;
-                let safety = if method.is_safe { "safe" } else { "unsafe" };
+                let safety = if method.is_safe == Some(true) {
+                    "safe"
+                } else {
+                    "unsafe"
+                };
                 write!(p, "{safety} ")?;
                 p.write_idl(method)?;
                 writeln!(p, ";")?;
@@ -663,7 +677,11 @@ impl WriteIDL for crate::ZngurField {
 impl WriteIDL for crate::ZngurMethodDetails {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         if p.enabled(&IDLItem::TypeMethod) {
-            let safety = if self.data.is_safe { "" } else { "unsafe " };
+            let safety = match self.data.is_safe {
+                Some(true) => "safe ",
+                Some(false) => "unsafe ",
+                None => "",
+            };
             write!(p, "{safety}")?;
             p.write_idl(&self.data)?;
             if let Some(use_path) = &self.use_path {
@@ -766,7 +784,7 @@ fn print_spec() {
                     receiver: crate::ZngurMethodReceiver::Ref(crate::Mutability::Not),
                     inputs: vec![],
                     output: crate::RustType::UNIT,
-                    is_safe: true,
+                    is_safe: Some(true),
                 },
                 use_path: None,
                 deref: None,
@@ -792,6 +810,7 @@ fn print_spec() {
                 })),
             )],
             output: crate::RustType::Primitive(crate::PrimitiveRustType::Bool),
+            is_safe: Some(true),
         }],
         extern_cpp_funcs: vec![],
         extern_cpp_impls: vec![],

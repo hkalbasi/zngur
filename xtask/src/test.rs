@@ -43,7 +43,11 @@ fn main() {
     } else {
         build.flag(format!("-ffile-prefix-map={prefix}="));
     }
-    build.file(dir.join("generated.cpp")).file(&cpp).compile("zngur_e2e");
+    let generated_cpp = dir.join("generated.cpp");
+    if generated_cpp.exists() {
+        build.file(generated_cpp);
+    }
+    build.file(&cpp).compile("zngur_e2e");
 
     println!("cargo:rerun-if-changed=generated.cpp");
     println!("cargo:rerun-if-changed={}", cpp.display());
@@ -60,7 +64,7 @@ fn repo_root() -> PathBuf {
         .to_owned()
 }
 
-/// The `//@ pass` or `//@ fail` directive of a test.
+/// The `//@` directive of a declarative test.
 fn directive(zng_file: &Path) -> Result<&'static str> {
     let text = std::fs::read_to_string(zng_file)
         .with_context(|| format!("reading {}", zng_file.display()))?;
@@ -69,14 +73,12 @@ fn directive(zng_file: &Path) -> Result<&'static str> {
             return match directive.trim() {
                 "pass" => Ok("pass"),
                 "fail" => Ok("fail"),
+                "compile_fail" => Ok("compile_fail"),
                 other => bail!("unknown directive `//@{other}` in {}", zng_file.display()),
             };
         }
     }
-    bail!(
-        "missing a `//@ pass` or `//@ fail` directive in {}",
-        zng_file.display()
-    )
+    bail!("missing a test directive in {}", zng_file.display())
 }
 
 /// Strip colors from the CLI output and drop the trailing panic report, which
@@ -236,7 +238,7 @@ fn check_pass(sh: &Shell, fix: bool, stem: &str, test_dir: &Path) -> Result<()> 
     // interleaving matches what a user sees on a terminal.
     let build = {
         let _dir = sh.push_dir(&runner);
-        cmd!(sh, "cargo build -q")
+        cmd!(sh, "cargo rustc -q --bin zngur-e2e-runner -- -D warnings")
             .env("ZNGUR_E2E_CPP", &cpp_file)
             .env("CARGO_TARGET_DIR", runner.join("target"))
             .ignore_status()
@@ -273,6 +275,129 @@ fn check_pass(sh: &Shell, fix: bool, stem: &str, test_dir: &Path) -> Result<()> 
         false,
         &format!("{stem}.zng"),
     )
+}
+
+/// Build a test expected to fail in rustc, matching its error code and a stable
+/// message substring instead of snapshotting compiler diagnostics.
+fn check_compile_fail(sh: &Shell, stem: &str, test_dir: &Path) -> Result<()> {
+    let rs_file = test_dir.join(format!("{stem}.rs"));
+    let cpp_file = test_dir.join(format!("{stem}.cpp"));
+    let zng_file = test_dir.join(format!("{stem}.zng"));
+    if !rs_file.is_file() {
+        bail!("`{stem}.zng` is marked `//@ compile_fail` but `{stem}.rs` is missing");
+    }
+    if !cpp_file.is_file() {
+        bail!("`{stem}.zng` is marked `//@ compile_fail` but `{stem}.cpp` is missing");
+    }
+
+    let zng = std::fs::read_to_string(&zng_file)
+        .with_context(|| format!("reading {}", zng_file.display()))?;
+    let mut expected_code = None;
+    let mut expected_message = None;
+    for annotation in zng
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("//@"))
+    {
+        let Some((key, value)) = annotation.trim().split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "error_code" => {
+                if expected_code.replace(value).is_some() {
+                    bail!("`{stem}.zng` has more than one `error_code` annotation");
+                }
+            }
+            "error_contains" => {
+                if expected_message.replace(value).is_some() {
+                    bail!("`{stem}.zng` has more than one `error_contains` annotation");
+                }
+            }
+            _ => {}
+        }
+    }
+    let expected_code = match expected_code {
+        Some(code) if !code.is_empty() => Some(code),
+        Some(_) => bail!("`{stem}.zng` has an empty `error_code` annotation"),
+        None => None,
+    };
+    let expected_message = expected_message
+        .filter(|value| !value.is_empty())
+        .with_context(|| {
+            format!("`{stem}.zng` needs an `//@ error_contains: MESSAGE` annotation")
+        })?;
+
+    let runner = repo_root().join("target/e2e-compile-fail");
+    std::fs::create_dir_all(runner.join("src"))?;
+    std::fs::write(runner.join("Cargo.toml"), RUNNER_CARGO_TOML)?;
+    std::fs::write(runner.join("build.rs"), RUNNER_BUILD_RS)?;
+    let generated_cpp = runner.join("generated.cpp");
+    if generated_cpp.exists() {
+        std::fs::remove_file(&generated_cpp)
+            .with_context(|| format!("removing {}", generated_cpp.display()))?;
+    }
+
+    {
+        let _dir = sh.push_dir(test_dir);
+        let generate = cmd!(
+            sh,
+            "cargo run -q -p zngur-cli -- generate {stem}.zng -i --crate-name crate --rs-file {runner}/src/generated.rs --h-file {runner}/generated.h --cpp-file {runner}/generated.cpp"
+        )
+        .ignore_status()
+        .output()?;
+        if !generate.status.success() {
+            bail!(
+                "`{stem}.zng` is marked `//@ compile_fail` but generating it failed:\n{}",
+                String::from_utf8_lossy(&generate.stderr)
+            );
+        }
+    }
+
+    std::fs::copy(&rs_file, runner.join("src/main.rs"))
+        .with_context(|| format!("copying {}", rs_file.display()))?;
+
+    let build = {
+        let _dir = sh.push_dir(&runner);
+        cmd!(sh, "cargo rustc -q --bin zngur-e2e-runner -- -D warnings")
+            .env("ZNGUR_E2E_CPP", &cpp_file)
+            .env("CARGO_TARGET_DIR", runner.join("target"))
+            .ignore_status()
+            .output()?
+    };
+    if build.status.success() {
+        bail!("`{stem}.zng` was expected to fail compilation but compiled successfully");
+    }
+
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    if let Some(expected_code) = expected_code
+        && !stderr.contains(&format!("error[{expected_code}]"))
+    {
+        bail!(
+            "`{stem}.zng` failed to compile, but compiler output did not contain error code `{expected_code}`:\n{stderr}"
+        );
+    }
+    if !stderr.contains(expected_message) {
+        bail!(
+            "`{stem}.zng` failed to compile, but compiler output did not contain `{expected_message}`:\n{stderr}"
+        );
+    }
+    for diagnostic in stderr.lines().filter(|line| line.starts_with("error")) {
+        if diagnostic.starts_with("error: could not compile")
+            || diagnostic.starts_with("error: build failed")
+        {
+            continue;
+        }
+        let expected_diagnostic = expected_code
+            .is_some_and(|code| diagnostic.starts_with(&format!("error[{code}]")))
+            || (diagnostic.starts_with("error:") && diagnostic.contains(expected_message));
+        if !expected_diagnostic {
+            bail!(
+                "`{stem}.zng` failed with an unexpected compiler diagnostic `{diagnostic}`:\n{stderr}"
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// A declarative test, free-form Nushell test, or build-and-run example.
@@ -485,7 +610,7 @@ fn run_example(sh: &Shell, dir: &Path, fix: bool) -> Result<()> {
             .ignore_status()
             .output();
             run_example_command(
-                cmd!(sh, "cargo build --profile {profile}"),
+                cmd!(sh, "cargo build --profile {profile}").env("RUSTFLAGS", "-D warnings"),
                 &format!("building example `{example}`"),
             )?;
 
@@ -507,7 +632,7 @@ fn run_example(sh: &Shell, dir: &Path, fix: bool) -> Result<()> {
             .output();
             let build_cmd = format!("cargo build --profile {profile}");
             run_example_command(
-                cmd!(sh, "cmd /c {build_cmd}"),
+                cmd!(sh, "cmd /c {build_cmd}").env("RUSTFLAGS", "-D warnings"),
                 &format!("building example `{example}`"),
             )?;
             let run_cmd =
@@ -531,7 +656,10 @@ fn run_example(sh: &Shell, dir: &Path, fix: bool) -> Result<()> {
                 cmd!(sh, "make clean"),
                 &format!("cleaning example `{example}`"),
             )?;
-            run_example_command(cmd!(sh, "make"), &format!("building example `{example}`"))?;
+            run_example_command(
+                cmd!(sh, "make").env("RUSTFLAGS", "-D warnings"),
+                &format!("building example `{example}`"),
+            )?;
             run_example_command(
                 cmd!(
                     sh,
@@ -556,7 +684,7 @@ fn run_example(sh: &Shell, dir: &Path, fix: bool) -> Result<()> {
                 &format!("cleaning example `{example}`"),
             )?;
             run_example_command(
-                cmd!(sh, "nmake /f NMakefile"),
+                cmd!(sh, "nmake /f NMakefile").env("RUSTFLAGS", "-D warnings"),
                 &format!("building example `{example}`"),
             )?;
             if sh.path_exists("a.bat") {
@@ -693,6 +821,7 @@ pub fn main_with(
                 let test_dir = zng_file.parent().expect("a file has a parent directory");
                 match directive(zng_file)? {
                     "fail" => check_fail(sh, fix, &stem, test_dir),
+                    "compile_fail" => check_compile_fail(sh, &stem, test_dir),
                     _ => check_pass(sh, fix, &stem, test_dir),
                 }
             }

@@ -1042,7 +1042,11 @@ pub extern "C" fn {mn}(i: *const u8) -> usize {{ unsafe {{
             w!(
                 self,
                 r#"{}fn {}("#,
-                if method.is_safe { "" } else { "unsafe " },
+                if method.is_safe == Some(true) {
+                    ""
+                } else {
+                    "unsafe "
+                },
                 method.name
             );
             match method.receiver {
@@ -1124,8 +1128,9 @@ pub extern "C" fn {mangled_name}(d: *mut u8) -> *mut cpp::{type_name} {{
         rust_name: &str,
         inputs: &[RustType],
         output: &RustType,
+        is_safe: Option<bool>,
         use_path: Option<Vec<String>>,
-        deref: Option<Mutability>,
+        deref: Option<(RustType, Mutability)>,
         namespace: &str,
         crate_name: &str,
     ) -> CppFnSig {
@@ -1140,7 +1145,14 @@ pub extern "C" fn {mangled_name}(d: *mut u8) -> *mut cpp::{type_name} {{
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
 #[allow(unused_parens)]
-pub extern "C" fn {mangled_name}("#
+{}pub extern "C" fn {mangled_name}("#,
+            if is_safe == Some(false) {
+                "#[deny(unused_unsafe)]\n"
+            } else if is_safe.is_none() {
+                "#[allow(unused_unsafe)]\n"
+            } else {
+                ""
+            }
         );
         for n in 0..inputs.len() {
             w!(self, "i{n}: *mut u8, ");
@@ -1153,7 +1165,7 @@ pub extern "C" fn {mangled_name}("#
         } else {
             (output.clone(), false)
         };
-        wln!(self, "o: *mut u8) {{ unsafe {{");
+        wln!(self, "o: *mut u8) {{");
         self.wrap_in_catch_unwind(|this| {
             if let Some(use_path) = use_path {
                 if use_path.first().is_some_and(|x| x == "crate") {
@@ -1163,26 +1175,47 @@ pub extern "C" fn {mangled_name}("#
                 }
             }
 
-            w!(
-                this,
-                "    ::std::ptr::write(o as *mut {modified_output}, {impl_trait} {rust_name}(",
-                impl_trait = if is_impl_trait { "Box::new( " } else { "" },
-            );
-            match deref {
-                Some(Mutability::Mut) => w!(this, "::std::ops::DerefMut::deref_mut"),
-                Some(Mutability::Not) => w!(this, "::std::ops::Deref::deref"),
+            for (n, ty) in inputs.iter().enumerate() {
+                wln!(
+                    this,
+                    "    let i{n} = unsafe {{ ::std::ptr::read(i{n} as *mut {ty}) }};"
+                );
+            }
+
+            w!(this, "    let result = ");
+            if is_impl_trait {
+                w!(this, "Box::new(");
+            }
+            if is_safe != Some(true) {
+                w!(this, "unsafe {{ ");
+            }
+            w!(this, "{rust_name}(");
+            match deref.as_ref() {
+                Some((_, Mutability::Mut)) => w!(this, "::std::ops::DerefMut::deref_mut("),
+                Some((_, Mutability::Not)) => w!(this, "::std::ops::Deref::deref("),
                 None => {}
             }
-            for (n, ty) in inputs.iter().enumerate() {
-                w!(this, "(::std::ptr::read(i{n} as *mut {ty})), ");
+            for n in 0..inputs.len() {
+                w!(this, "i{n}");
+                if n == 0 && deref.is_some() {
+                    w!(this, ")");
+                }
+                w!(this, ", ");
+            }
+            w!(this, ")");
+            if is_safe != Some(true) {
+                w!(this, " }}");
             }
             if is_impl_trait {
-                wln!(this, ")));");
-            } else {
-                wln!(this, "));");
+                w!(this, ")");
             }
+            wln!(this, ";");
+            wln!(
+                this,
+                "    unsafe {{ ::std::ptr::write(o as *mut {modified_output}, result); }}"
+            );
         });
-        wln!(self, " }} }}");
+        wln!(self, "}}");
         CppFnSig {
             rust_link_name: mangled_name,
             inputs: inputs
@@ -1265,7 +1298,10 @@ pub extern "C" fn {debug_print}(v: *mut u8) {{
             );
             f(self);
             wln!(self, "}});");
-            wln!(self, "if let Err(_) = e {{ __zngur_mark_panicked(); }}");
+            wln!(
+                self,
+                "if let Err(_) = e {{ unsafe {{ __zngur_mark_panicked() }}; }}"
+            );
         }
     }
 

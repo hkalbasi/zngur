@@ -290,7 +290,10 @@ enum ParsedItem<'a> {
         tr: Spanned<ParsedRustTrait<'a>>,
         methods: Vec<ParsedMethod<'a>>,
     },
-    Fn(Spanned<ParsedMethod<'a>>),
+    Fn {
+        is_safe: Option<bool>,
+        method: Spanned<ParsedMethod<'a>>,
+    },
     ExternCpp(Vec<ParsedExternCppItem<'a>>),
     Alias(ParsedAlias<'a>),
     Import(ParsedImportPath),
@@ -319,7 +322,10 @@ enum ProcessedItem<'a> {
         tr: Spanned<ParsedRustTrait<'a>>,
         methods: Vec<ParsedMethod<'a>>,
     },
-    Fn(Spanned<ParsedMethod<'a>>),
+    Fn {
+        is_safe: Option<bool>,
+        method: Spanned<ParsedMethod<'a>>,
+    },
     ExternCpp(Vec<ParsedExternCppItem<'a>>),
     Import(ParsedImportPath),
     ModuleImport {
@@ -402,6 +408,7 @@ struct ParsedTypeVar<'a>(&'a str);
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedMethod<'a> {
     name: &'a str,
+    is_safe: Option<bool>,
     receiver: ZngurMethodReceiver,
     generics: Vec<ParsedRustType<'a>>,
     inputs: Vec<ParsedRustType<'a>>,
@@ -420,7 +427,7 @@ impl ParsedMethod<'_> {
             receiver: self.receiver,
             inputs: self.inputs.into_iter().map(|x| x.to_zngur(scope)).collect(),
             output: self.output.to_zngur(scope),
-            is_safe: true,
+            is_safe: self.is_safe,
         }
     }
 }
@@ -1000,7 +1007,7 @@ impl ProcessedItem<'_> {
                 ctx.record_span(&trt, tr.span.into_range());
                 checked_merge(trt, &mut r.spec, tr.span, ctx, None);
             }
-            ProcessedItem::Fn(f) => {
+            ProcessedItem::Fn { is_safe, method: f } => {
                 let method = f.inner.to_zngur(scope);
                 let func = ZngurFn {
                     path: RustPathAndGenerics {
@@ -1010,6 +1017,7 @@ impl ProcessedItem<'_> {
                     },
                     inputs: method.inputs,
                     output: method.output,
+                    is_safe,
                 };
                 ctx.record_span(&func, f.span.into_range());
                 checked_merge(func, &mut r.spec, f.span, ctx, None);
@@ -1042,7 +1050,7 @@ impl ProcessedItem<'_> {
                                         .into_iter()
                                         .map(|(is_safe, x)| {
                                             let mut m = x.to_zngur(scope);
-                                            m.is_safe = is_safe;
+                                            m.is_safe = Some(is_safe);
                                             m
                                         })
                                         .collect(),
@@ -2017,7 +2025,7 @@ fn process_parsed_item<'a>(
             type_vars,
         }),
         ParsedItem::Trait { tr, methods } => Ret::Processed(ProcessedItem::Trait { tr, methods }),
-        ParsedItem::Fn(method) => Ret::Processed(ProcessedItem::Fn(method)),
+        ParsedItem::Fn { is_safe, method } => Ret::Processed(ProcessedItem::Fn { is_safe, method }),
         ParsedItem::ExternCpp(items) => Ret::Processed(ProcessedItem::ExternCpp(items)),
         ParsedItem::Import(path) => Ret::Processed(ProcessedItem::Import(path)),
         ParsedItem::ModuleImport { path, span } => {
@@ -2610,6 +2618,21 @@ fn rust_trait<'a>(
 }
 
 fn method<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedMethod<'a>, ZngParserExtra<'a>> + Clone {
+    choice((
+        just(Token::KwSafe).to(true),
+        just(Token::KwUnsafe).to(false),
+    ))
+    .or_not()
+    .then(method_signature())
+    .map(|(is_safe, mut method)| {
+        method.is_safe = is_safe;
+        method
+    })
+    .boxed()
+}
+
+fn method_signature<'a>()
+-> impl Parser<'a, ParserInput<'a>, ParsedMethod<'a>, ZngParserExtra<'a>> + Clone {
     spanned(just(Token::KwAsync))
         .or_not()
         .then_ignore(just(Token::KwFn))
@@ -2659,6 +2682,7 @@ fn method<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedMethod<'a>, ZngParserE
             }
             ParsedMethod {
                 name,
+                is_safe: None,
                 receiver,
                 generics,
                 inputs,
@@ -2924,7 +2948,10 @@ fn trait_item<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedItem<'a>, ZngParse
 fn fn_item<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedItem<'a>, ZngParserExtra<'a>> + Clone {
     spanned(method())
         .then_ignore(just(Token::Semicolon))
-        .map(ParsedItem::Fn)
+        .map(|method| ParsedItem::Fn {
+            is_safe: method.inner.is_safe,
+            method,
+        })
         .boxed()
 }
 
@@ -2953,7 +2980,7 @@ fn extern_cpp_item<'a>()
     ));
     let function = safety
         .clone()
-        .then(spanned(method()))
+        .then(spanned(method_signature()))
         .then_ignore(just(Token::Semicolon))
         .map(|(is_safe, method)| ParsedExternCppItem::Function { is_safe, method });
     let impl_block = just(Token::KwImpl)
@@ -2967,7 +2994,7 @@ fn extern_cpp_item<'a>()
         )
         .then(
             safety
-                .then(method())
+                .then(method_signature())
                 .then_ignore(just(Token::Semicolon))
                 .repeated()
                 .collect::<Vec<_>>()

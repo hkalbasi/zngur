@@ -29,7 +29,7 @@ pub struct ZngurMethod {
     pub receiver: ZngurMethodReceiver,
     pub inputs: Vec<RustType>,
     pub output: RustType,
-    pub is_safe: bool,
+    pub is_safe: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -37,6 +37,7 @@ pub struct ZngurFn {
     pub path: RustPathAndGenerics,
     pub inputs: Vec<RustType>,
     pub output: RustType,
+    pub is_safe: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -1,0 +1,13 @@
+//@ pass
+
+mod crate {
+    safe fn rust_safe() -> i32;
+    unsafe fn rust_unsafe() -> i32;
+    fn rust_legacy_unsafe() -> i32;
+}
+
+extern "C++" {
+    safe fn cpp_safe() -> i32;
+    unsafe fn cpp_unsafe() -> i32;
+    safe fn verify_rust_safety() -> i32;
+}
