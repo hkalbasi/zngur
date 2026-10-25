@@ -1,0 +1,25 @@
+//@ pass
+
+type crate::____foo_ {
+    #layout(size = 4, align = 4);
+    constructor { ____field_: i32 };
+    field ____field_ (offset = 0, type = i32);
+}
+
+type crate::_Ab12cc {
+    #layout(size = 4, align = 4);
+}
+
+type crate::_Enum12 {
+    #layout(size = 8, align = 4);
+    variant ____Variant_ {
+        field _payload12 (offset = auto, type = i32);
+    }
+    variant _V2cc {}
+}
+
+extern "C++" {
+    safe fn ____foo_fn_() -> i32;
+    safe fn _Fn12cc(i32) -> i32;
+    safe fn _verify_names_in_cpp() -> i32;
+}

@@ -2340,6 +2340,11 @@ fn lexer<'src>()
         .map(|(h, s)| Token::RawStr(h, s));
 
     let token = choice((
+        raw_string,
+        plain_string,
+        text::ident()
+            .filter(|ident: &&str| *ident != "_")
+            .map(Token::ident_or_kw),
         choice([
             just("->").to(Token::Arrow),
             just("=>").to(Token::ArrowArm),
@@ -2366,9 +2371,6 @@ fn lexer<'src>()
             just(".").to(Token::Dot),
             just("!").to(Token::Bang),
         ]),
-        raw_string,
-        plain_string,
-        text::ident().map(Token::ident_or_kw),
         text::int(10).map(|x: &str| Token::Number(x.parse().unwrap())),
     ));
 
