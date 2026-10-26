@@ -14,6 +14,7 @@ use crate::{
     template::{CppHeaderTemplate, CppSourceTemplate},
 };
 use askama::Template;
+pub use zngur_def::{cpp_handle_field_name, cpp_handle_keyword};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CppPath(pub Vec<String>);
@@ -751,21 +752,6 @@ impl CppFile {
 
         (h_file.text, is_cpp_needed.then_some(cpp_file.text))
     }
-}
-
-pub fn cpp_handle_keyword(name: &str) -> &str {
-    match name {
-        "new" => "new_",
-        "default" => "default_",
-        x => x,
-    }
-}
-
-pub fn cpp_handle_field_name(name: &str) -> String {
-    if name.parse::<u32>().is_ok() {
-        return format!("f{name}");
-    }
-    cpp_handle_keyword(name).to_owned()
 }
 
 trait CountCharMatchesExt {

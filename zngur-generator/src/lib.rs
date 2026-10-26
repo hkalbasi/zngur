@@ -8,7 +8,6 @@ use cpp::CppPath;
 use cpp::CppTraitDefinition;
 use cpp::CppTypeDefinition;
 use cpp::CppVariant;
-use cpp::cpp_handle_keyword;
 use indexmap::map::Entry;
 use itertools::Itertools;
 use rust::CoroSupport;

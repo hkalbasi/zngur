@@ -1,0 +1,14 @@
+Error: C++ field and method both use the name `value` on `crate::NamedField`.
+   ╭─[ field_method_name_collision.zng:8:5 ]
+   │
+ 6 │     field value (offset = 0, type = u8);
+   │     ──────────────────┬─────────────────  
+   │                       ╰─────────────────── field is exposed with this C++ name
+   │ 
+ 8 │     safe fn value(&self) -> u8;
+   │     ─────────────┬─────────────  
+   │                  ╰─────────────── method is exposed with this C++ name
+   │ 
+   │ Note: Rename the field or give the method a different C++ name with `as`.
+───╯
+cfg values used:

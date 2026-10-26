@@ -3,6 +3,21 @@ use std::fmt::Display;
 use indexmap::IndexMap;
 use itertools::Itertools;
 
+pub fn cpp_handle_keyword(name: &str) -> &str {
+    match name {
+        "new" => "new_",
+        "default" => "default_",
+        x => x,
+    }
+}
+
+pub fn cpp_handle_field_name(name: &str) -> String {
+    if name.parse::<u32>().is_ok() {
+        return format!("f{name}");
+    }
+    cpp_handle_keyword(name).to_owned()
+}
+
 #[cfg(feature = "printing")]
 pub mod printing;
 

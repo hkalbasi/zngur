@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::Display,
     ops::{Deref, DerefMut},
     path::Component,
@@ -15,6 +15,7 @@ use zngur_def::{
     PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurConstructor,
     ZngurExternCppFn, ZngurExternCppImpl, ZngurField, ZngurFn, ZngurMethod, ZngurMethodDetails,
     ZngurMethodReceiver, ZngurSpec, ZngurTrait, ZngurType, ZngurVariant, ZngurWellknownTrait,
+    cpp_handle_field_name, cpp_handle_keyword,
 };
 
 pub type Span = SimpleSpan<usize>;
@@ -2139,6 +2140,62 @@ impl ZngurSpecBuilder {
                     }
                 }
             }
+
+            let field_spans = ty
+                .fields
+                .iter()
+                .filter_map(|field| {
+                    let span = ctx
+                        .fetch_spans_global(&field.into_span_key_with_variant(ty.ty.clone(), None))
+                        .into_iter()
+                        .next()
+                        .cloned()
+                        .or_else(|| ctx.fetch_spans_global(ty).into_iter().next().cloned())?;
+                    Some((cpp_handle_field_name(&field.name), span))
+                })
+                .collect::<HashMap<_, _>>();
+            let mut reported_names = HashSet::new();
+            for method in &ty.methods {
+                let name =
+                    cpp_handle_keyword(method.cpp_name.as_deref().unwrap_or(&method.data.name));
+                let Some(field_span) = field_spans.get(name) else {
+                    continue;
+                };
+                if !reported_names.insert(name.to_owned()) {
+                    continue;
+                }
+                let method_span = ctx
+                    .fetch_spans_global(&method.data.into_span_key_with(ty.ty.clone()))
+                    .into_iter()
+                    .next()
+                    .cloned()
+                    .or_else(|| ctx.fetch_spans_global(ty).into_iter().next().cloned());
+                let Some(method_span) = method_span else {
+                    continue;
+                };
+                ctx.add_fatal_report(
+                    Report::build(ReportKind::Error, method_span.clone())
+                        .with_message(format!(
+                            "C++ field and method both use the name `{name}` on `{}`.",
+                            ty.ty
+                        ))
+                        .with_label(
+                            Label::new((*field_span).clone())
+                                .with_message("field is exposed with this C++ name")
+                                .with_color(Color::Yellow),
+                        )
+                        .with_label(
+                            Label::new(method_span)
+                                .with_message("method is exposed with this C++ name")
+                                .with_color(Color::Red),
+                        )
+                        .with_note(
+                            "Rename the field or give the method a different C++ name with `as`.",
+                        )
+                        .finish(),
+                );
+            }
+
             if !ty.wellknown_traits.iter().any(|wkt| {
                 matches!(
                     wkt,
