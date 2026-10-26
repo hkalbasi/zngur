@@ -1,0 +1,18 @@
+//@ pass
+
+type crate::class {
+    #layout(size = 4, align = 4);
+    constructor { int: i32 };
+    field int (offset = 0, type = i32);
+    fn xor(&self) -> i32;
+}
+
+type crate::switch {
+    #layout(size = 1, align = 1);
+    variant class {}
+}
+
+extern "C++" {
+    safe fn and() -> i32;
+    safe fn verify_keywords() -> i32;
+}

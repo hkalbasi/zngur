@@ -69,7 +69,6 @@ impl CppPath {
                         .map(|x| if x == "crate" { crate_name } else { x.as_str() }),
                 )
                 .map(cpp_handle_keyword)
-                .map(|x| x.to_owned())
                 .collect(),
         )
     }

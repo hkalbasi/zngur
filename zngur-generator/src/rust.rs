@@ -641,7 +641,7 @@ impl RustFile {
                 .into_iter()
                 .zip(method_mangled_name)
                 .map(|(x, rust_link_name)| CppTraitMethod {
-                    name: x.name,
+                    name: cpp_handle_keyword(&x.name),
                     rust_link_name,
                     inputs: x
                         .inputs

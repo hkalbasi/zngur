@@ -3,11 +3,113 @@ use std::fmt::Display;
 use indexmap::IndexMap;
 use itertools::Itertools;
 
-pub fn cpp_handle_keyword(name: &str) -> &str {
-    match name {
-        "new" => "new_",
-        "default" => "default_",
-        x => x,
+/// Keywords listed at <https://en.cppreference.com/w/cpp/keyword>.
+pub const CPP_KEYWORDS: &[&str] = &[
+    "alignas",
+    "alignof",
+    "and",
+    "and_eq",
+    "asm",
+    "atomic_cancel",
+    "atomic_commit",
+    "atomic_noexcept",
+    "auto",
+    "bitand",
+    "bitor",
+    "bool",
+    "break",
+    "case",
+    "catch",
+    "char",
+    "char8_t",
+    "char16_t",
+    "char32_t",
+    "class",
+    "compl",
+    "concept",
+    "const",
+    "consteval",
+    "constexpr",
+    "constinit",
+    "const_cast",
+    "continue",
+    "contract_assert",
+    "co_await",
+    "co_return",
+    "co_yield",
+    "decltype",
+    "default",
+    "delete",
+    "do",
+    "double",
+    "dynamic_cast",
+    "else",
+    "enum",
+    "explicit",
+    "export",
+    "extern",
+    "false",
+    "float",
+    "for",
+    "friend",
+    "goto",
+    "if",
+    "inline",
+    "int",
+    "long",
+    "mutable",
+    "namespace",
+    "new",
+    "noexcept",
+    "not",
+    "not_eq",
+    "nullptr",
+    "operator",
+    "or",
+    "or_eq",
+    "private",
+    "protected",
+    "public",
+    "reflexpr",
+    "register",
+    "reinterpret_cast",
+    "requires",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "static_assert",
+    "static_cast",
+    "struct",
+    "switch",
+    "synchronized",
+    "template",
+    "this",
+    "thread_local",
+    "throw",
+    "true",
+    "try",
+    "typedef",
+    "typeid",
+    "typename",
+    "union",
+    "unsigned",
+    "using",
+    "virtual",
+    "void",
+    "volatile",
+    "wchar_t",
+    "while",
+    "xor",
+    "xor_eq",
+];
+
+pub fn cpp_handle_keyword(name: &str) -> String {
+    if CPP_KEYWORDS.contains(&name) {
+        format!("{name}_")
+    } else {
+        name.to_owned()
     }
 }
 
@@ -15,7 +117,22 @@ pub fn cpp_handle_field_name(name: &str) -> String {
     if name.parse::<u32>().is_ok() {
         return format!("f{name}");
     }
-    cpp_handle_keyword(name).to_owned()
+    cpp_handle_keyword(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CPP_KEYWORDS, cpp_handle_field_name, cpp_handle_keyword};
+
+    #[test]
+    fn cpp_keywords_are_escaped() {
+        for keyword in CPP_KEYWORDS {
+            assert_eq!(cpp_handle_keyword(keyword), format!("{keyword}_"));
+            assert_eq!(cpp_handle_field_name(keyword), format!("{keyword}_"));
+        }
+
+        assert_eq!(cpp_handle_keyword("ordinary_name"), "ordinary_name");
+    }
 }
 
 #[cfg(feature = "printing")]

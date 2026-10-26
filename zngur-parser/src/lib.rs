@@ -2158,10 +2158,10 @@ impl ZngurSpecBuilder {
             for method in &ty.methods {
                 let name =
                     cpp_handle_keyword(method.cpp_name.as_deref().unwrap_or(&method.data.name));
-                let Some(field_span) = field_spans.get(name) else {
+                let Some(field_span) = field_spans.get(&name) else {
                     continue;
                 };
-                if !reported_names.insert(name.to_owned()) {
+                if !reported_names.insert(name.clone()) {
                     continue;
                 }
                 let method_span = ctx

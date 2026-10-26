@@ -230,7 +230,7 @@ impl ZngurGenerator {
                             .collect(),
                         output: ty
                             .into_cpp(default_ns, &sanitized_crate_name)
-                            .with_tail(variant.name.clone()),
+                            .with_tail(cpp_handle_keyword(&variant.name)),
                     })
                 } else {
                     None
@@ -247,7 +247,7 @@ impl ZngurGenerator {
                     });
                 }
                 variants.push(CppVariant {
-                    name: variant.name,
+                    name: cpp_handle_keyword(&variant.name),
                     constructor,
                     match_check,
                     fields,
@@ -314,7 +314,7 @@ impl ZngurGenerator {
                     &sanitized_crate_name,
                 );
                 cpp_methods.push(CppMethod {
-                    name: cpp_handle_keyword(cpp_name).to_owned(),
+                    name: cpp_handle_keyword(cpp_name),
                     kind: method.receiver,
                     sig,
                 });
@@ -407,7 +407,7 @@ pub mod cpp {{
                 func.is_safe,
             );
             cpp_file.exported_fn_defs.push(CppExportedFnDefinition {
-                name: func.name.clone(),
+                name: cpp_handle_keyword(&func.name),
                 sig: CppFnSig {
                     rust_link_name,
                     inputs: func
@@ -441,7 +441,7 @@ pub mod cpp {{
                             .map(|ty| ty.into_cpp(default_ns, &sanitized_crate_name))
                             .collect();
                         (
-                            cpp_handle_keyword(&method.name).to_owned(),
+                            cpp_handle_keyword(&method.name),
                             CppFnSig {
                                 rust_link_name: link_name.clone(),
                                 inputs,
