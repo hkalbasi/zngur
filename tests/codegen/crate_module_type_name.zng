@@ -1,0 +1,11 @@
+//@ pass
+
+type crate::Unit {
+    #layout(size = 1, align = 1);
+    variant Unspecified {}
+    variant Meter {}
+}
+
+extern "C++" {
+    safe fn use_units(()) -> crate::Unit;
+}
