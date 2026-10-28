@@ -1,0 +1,236 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Raw pointers - Zngur</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Zngur</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/hkalbasi/zngur" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="raw-pointers"><a class="header" href="#raw-pointers">Raw pointers</a></h1>
+<p>Raw pointers <code>*mut T</code> and <code>*const T</code> are Rust primitve types used in <code>unsafe</code> Rust code.</p>
+<h2 id="raw-pointers-to-primitive-types"><a class="header" href="#raw-pointers-to-primitive-types">Raw pointers to primitive types</a></h2>
+<p>A raw pointer to a primitive type available in both C++ and Rust becomes a normal pointer in C++.
+For example, <code>*const i32</code> becomes a <code>const int32_t*</code> and you can use it like a normal pointer.</p>
+<h2 id="raw-pointers-to-rust-specific-types"><a class="header" href="#raw-pointers-to-rust-specific-types">Raw pointers to Rust specific types</a></h2>
+<p>For a Rust type <code>T</code>, Zngur generates <code>rust::Raw&lt;rust::T&gt;</code> for <code>*const T</code> and <code>rust::RawMut&lt;rust::T&gt;</code> for <code>*mut T</code>.
+We need <code>rust::Raw</code> to handle fat raw pointers and differences between memory layout of <code>rust::T</code> in C++ and <code>T</code> in Rust.
+These types also provide some convenient methods for working with raw pointers.</p>
+<p>Members available in both <code>rust::Raw&lt;T&gt;</code> and <code>rust::RawMut&lt;T&gt;</code>:</p>
+<ul>
+<li>Constructor from <code>uint8_t*</code> or <code>rust::zngur_fat_pointer</code> based on whether <code>T</code> is sized.</li>
+<li>Constructor from <code>Ref&lt;T&gt;</code> or <code>RefMut&lt;T&gt;</code>. Semantically equivalent to <code>&amp;T as *const T</code> in Rust.</li>
+<li><code>offset(n)</code>: advances the pointer <code>n</code> elements of <code>T</code>. Semantically equivalent to <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>&lt;*const T&gt;::offset</code></a> in Rust.</li>
+<li><code>read_ref()</code>: Creates a <code>rust::Ref&lt;T&gt;</code>. Semantically equivalent to <code>&amp;*ptr</code> in Rust.</li>
+</ul>
+<p>Members available only in <code>rust::RawMut&lt;T&gt;</code>:</p>
+<ul>
+<li><code>read_mut()</code>: Creates a <code>rust::RefMut&lt;T&gt;</code>. Semantically equivalent to <code>&amp;mut *ptr</code> in Rust.</li>
+<li><code>read()</code>: Moves out of the raw pointer and creates a <code>T</code>. Semantically equivalent to <a href="https://doc.rust-lang.org/std/ptr/fn.read.html"><code>std::ptr::read</code></a> in Rust.</li>
+<li><code>write(T)</code>: Writes into the pointer. Semantically equivalent to <a href="https://doc.rust-lang.org/std/ptr/fn.write.html"><code>std::ptr::write</code></a> in Rust.</li>
+</ul>
+<h2 id="safety"><a class="header" href="#safety">Safety</a></h2>
+<p>Working with raw pointers is extremely unsafe. Here is a non-exhaustive list of unexpected things that may happen:</p>
+<ul>
+<li>You should derive raw pointers from Rust functions or references. Creating raw pointers out of thin air and casting
+integers to pointers is considered UB. See <a href="https://doc.rust-lang.org/std/ptr/index.html#strict-provenance">strict provenance</a> apis for constructing raw pointers.</li>
+<li>All <code>read</code> and <code>write</code> methods require the pointer to be aligned. Doing unaligned read and writes is UB.</li>
+<li>Using write does not invoke the destructor of the old value. Use <a href="https://doc.rust-lang.org/std/ptr/fn.drop_in_place.html"><code>std::ptr::drop_in_place</code></a> for destructing the
+old value if needed.</li>
+<li>Zngur exposes the metadata part of fat pointers, but it is considered unstable by Rust and exact data in the
+metadata part may change in future compiler versions.</li>
+<li>General UBs of using pointers in C++ (e.g. use after free) are also UB in Rust raw pointers.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../call_rust_from_cpp/panic_and_exceptions.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../template_types.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../call_rust_from_cpp/panic_and_exceptions.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../template_types.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

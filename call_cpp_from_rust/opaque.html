@@ -1,0 +1,379 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Opaque C++ types - Zngur</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Zngur</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/hkalbasi/zngur" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="opaque-c-types"><a class="header" href="#opaque-c-types">Opaque C++ types</a></h1>
+<p>There are currently 3 kinds of opaque types that <code>zngur</code> is able to represent</p>
+<ul>
+<li>Reference</li>
+<li>Heap allocated</li>
+<li>Stack allocated</li>
+</ul>
+<p>These types are made available to Rust with varying sets of restrictions and tradeoffs imposed
+based on your choice</p>
+<p>For each of these types (aka. marked <code>#cpp_ref</code>, <code>#cpp_heap_allocated</code>, or
+<code>#cpp_stack_owned</code>), <code>zngur</code> will generate a new type within <code>pub mod cpp {}</code>.</p>
+<p>This module is where all generated opaque types live</p>
+<h2 id="opaque-borrowed-c-type"><a class="header" href="#opaque-borrowed-c-type">Opaque Borrowed C++ Type</a></h2>
+<p>For example, you define a reference-only opaque type in <code>main.zng</code> as a <code>#cpp_ref</code>:</p>
+<pre><code>type crate::Way {
+    #cpp_ref "::osmium::Way";
+}
+</code></pre>
+<p>The generated Rust code will contain a <code>cpp::Way</code>, which you have to re-export into
+<code>crate::Way</code>.</p>
+<blockquote>
+<p><strong>NOTE</strong>: Since you told <code>zngur</code> that <code>Way</code> would be defined in
+<code>crate::Way</code>, you have to re-export the generated wrapper to the
+correct location (e.g. <code>pub use generated::cpp::Way;</code>). This is
+required for any generated opaque type.</p>
+</blockquote>
+<p>Note that <code>#cpp_ref</code> types don't need manual layout policy.
+This enables creating <code>rust::Ref&lt;rust::crate::Way&gt;</code> from a <code>const osmium::Way&amp;</code> in C++
+and you can pass it to the Rust side.
+Rust side can't do anything meaningful with it, except passing it again to the C++ side.
+In the C++ side <code>rust::Ref&lt;rust::crate::Way&gt;</code> has a <code>.cpp()</code> method
+which will return the <code>osmium::Way&amp;</code> back to you.
+If you want to use the methods on your C++ type in the Rust side,
+you can write <code>impl</code> and <code>impl trait</code> blocks for the newtype wrapper <code>crate::Way</code> inside C++.
+See the <a href="https://github.com/HKalbasi/zngur/blob/main/examples/osmium"><code>examples/osmium</code></a> for a full working example.</p>
+<h3 id="semantics-of-opaque-borrowed-types"><a class="header" href="#semantics-of-opaque-borrowed-types">Semantics of Opaque Borrowed Types</a></h3>
+<p><code>#cpp_ref</code> types are implemented as ZSTs that can only be obtained by reference.
+While the Rust representation is a ZST, when the reference flows into C++, the reference
+is pointing to the C++ object.</p>
+<p>This can sometimes cause behavior that is safe and sound,
+but surprising and counterintuitive for someone that expects them to represent the whole C++ object.
+If you assume that <code>RustType</code> is a newtype wrapper around a reference to a
+<code>CppType</code> class in C++, instead of a ZST, you will find it surprising that:</p>
+<ul>
+<li><code>std::mem::sizeof::&lt;RustType&gt;()</code> is 0, not the size of <code>CppType</code></li>
+<li><code>std::mem::alignof::&lt;RustType&gt;()</code> is 1, not the align of <code>CppType</code></li>
+<li><code>std::mem::swap::&lt;RustType&gt;(a, b)</code> only swaps the first zero bytes of those, i.e. does nothing.</li>
+</ul>
+<p>Those problem might be solved by the <code>extern type</code> language feature.</p>
+<h2 id="opaque-heap-allocated-c-type"><a class="header" href="#opaque-heap-allocated-c-type">Opaque Heap Allocated C++ Type</a></h2>
+<p>Keeping C++ objects in Rust using heap allocation is supported with <code>#cpp_heap_allocated</code> types.
+This is similar to <code>#cpp_ref</code> types. Look at the example <code>tutorial_cpp</code> for a usage example</p>
+<blockquote>
+<p><strong>NOTE</strong>: <code>#cpp_value</code> is a deprecated alias for <code>#cpp_heap_allocated</code> and will
+emit a warning when used; new code should use <code>#cpp_heap_allocated</code>.</p>
+</blockquote>
+<h3 id="semantics-of-opaque-heap-allocated-types"><a class="header" href="#semantics-of-opaque-heap-allocated-types">Semantics of Opaque Heap Allocated Types</a></h3>
+<p>Heap allocated types are generated as a #[repr(C)] struct to a heap allocated pointer and destructor.</p>
+<p>At construction with <code>::build</code> in C++, <code>zngur</code> allocates an object of the
+correct size and a alignment, and initializes it with the forwarded arguments.
+The only thing you can do with that object is call C++ methods or <code>Drop</code> it
+which calls the destructor and frees up the allocation</p>
+<blockquote>
+<p><strong>NOTE</strong>: In the future, we may replace C++ owned objects with a
+<code>unique_ptr</code>-like type that wraps a cpp_ref instead.</p>
+</blockquote>
+<h2 id="trivially-relocatable-c-types"><a class="header" href="#trivially-relocatable-c-types">Trivially Relocatable C++ Types</a></h2>
+<p>If we want to have C++ objects directly within the Rust stack, then things
+become a bit more complicated. C++'s move semantics are not compatible with
+Rust's move semantics.</p>
+<h3 id="c-move-semantics"><a class="header" href="#c-move-semantics">C++ Move Semantics</a></h3>
+<p>For better or for worse, C++ has very complex machinery to enable efficient
+movement of data in memory. In the general case, it uses <a href="https://en.cppreference.com/cpp/language/value_category"><code>rvalue</code> references</a> in order
+to convey that the object behind it is "going to expire soon-ish..." and their
+resources may be reused. When you construct an <code>rvalue</code> reference (specifically
+an <code>xvalue</code>) with <code>std::move</code>, you may pass this reference around to, for
+instance, a a move constructor which can use the fact that the provided
+reference will expire soon, so instead of copying the underlying data, the
+constructor can efficiently steal the underlying data.</p>
+<p>Note that the C++ compiler will not prevent you from using the moved-from object
+again, and it <strong>will</strong> run the moved-from object's destructor. This means that
+moved-from objects must remain in a valid state at all times.</p>
+<p>One consequence of this design is that C++'s move semantics are significantly
+broader than Rust's since C++ enables library authors to run custom logic when
+moving a value in memory.</p>
+<p>Furthermore, C++ allows you to <code>= delete</code> a move constructor which effectively
+prohibits a value from moving in memory once constructed</p>
+<h3 id="rusts-move-semantics"><a class="header" href="#rusts-move-semantics">Rust's Move Semantics</a></h3>
+<p>Meanwhile, Rust's move semantics are very simple. When you move a value, the
+Rust compiler will effectively copy the struct's bits and invalidate the moved
+from object. The Rust compiler will not run the <code>Drop</code> implementation on the
+moved-from value.</p>
+<h3 id="trivial-relocatability"><a class="header" href="#trivial-relocatability">Trivial Relocatability</a></h3>
+<p>Rust's move semantics can be summarized as "all objects in Rust are trivially
+relocatable", and for the purpose of <code>zngur</code> interop, a C++ object is considered
+trivially relocatable if performing a trivial relocatable move on the object
+has the same observable effect as move constructing the C++ object in the new
+memory location and running the moved-from objects destructor.</p>
+<p>A lot of C++ objects likely follow this guarantee. A few examples likely include:</p>
+<ul>
+<li>Plain old data types</li>
+<li>any <code>T</code> with a <code>T(T&amp;&amp;) = default;</code> implementation where all members are
+trivially relocatable.</li>
+<li><code>std::vector&lt;T&gt;</code> regardless of <code>T</code>'s trivial relocatability.
+<ul>
+<li>Most other collections</li>
+</ul>
+</li>
+<li><code>std::unique_ptr</code> and <code>std::shared_ptr</code></li>
+<li><code>std::future</code></li>
+</ul>
+<p>A few <strong>negative</strong> examples are:</p>
+<ul>
+<li>Self referential types</li>
+<li><code>libstdc++</code>'s <code>std::string</code> since small-string optimization makes it self-referential
+<ul>
+<li>NOTE: <code>stdc++</code>'s implementation of <code>std::string</code> does not do small-string
+optimization. That is to say, this is very tricky stuff...</li>
+</ul>
+</li>
+</ul>
+<h3 id="c-trivially-relocatable-in-rust"><a class="header" href="#c-trivially-relocatable-in-rust">C++ Trivially Relocatable in Rust</a></h3>
+<p><code>zngur</code> allows you to own a C++ object in the Rust stack so long as the C++
+object meets the trivial relocatability guarantees. Let's go over an example
+(you can follow along the full example in <code>examples/stack_owned/</code>)</p>
+<pre><code class="language-zng">// main.zng
+#cpp_additional_includes "
+#include &lt;cpp_type.h&gt;
+"
+
+type crate::MyCppWrapper {
+    #cpp_stack_owned "::CppType" (size = 8, align = 4);
+}
+</code></pre>
+<p>Similarly to how we can define opaque C++ objects with <code>#cpp_ref</code>, we instead
+use <code>#cpp_stack_owned</code> which instructs <code>zngur</code> that this type will be stored
+directly in the Rust stack. This requires telling <code>zngur</code> the layout information
+of the type.</p>
+<p>Just like with C++ opaque objects, we can define functions on an <code>extern C++</code> block</p>
+<pre><code class="language-zng">extern "C++" {
+    fn create_cpp_type(i32, i32) -&gt; crate::MyCppWrapper;
+    fn print_cpp_type(&amp;crate::MyCppWrapper);
+}
+</code></pre>
+<p>The C++ code has access to the <code>.cpp()</code> method used to access the inner type.</p>
+<pre><pre class="playground"><code class="language-rust">// main.rs
+mod generated;
+
+pub use generated::cpp::MyCppWrapper;
+
+fn main() {
+    println!("Hello from Rust");
+    let c = generated::create_cpp_type(10, 20);
+    println!("Rust got CppType");
+    generated::print_cpp_type(&amp;c);
+    println!("Rust dropping CppType");
+}</code></pre></pre>
+<p>The wrapper unconditionally implements the following traits defined in the
+<code>zngur-lib</code> crate.</p>
+<ul>
+<li>The marker <code>ZngCppObject</code></li>
+<li>The marker <code>ZngCppStackObject</code></li>
+<li>The <code>ZngCppDestruct</code> trait with an <code>unsafe fn destruct(&amp;mut self)</code>.</li>
+</ul>
+<p>In the future, we may add generic functionality around these traits such as safe
+in-place construction.</p>
+<h3 id="type-trait"><a class="header" href="#type-trait">Type trait</a></h3>
+<p>In order to verify the safety requirements of trivial relocatability of a C++ type,
+you have to manually specialize the <code>::rust::is_trivially_relocatable&lt;T&gt; : ::std::true_type {};</code>
+for your type.</p>
+<pre><code class="language-c++">namespace rust {
+template &lt;&gt; struct is_trivially_relocatable&lt;CppType&gt; : std::true_type {};
+} // namespace rust
+</code></pre>
+<p>Failure to do so will cause a static assertion failure in C++.</p>
+<p>This is already specialized for all <code>std::is_trivially_copyable</code> types and in a future where
+<code>std::is_trivially_relocatable</code> exists in the standard, we can specialize it for all types</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../call_cpp_from_rust/rust_impl.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../call_cpp_from_rust/trait_object.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../call_cpp_from_rust/rust_impl.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../call_cpp_from_rust/trait_object.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

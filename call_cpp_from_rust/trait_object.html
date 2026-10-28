@@ -1,0 +1,261 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Trait objects - Zngur</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Zngur</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/hkalbasi/zngur" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="creating-trait-objects-from-c-types"><a class="header" href="#creating-trait-objects-from-c-types">Creating trait objects from C++ types</a></h1>
+<p>In addition to opaque C++ objects, you can convert your C++ types into <code>&amp;dyn Trait</code> or <code>Box&lt;dyn Trait&gt;</code>.
+You could do that with opaque types, but you needed to:</p>
+<ul>
+<li>Create an opaque borrowed (or owned for <code>Box&lt;dyn Trait&gt;</code>) type for the C++ type.</li>
+<li>Implement the <code>Trait</code> for that type inside C++.</li>
+<li>Cast <code>&amp;Opaque</code> to <code>&amp;dyn Trait</code> when needed.</li>
+</ul>
+<p>This feature is a shortcut for that use case.
+You can define the trait in your <code>main.zng</code>:</p>
+<pre><code>trait iter::Iterator::&lt;Item = i32&gt; {
+    fn next(&amp;mut self) -&gt; ::std::option::Option&lt;i32&gt;;
+}
+</code></pre>
+<p>and inherit in your C++ type from it:</p>
+<pre><code>template &lt;typename T&gt;
+class VectorIterator : public rust::std::iter::Iterator&lt;T&gt; {
+  std::vector&lt;T&gt; vec;
+  size_t pos;
+
+public:
+  VectorIterator(std::vector&lt;T&gt; &amp;&amp;v) : vec(v), pos(0) {}
+
+  Option&lt;T&gt; next() override {
+    if (pos &gt;= vec.size()) {
+      return Option&lt;T&gt;::None();
+    }
+    T value = vec[pos++];
+    return Option&lt;T&gt;::Some(value);
+  }
+};
+</code></pre>
+<p>Then you can construct a <code>rust::Box&lt;rust::Dyn&gt;</code> or <code>rust::Ref&lt;rust::Dyn&gt;</code> from it.</p>
+<pre><code>auto vec_as_iter = rust::Box&lt;rust::Dyn&lt;rust::std::iter::Iterator&lt;int32_t&gt;&gt;&gt;::make_box&lt;
+      VectorIterator&lt;int32_t&gt;&gt;(std::move(vec));
+</code></pre>
+<p>If you need to call the trait methods on the result, you need to add a <code>dyn Trait</code> or <code>Box&lt;dyn Trait&gt;</code> in your zng file as well:</p>
+<pre><code>trait iter::Iterator::&lt;Item = i32&gt; {
+    fn next(&amp;mut self) -&gt; ::std::option::Option&lt;i32&gt;;
+}
+
+type dyn iter::Iterator::&lt;Item = i32&gt; {
+    wellknown_traits(?Sized);
+
+    fn next(&amp;mut self) -&gt; ::std::option::Option&lt;i32&gt;;
+    fn map&lt;i32, Box&lt;dyn Fn(i32) -&gt; i32&gt;&gt;(self, Box&lt;dyn Fn(i32) -&gt; i32&gt;)
+                -&gt; ::std::iter::Map&lt;::std::vec::IntoIter&lt;i32&gt;, Box&lt;dyn Fn(i32) -&gt; i32&gt;&gt;;
+}
+
+type Box&lt;dyn iter::Iterator&lt;Item = i32&gt;&gt; {
+    #layout(size = 16, align = 8);
+    fn deref(&amp;self) -&gt; &amp;dyn dyn iter::Iterator&lt;Item = i32&gt; use ::core::ops::Deref;
+    fn collect&lt;::std::vec::Vec&lt;i32&gt;&gt;(self) -&gt; ::std::vec::Vec&lt;i32&gt;;
+}
+</code></pre>
+<p>Now you can call collect and map on the resulting iterator defined in C++.
+Note that you don't need the <code>trait</code> declaration in the zng file if you just need working with trait objects exposed from Rust code.
+In that case, just declaring the <code>type dyn Trait</code> is enough, and it works like any other type.
+The <code>trait</code> declaration in the zng file is only needed if you want to use this feature.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../call_cpp_from_rust/opaque.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../import.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../call_cpp_from_rust/opaque.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../import.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

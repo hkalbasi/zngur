@@ -1,0 +1,282 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Safety - Zngur</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Zngur</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/hkalbasi/zngur" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="safety"><a class="header" href="#safety">Safety</a></h1>
+<p>Rust is a pretty strict language,
+and its rules are not necessarily equivalent to the C++ rules that C++ developers know.
+So, extra care is needed when using C++ and Rust together.
+By using Zngur, the Rust side remains normal, idiomatic and safe code that can't cause undefined behavior (UB),
+but nothing prevents the C++ side from breaking Rust expectations.
+This page lists the ways that it can break the rules and things to consider for preventing it.</p>
+<h2 id="c-functions-exposed-into-rust"><a class="header" href="#c-functions-exposed-into-rust">C++ functions exposed into Rust</a></h2>
+<p>Zngur supports multiple ways of calling C++ functions in Rust,
+including free functions in the <code>rust::exported_functions</code> namespace,
+writing <code>impl</code> blocks for Rust types,
+and converting a <code>std::function</code> into a <code>Box&lt;dyn FnX()&gt;</code>.
+In all of these, your C++ function should behave like a safe Rust function that avoids UB in all cases.
+This property is called <em>soundness</em>,
+and if there exist some inputs and conditions that cause UB, then your function is <em>unsound</em>.
+You can assume these things about your parameters:</p>
+<ul>
+<li><code>&amp;mut T</code> is a valid reference at least until the end of your function to a <code>T</code>,
+and you have exclusive access to it.</li>
+<li><code>&amp;T</code> is a valid reference at least until the end of your function to a <code>T</code>,
+but there may exist other threads that are reading it at the same time
+(and even writing on it, if it is an interior mutable type).</li>
+<li>For <code>*mut T</code> and <code>*const T</code>, there is no guarantee.
+They may be dangling, null, unaligned, and anything.
+A safe Rust function basically can't do anything useful with a raw pointer in its arguments.</li>
+</ul>
+<p>If your function is unsound and requires some specific preconditions to be called,
+consider making it <code>unsafe</code> to prevent Rust code from calling it carelessly.</p>
+<h2 id="lifetimes"><a class="header" href="#lifetimes">Lifetimes</a></h2>
+<p>In Rust, references have lifetime,
+and the borrow checker enforces that references are used correctly.
+In C++ there is no borrow checker, so you need to do the borrow checker job manually yourself.</p>
+<p>For example, this code is invalid:</p>
+<pre><code class="language-C++">auto v = Vec&lt;int32_t&gt;::new_();
+v.push(1);
+v.push(2);
+auto r = v.get(0);
+some_function_that_consume_vector(std::move(v));
+zngur_dbg(r);
+</code></pre>
+<p>the <code>Vec::get</code> function has signature <code>Vec::get(&amp;self) -&gt; Option&lt;&amp;i32&gt;</code>
+and if we un-elide the lifetimes it will become <code>Vec::get&lt;'a&gt;(&amp;'a self) -&gt; Option&lt;&amp;'a i32&gt;</code>
+so the reference to the input should live at least as long as the output.
+The output is used in the last line, but the reference to the input is killed by the move happened in the above line,
+so this code is invalid.</p>
+<p>You need to do this manual work in C++ codes as well,
+and in most cases doing it with Zngur generated code is easier,
+since you don't need to know about the internal implementations
+and you can just decide by seeing function signatures.</p>
+<p>You should also handle lifetimes in functions exposed to Rust,
+and use correct and explicit lifetime annotations in the <code>main.zng</code>
+if the elided version does not reflect your requirements.</p>
+<h2 id="mutability-xor-aliasing"><a class="header" href="#mutability-xor-aliasing">Mutability XOR aliasing</a></h2>
+<p>This is another job of the borrow checker that you need to do manually.
+You should either have a single mutable reference, or some immutable references.
+This restriction does not exist in C++,
+and in C++ it is perfectly valid to create multiple mutable references,
+so extra care is needed by C++ developers to adhere to this rule.</p>
+<p>The motivation behind this rule is,
+every single safe Rust function should work in a way such that calling it multiple times in multiple threads
+doesn't introduce data races, which necessarily implies that mutable references should be unique.
+In C++, not all functions are expected to be called in multiple threads, so there is no such requirement.
+That said, you should adhere to this rule even in completely single threaded programs,
+as it can also affect memory safety.
+For example:</p>
+<pre><code class="language-C++">auto v = Vec&lt;int32_t&gt;::new_();
+v.push(1);
+v.push(2);
+auto r = v.get(0);
+v.push(3);
+zngur_dbg(r);
+</code></pre>
+<p>this program (and its C++ equivalent) may have UB as the vector may reallocate on the <code>v.push(3)</code>,
+invalidating the <code>r</code> reference.
+But by adhering to the Rust borrow checker rules we can avoid this kind of UB.
+This code is violating the mutability XOR aliasing rule
+since the immutable reference <code>r</code> and the mutable reference created by <code>v.push(3)</code> are alive at the same time.</p>
+<h2 id="calling-unsafe-rust-code"><a class="header" href="#calling-unsafe-rust-code">Calling unsafe Rust code</a></h2>
+<p>Zngur allows you to call <code>unsafe</code> Rust functions just like normal functions.
+You need to read the documentation of such functions carefully to satisfying their preconditions.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="conditional_compilation.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="how_it_compares.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="conditional_compilation.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="how_it_compares.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

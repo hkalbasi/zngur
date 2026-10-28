@@ -1,0 +1,291 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Name mapping - Zngur</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Zngur</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/hkalbasi/zngur" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="name-mapping"><a class="header" href="#name-mapping">Name mapping</a></h1>
+<p>Not all Rust types have the equivalent syntax in C++,
+so Zngur uses a name mapping that is explained in this table:</p>
+<div class="table-wrapper"><table><thead><tr><th>Zngur type</th><th>C++ Type</th></tr></thead><tbody>
+<tr><td><code>uX</code></td><td><code>uintX_t</code></td></tr>
+<tr><td><code>iX</code></td><td><code>intX_t</code></td></tr>
+<tr><td><code>bool</code></td><td><code>rust::Bool</code></td></tr>
+<tr><td><code>char</code></td><td><code>rust::Char</code></td></tr>
+<tr><td><code>some_crate::some_mod::SomeAdt&lt;A, B, C&gt;</code></td><td><code>rust::some_crate::some_mod::SomeAdt&lt;A, B, C&gt;</code></td></tr>
+<tr><td><code>&amp;T</code></td><td><code>rust::Ref&lt;T&gt;</code></td></tr>
+<tr><td><code>&amp;mut T</code></td><td><code>rust::RefMut&lt;T&gt;</code></td></tr>
+<tr><td><code>*const T</code></td><td><code>rust::Raw&lt;T&gt;</code> or <code>const T*</code> (depends on <code>T</code>)</td></tr>
+<tr><td><code>*mut T</code></td><td><code>rust::RawMut&lt;T&gt;</code> or <code>T*</code> (depends on <code>T</code>)</td></tr>
+<tr><td><code>[T]</code></td><td><code>rust::Slice&lt;T&gt;</code></td></tr>
+<tr><td><code>dyn T</code></td><td><code>rust::Dyn&lt;T&gt;</code></td></tr>
+<tr><td><code>dyn T + Marker1 + Marker2</code></td><td><code>rust::Dyn&lt;T, rust::Marker1, rust::Marker2&gt;</code></td></tr>
+<tr><td><code>()</code></td><td><code>rust::Unit</code> or <code>rust::Tuple&lt;&gt;</code></td></tr>
+<tr><td><code>(A, B, C)</code></td><td><code>rust::Tuple&lt;A, B, C&gt;</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="why-rustreft-instead-of-c-references"><a class="header" href="#why-rustreft-instead-of-c-references">Why <code>rust::Ref&lt;T&gt;</code> instead of C++ references?</a></h2>
+<p>Because they are very different:</p>
+<ul>
+<li>Using two Rust <code>&amp;mut</code> or one <code>&amp;</code> and one <code>&amp;mut</code> in Rust is UB.</li>
+<li>It is extremely easy to move out of a C++ reference,
+or use a method that takes ownership on it.
+By using <code>Ref&lt;T&gt;</code> such code will be rejected at compile time.</li>
+<li>Not all Rust references are one word,
+for example <code>&amp;str</code>, <code>&amp;[T]</code> or <code>&amp;dyn Trait</code> are two words, incompatible with C++ references.</li>
+<li>C++ representation of a Rust type may have additional fields,
+such as a drop flag (see <a href="../how_it_works.html">how it works</a>),
+so a Rust reference coming from Rust code is not necessarily a valid C++ reference for the C++ representation.</li>
+<li>You can't have a reference to reference, pointer to reference,
+vector of references and similar things with C++ references,
+but with <code>Ref&lt;T&gt;</code> those would be possible.</li>
+</ul>
+<p>But Zngur tries to keep convenience of C++ references when using Rust <code>Ref&lt;T&gt;</code>.
+For example, <code>Ref&lt;T&gt;</code> is constructible from <code>T</code> so you can pass <code>T</code> to a function that expect a <code>Ref&lt;T&gt;</code>,
+similar to a <code>T&amp;</code>.
+Or Zngur tries to emulate Rust's auto dereference rules on methods
+so you can call a method directly on the <code>Ref&lt;T&gt;</code> without needing to use <code>-&gt;</code> or <code>*</code> operator.</p>
+<h2 id="why-rustbool-instead-of-c-bool"><a class="header" href="#why-rustbool-instead-of-c-bool">Why <code>rust::Bool</code> instead of C++ <code>bool</code>?</a></h2>
+<p>C++ <code>bool</code> size is implementation defined and not necessarily 1,
+and <code>true</code> and <code>false</code> are not necessarily encoded using <code>1</code> and <code>0</code>.
+That is, the only valid way to create a <code>bool</code> is using it's standard constructors.
+These are all valid:</p>
+<pre><code class="language-C++">bool b = 1;
+bool b = true;
+bool b = 5;
+</code></pre>
+<p>But this is UB:</p>
+<pre><code class="language-C++">bool b = true;
+char* bc = (char*)&amp;b;
+*bc = 0;
+</code></pre>
+<p>So Zngur can't use <code>bool</code> the way it uses <code>uint32_t</code> and friends.
+But it adds some special codes to <code>bool</code>
+so that you can use it in an <code>if</code> statement or cast it to and from C++ <code>bool</code>.</p>
+<h2 id="renaming-generated-c-wrapper-functions"><a class="header" href="#renaming-generated-c-wrapper-functions">Renaming generated C++ wrapper functions</a></h2>
+<p>Traits may be implemented multiple times with different parameters for the same Rust type, providing identically named methods with different type signatures.
+C++ does not support overloading functions based on their return type in this manner, but we still want to be able to expose all implementations of a trait without requiring <em>additional</em> traits just to rename methods.
+Zngur allows renaming an exposed method on the C++ side from the spec itself to support this.
+Since C++ does support overloading methods based on their argument types such renaming is only needed when method implementations differ in their return types only.</p>
+<pre><code>type ::std::string::String {
+    #layout(size = 24, align = 8);
+
+    fn as_ref(&amp;self) -&gt; &amp;str use ::std::convert::AsRef;
+    // renaming needed for the second overload since only the return type differs
+    fn as_ref(&amp;self) -&gt; &amp;[u8] use ::std::convert::AsRef as as_ref_u8;
+}
+
+mod ::std::net {
+    type IpAddr {
+        #layout(size = 17, align = 1);
+
+        variant V4 {
+            field 0 (offset = auto, type = Ipv4Addr);
+        }
+
+        variant V6 {
+            field 0 (offset = auto, type = Ipv6Addr);
+        }
+
+        fn partial_cmp(&amp;self, &amp;Ipv4Addr) -&gt; ::std::option::Option&lt;::std::cmp::Ordering&gt; use ::std::cmp::PartialOrd;
+        // renaming not needed since the argument types differ
+        fn partial_cmp(&amp;self, &amp;Ipv6Addr) -&gt; ::std::option::Option&lt;::std::cmp::Ordering&gt; use ::std::cmp::PartialOrd;
+    }
+}
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../call_rust_from_cpp/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../call_rust_from_cpp/wellknown_traits.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../call_rust_from_cpp/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../call_rust_from_cpp/wellknown_traits.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>
