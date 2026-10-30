@@ -155,75 +155,213 @@ impl EntityPath {
         }
         joined
     }
+
+    /// Return Rust source text that references a Rust `target` path.
+    /// `EntityPath::Cpp` targets and the empty root `EntityPath::Rust` cannot be referenced here.
+    fn rust_reference(&self) -> Option<String> {
+        match self {
+            EntityPath::Rust(v) if v.is_empty() => None,
+            EntityPath::Rust(v) => {
+                if v.first().is_some_and(|s| s == "crate") {
+                    Some(v.join("::"))
+                } else {
+                    Some(format!("::{}", v.join("::")))
+                }
+            }
+            EntityPath::Cpp(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedAlias<'a> {
+    name: &'a str,
+    target: EntityPath,
+}
+
+impl ResolvedAlias<'_> {
+    fn matches(&self, path: &ParsedPath<'_>) -> bool {
+        path.start == ParsedPathStart::Relative
+            && path.segments.first().is_some_and(|part| *part == self.name)
+    }
+
+    fn expand(&self, path: &ParsedPath<'_>) -> Option<EntityPath> {
+        self.matches(path)
+            .then(|| self.target.join(path.segments.iter().skip(1).copied()))
+    }
 }
 
 #[derive(Debug, Clone)]
 struct Scope<'a> {
-    aliases: Vec<ParsedAlias<'a>>,
+    aliases: Vec<ResolvedAlias<'a>>,
     base: EntityPath,
     type_vars: HashSet<ParsedTypeVar<'a>>,
 }
 
 impl<'a> Scope<'a> {
     /// Create a new root scope containing the specified aliases.
-    fn new_root(aliases: Vec<ParsedAlias<'a>>) -> Scope<'a> {
+    fn new_root(aliases: Vec<ParsedAlias<'a>>, ctx: &mut ParseContext) -> Scope<'a> {
+        let base = EntityPath::Rust(Default::default());
+        let resolved_aliases = Self::resolve_aliases(&aliases, &base, &[], ctx);
         Scope {
-            aliases,
-            base: EntityPath::Rust(Default::default()),
+            aliases: resolved_aliases,
+            base,
             type_vars: Default::default(),
         }
     }
 
+    fn resolve_aliases(
+        new_aliases: &[ParsedAlias<'a>],
+        base: &EntityPath,
+        parent_aliases: &[ResolvedAlias<'a>],
+        ctx: &mut ParseContext,
+    ) -> Vec<ResolvedAlias<'a>> {
+        fn resolve_one<'a>(
+            idx: usize,
+            unique_aliases: &[&ParsedAlias<'a>],
+            base: &EntityPath,
+            parent_aliases: &[ResolvedAlias<'a>],
+            visited: &mut Vec<usize>,
+            reported_cycles: &mut HashSet<usize>,
+            ctx: &mut ParseContext,
+        ) -> EntityPath {
+            let alias = unique_aliases[idx];
+            if alias.path.start == ParsedPathStart::Relative {
+                if let Some(&first) = alias.path.segments.first() {
+                    if let Some(target_idx) = unique_aliases.iter().position(|a| a.name == first) {
+                        if let Some(cycle_pos) = visited.iter().position(|&v| v == target_idx) {
+                            let cycle_head = *visited[cycle_pos..].iter().min().unwrap();
+                            if reported_cycles.insert(cycle_head) {
+                                let head_alias = unique_aliases[cycle_head];
+                                ctx.add_error_str(
+                                    &format!("cyclic `use` alias definition `{}`", head_alias.name),
+                                    head_alias.span,
+                                );
+                            }
+                        } else {
+                            visited.push(target_idx);
+                            let target = resolve_one(
+                                target_idx,
+                                unique_aliases,
+                                base,
+                                parent_aliases,
+                                visited,
+                                reported_cycles,
+                                ctx,
+                            );
+                            visited.pop();
+                            return target.join(alias.path.segments.iter().skip(1).copied());
+                        }
+                    } else if let Some(expanded) = parent_aliases
+                        .iter()
+                        .find_map(|existing| existing.expand(&alias.path))
+                    {
+                        return expanded;
+                    }
+                }
+            }
+            alias.path.to_zngur(base)
+        }
+
+        let mut unique_aliases: Vec<&ParsedAlias<'a>> = Vec::with_capacity(new_aliases.len());
+        let mut seen_names: std::collections::HashMap<&'a str, Span> =
+            std::collections::HashMap::with_capacity(new_aliases.len());
+        for alias in new_aliases {
+            if let Some(&first_span) = seen_names.get(alias.name) {
+                let dup_span = ctx.report_span_for_range(alias.span.into_range());
+                let prev_span = ctx.report_span_for_range(first_span.into_range());
+                let msg = format!("duplicate `use` alias `{}` in the same module", alias.name);
+                let report = Report::build(ReportKind::Error, dup_span.clone())
+                    .with_message(&msg)
+                    .with_label(
+                        Label::new(dup_span)
+                            .with_message(&msg)
+                            .with_color(Color::Red),
+                    )
+                    .with_label(
+                        Label::new(prev_span)
+                            .with_message("previously defined here")
+                            .with_color(Color::Blue),
+                    )
+                    .finish();
+                ctx.add_fatal_report(report);
+            } else {
+                seen_names.insert(alias.name, alias.span);
+                unique_aliases.push(alias);
+            }
+        }
+
+        let mut local: Vec<ResolvedAlias<'a>> =
+            Vec::with_capacity(unique_aliases.len() + parent_aliases.len());
+        let mut visited = Vec::new();
+        let mut reported_cycles = HashSet::new();
+        for idx in 0..unique_aliases.len() {
+            visited.clear();
+            visited.push(idx);
+            let target = resolve_one(
+                idx,
+                &unique_aliases,
+                base,
+                parent_aliases,
+                &mut visited,
+                &mut reported_cycles,
+                ctx,
+            );
+            local.push(ResolvedAlias {
+                name: unique_aliases[idx].name,
+                target,
+            });
+        }
+        local.extend_from_slice(parent_aliases);
+        local
+    }
+
+    fn has_alias(&self, path: &ParsedPath<'_>) -> bool {
+        self.aliases.iter().any(|alias| alias.matches(path))
+    }
+
     /// Resolve a path according to the current scope.
-    fn resolve_path(&self, path: ParsedPath<'a>) -> EntityPath {
+    fn resolve_path(&self, path: &ParsedPath<'_>) -> EntityPath {
         // Check to see if the path refers to an alias:
-        if let Some(expanded_alias) = self
-            .aliases
-            .iter()
-            .find_map(|alias| alias.expand(&path, &self.base))
-        {
+        if let Some(expanded_alias) = self.aliases.iter().find_map(|alias| alias.expand(path)) {
             expanded_alias
         } else {
             path.to_zngur(&self.base)
         }
     }
 
-    /// Return rust source text that references `target` from within `self`.
-    fn reference_to(&self, target: &EntityPath) -> Option<String> {
-        match (target, &self.base) {
-            // Rust paths don't use self.base
-            (EntityPath::Rust(v), _) => Some(
-                v.iter()
-                    .map(|s| {
-                        if s == "crate" {
-                            s.clone()
-                        } else {
-                            format!("::{s}")
-                        }
-                    })
-                    .collect(),
-            ),
-            // Cannot reference a Cpp path from a Rust path because we don't
-            // know where the generated rust code will end up.
-            (EntityPath::Cpp(_), EntityPath::Rust(_)) => None,
-            // Cpp paths can reference other Cpp paths, but super may be needed.
-            (EntityPath::Cpp(target_segs), EntityPath::Cpp(self_segs)) => {
-                let common = self_segs
-                    .iter()
-                    .zip(target_segs)
-                    .take_while(|(a, b)| a == b)
-                    .count();
-                let ups = std::iter::repeat("super").take(self_segs.len() - common);
-                let downs = target_segs[common..].iter().map(String::as_str);
-                Some(ups.chain(downs).join("::"))
-            }
+    fn report_invalid_cpp_path(
+        &self,
+        ctx: &mut ParseContext,
+        path: &ParsedPath<'_>,
+        message: &str,
+        rust_kind_plural: &str,
+    ) {
+        let is_bare_relative = path.start == ParsedPathStart::Relative && !self.has_alias(path);
+        let report_span = ctx.report_span_for_range(path.span.into_range());
+        let mut report = Report::build(ReportKind::Error, report_span.clone())
+            .with_message(message)
+            .with_label(
+                Label::new(report_span)
+                    .with_message(message)
+                    .with_color(Color::Red),
+            );
+        if is_bare_relative && matches!(self.base, EntityPath::Cpp(_)) {
+            report = report.with_help(format!(
+                "inside a `c++::` module, prefix Rust {rust_kind_plural} with `::` or `crate::`"
+            ));
         }
+        ctx.add_fatal_report(report.finish());
     }
 
-    fn sub_scope(&self, new_aliases: &[ParsedAlias<'a>], nested_path: ParsedPath<'a>) -> Scope<'_> {
+    fn sub_scope(
+        &self,
+        new_aliases: &[ParsedAlias<'a>],
+        nested_path: &ParsedPath<'_>,
+        ctx: &mut ParseContext,
+    ) -> Scope<'_> {
         let base = nested_path.to_zngur(&self.base);
-        let mut mod_aliases = new_aliases.to_vec();
-        mod_aliases.extend_from_slice(&self.aliases);
+        let mod_aliases = Self::resolve_aliases(new_aliases, &base, &self.aliases, ctx);
 
         Scope {
             aliases: mod_aliases,
@@ -264,21 +402,14 @@ impl<'a> Scope<'a> {
 }
 
 impl ParsedPath<'_> {
-    fn to_zngur(self, base: &EntityPath) -> EntityPath {
+    fn to_zngur(&self, base: &EntityPath) -> EntityPath {
+        let segments = self.segments.iter().copied();
         match self.start {
-            ParsedPathStart::Absolute => EntityPath::rust(self.segments),
-            ParsedPathStart::Relative => base.join(self.segments),
-            ParsedPathStart::Crate => EntityPath::crate_relative(self.segments),
-            ParsedPathStart::Cpp => EntityPath::cpp(self.segments),
+            ParsedPathStart::Absolute => EntityPath::rust(segments),
+            ParsedPathStart::Relative => base.join(segments),
+            ParsedPathStart::Crate => EntityPath::crate_relative(segments),
+            ParsedPathStart::Cpp => EntityPath::cpp(segments),
         }
-    }
-
-    fn matches_alias(&self, alias: &ParsedAlias<'_>) -> bool {
-        self.start == ParsedPathStart::Relative
-            && self
-                .segments
-                .first()
-                .is_some_and(|part| *part == alias.name)
     }
 }
 
@@ -287,17 +418,6 @@ pub struct ParsedAlias<'a> {
     name: &'a str,
     path: ParsedPath<'a>,
     span: Span,
-}
-
-impl ParsedAlias<'_> {
-    fn expand(&self, path: &ParsedPath<'_>, base: &EntityPath) -> Option<EntityPath> {
-        if path.matches_alias(self) {
-            let extra = path.segments.iter().skip(1).copied();
-            Some(self.path.clone().to_zngur(base).join(extra))
-        } else {
-            None
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -456,17 +576,21 @@ struct ParsedFunction<'a> {
 }
 
 impl ParsedMethod<'_> {
-    fn to_zngur(self, scope: &Scope<'_>) -> ZngurMethod {
+    fn to_zngur(self, scope: &Scope<'_>, ctx: &mut ParseContext) -> ZngurMethod {
         ZngurMethod {
             name: self.name.to_owned(),
             generics: self
                 .generics
                 .into_iter()
-                .map(|x| x.to_zngur(scope))
+                .map(|x| x.to_zngur(scope, ctx))
                 .collect(),
             receiver: self.receiver,
-            inputs: self.inputs.into_iter().map(|x| x.to_zngur(scope)).collect(),
-            output: self.output.to_zngur(scope),
+            inputs: self
+                .inputs
+                .into_iter()
+                .map(|x| x.to_zngur(scope, ctx))
+                .collect(),
+            output: self.output.to_zngur(scope, ctx),
             is_safe: self.is_safe,
         }
     }
@@ -683,7 +807,7 @@ impl ProcessedItem<'_> {
                         path.span,
                     );
                 } else {
-                    let sub_scope = scope.sub_scope(&aliases, path);
+                    let sub_scope = scope.sub_scope(&aliases, &path, ctx);
                     for item in items {
                         item.add_to_zngur_spec(r, &sub_scope, ctx);
                     }
@@ -769,7 +893,7 @@ impl ProcessedItem<'_> {
                         Err(errors)
                     }
                 };
-                let rust_ty = ty.inner.to_zngur(scope);
+                let rust_ty = ty.inner.to_zngur(scope, ctx);
                 while let Some(item) = to_process.pop() {
                     let item_span = item.span;
                     let item = item.inner;
@@ -840,11 +964,11 @@ impl ProcessedItem<'_> {
                                     ParsedConstructorArgs::Tuple(t) => t
                                         .into_iter()
                                         .enumerate()
-                                        .map(|(i, t)| (i.to_string(), t.to_zngur(scope)))
+                                        .map(|(i, t)| (i.to_string(), t.to_zngur(scope, ctx)))
                                         .collect(),
                                     ParsedConstructorArgs::Named(t) => t
                                         .into_iter()
-                                        .map(|(i, t)| (i.to_owned(), t.to_zngur(scope)))
+                                        .map(|(i, t)| (i.to_owned(), t.to_zngur(scope, ctx)))
                                         .collect(),
                                 },
                             };
@@ -877,7 +1001,7 @@ impl ProcessedItem<'_> {
                                         }
                                         let field = ZngurField {
                                             name: name.to_owned(),
-                                            ty: ty.to_zngur(scope),
+                                            ty: ty.to_zngur(scope, ctx),
                                             offset,
                                         };
                                         ctx.record_span(
@@ -901,7 +1025,7 @@ impl ProcessedItem<'_> {
                         ParsedTypeItem::Field { name, ty, offset } => {
                             let field = ZngurField {
                                 name: name.to_owned(),
-                                ty: ty.to_zngur(scope),
+                                ty: ty.to_zngur(scope, ctx),
                                 offset,
                             };
                             ctx.record_span(
@@ -917,7 +1041,7 @@ impl ProcessedItem<'_> {
                             cpp_name,
                         } => {
                             let deref = deref.and_then(|x| {
-                                let deref_type = x.to_zngur(scope);
+                                let deref_type = x.to_zngur(scope, ctx);
                                 let receiver_mutability = match data.receiver {
                                     ZngurMethodReceiver::Ref(mutability) => mutability,
                                     ZngurMethodReceiver::Static | ZngurMethodReceiver::Move => {
@@ -931,19 +1055,22 @@ impl ProcessedItem<'_> {
                                 Some((deref_type, receiver_mutability))
                             });
                             let use_path = use_path.and_then(|x| {
-                                let span = x.span;
-                                let target = scope.resolve_path(x);
-                                let reference = scope.reference_to(&target);
-                                if reference.is_none() {
-                                    ctx.add_error_str(
-                                        "cannot reference a c++::-only path from a Rust-only scope",
-                                        span,
-                                    );
+                                let target = scope.resolve_path(&x);
+                                match target.rust_reference() {
+                                    Some(reference) => Some(reference),
+                                    None => {
+                                        scope.report_invalid_cpp_path(
+                                            ctx,
+                                            &x,
+                                            "`c++::` paths cannot be used in a method's `use` path",
+                                            "paths",
+                                        );
+                                        None
+                                    }
                                 }
-                                reference
                             });
                             let method = ZngurMethodDetails {
-                                data: data.to_zngur(scope),
+                                data: data.to_zngur(scope, ctx),
                                 use_path,
                                 deref,
                                 cpp_name: cpp_name.map(|s| s.to_owned()),
@@ -1105,8 +1232,11 @@ impl ProcessedItem<'_> {
             }
             ProcessedItem::Trait { tr, methods } => {
                 let trt = ZngurTrait {
-                    tr: tr.inner.to_zngur(scope),
-                    methods: methods.into_iter().map(|m| m.to_zngur(scope)).collect(),
+                    tr: tr.inner.to_zngur(scope, ctx),
+                    methods: methods
+                        .into_iter()
+                        .map(|m| m.to_zngur(scope, ctx))
+                        .collect(),
                 };
                 ctx.record_span(&trt, tr.span.into_range());
                 checked_merge(trt, &mut r.spec, tr.span, ctx, None);
@@ -1116,13 +1246,13 @@ impl ProcessedItem<'_> {
                 function: f,
             } => {
                 let function = f.inner;
-                let method = function.signature.to_zngur(scope);
+                let method = function.signature.to_zngur(scope, ctx);
                 let target = if function.path.start == ParsedPathStart::Relative
                     && function.path.segments.len() == 1
                 {
                     scope.base.child(function.path.segments[0])
                 } else {
-                    scope.resolve_path(function.path)
+                    scope.resolve_path(&function.path)
                 };
                 let path = match target {
                     EntityPath::Rust(v) => v,
@@ -1152,7 +1282,7 @@ impl ProcessedItem<'_> {
                     match item {
                         ParsedExternCppItem::Function { is_safe, method } => {
                             let span = method.span;
-                            let method = method.inner.to_zngur(scope);
+                            let method = method.inner.to_zngur(scope, ctx);
                             checked_merge(
                                 ZngurExternCppFn {
                                     name: method.name.to_string(),
@@ -1169,12 +1299,12 @@ impl ProcessedItem<'_> {
                         ParsedExternCppItem::Impl { tr, ty, methods } => {
                             checked_merge(
                                 ZngurExternCppImpl {
-                                    tr: tr.map(|x| x.to_zngur(scope)),
-                                    ty: ty.inner.to_zngur(scope),
+                                    tr: tr.map(|x| x.to_zngur(scope, ctx)),
+                                    ty: ty.inner.to_zngur(scope, ctx),
                                     methods: methods
                                         .into_iter()
                                         .map(|(is_safe, x)| {
-                                            let mut m = x.to_zngur(scope);
+                                            let mut m = x.to_zngur(scope, ctx);
                                             m.is_safe = Some(is_safe);
                                             m
                                         })
@@ -1230,29 +1360,42 @@ enum ParsedRustType<'a> {
 }
 
 impl ParsedRustType<'_> {
-    fn to_zngur(self, scope: &Scope<'_>) -> RustType {
+    fn to_zngur(self, scope: &Scope<'_>, ctx: &mut ParseContext) -> RustType {
         match self {
             ParsedRustType::Primitive(s) => RustType::Primitive(s),
-            ParsedRustType::Ref(m, s) => RustType::Ref(m, Box::new(s.to_zngur(scope))),
-            ParsedRustType::Raw(m, s) => RustType::Raw(m, Box::new(s.to_zngur(scope))),
-            ParsedRustType::Boxed(s) => RustType::Boxed(Box::new(s.to_zngur(scope))),
-            ParsedRustType::Slice(s) => RustType::Slice(Box::new(s.to_zngur(scope))),
+            ParsedRustType::Ref(m, s) => RustType::Ref(m, Box::new(s.to_zngur(scope, ctx))),
+            ParsedRustType::Raw(m, s) => RustType::Raw(m, Box::new(s.to_zngur(scope, ctx))),
+            ParsedRustType::Boxed(s) => RustType::Boxed(Box::new(s.to_zngur(scope, ctx))),
+            ParsedRustType::Slice(s) => RustType::Slice(Box::new(s.to_zngur(scope, ctx))),
             ParsedRustType::Dyn(tr, bounds) => RustType::Dyn(
-                tr.to_zngur(scope),
+                tr.to_zngur(scope, ctx),
                 bounds.into_iter().map(|x| x.to_owned()).collect(),
             ),
             ParsedRustType::Impl(tr, bounds) => RustType::Impl(
-                tr.to_zngur(scope),
+                tr.to_zngur(scope, ctx),
                 bounds.into_iter().map(|x| x.to_owned()).collect(),
             ),
             ParsedRustType::Tuple(v) => {
-                RustType::Tuple(v.into_iter().map(|s| s.to_zngur(scope)).collect())
+                RustType::Tuple(v.into_iter().map(|s| s.to_zngur(scope, ctx)).collect())
             }
             ParsedRustType::Adt(s) => match scope.as_type_var(&s) {
                 Some(v) => RustType::TypeVar(v),
-                None => match scope.resolve_path(s.path.clone()) {
-                    EntityPath::Cpp(segs) => RustType::Cpp(segs),
-                    EntityPath::Rust(_) => RustType::Adt(s.to_zngur(scope)),
+                None => match scope.resolve_path(&s.path) {
+                    EntityPath::Cpp(segs) => {
+                        if !s.generics.is_empty() || !s.named_generics.is_empty() {
+                            scope.report_invalid_cpp_path(
+                                ctx,
+                                &s.path,
+                                "`c++::` paths do not support generic arguments",
+                                "paths",
+                            );
+                        }
+                        let _ = s.resolve_generics(scope, ctx);
+                        RustType::Cpp(segs)
+                    }
+                    EntityPath::Rust(path) => {
+                        RustType::Adt(s.into_rust_path_and_generics(path, scope, ctx))
+                    }
                 },
             },
         }
@@ -1270,17 +1413,31 @@ enum ParsedRustTrait<'a> {
 }
 
 impl ParsedRustTrait<'_> {
-    fn to_zngur(self, scope: &Scope<'_>) -> RustTrait {
+    fn to_zngur(self, scope: &Scope<'_>, ctx: &mut ParseContext) -> RustTrait {
         match self {
-            ParsedRustTrait::Normal(s) => RustTrait::Normal(s.to_zngur(scope)),
+            ParsedRustTrait::Normal(s) => {
+                let path = match scope.resolve_path(&s.path) {
+                    EntityPath::Rust(v) => v,
+                    EntityPath::Cpp(segs) => {
+                        scope.report_invalid_cpp_path(
+                            ctx,
+                            &s.path,
+                            "`c++::` paths cannot be used as a trait",
+                            "traits",
+                        );
+                        segs
+                    }
+                };
+                RustTrait::Normal(s.into_rust_path_and_generics(path, scope, ctx))
+            }
             ParsedRustTrait::Fn {
                 name,
                 inputs,
                 output,
             } => RustTrait::Fn {
                 name: name.to_owned(),
-                inputs: inputs.into_iter().map(|s| s.to_zngur(scope)).collect(),
-                output: Box::new(output.to_zngur(scope)),
+                inputs: inputs.into_iter().map(|s| s.to_zngur(scope, ctx)).collect(),
+                output: Box::new(output.to_zngur(scope, ctx)),
             },
         }
     }
@@ -1294,24 +1451,35 @@ struct ParsedRustPathAndGenerics<'a> {
 }
 
 impl ParsedRustPathAndGenerics<'_> {
-    fn to_zngur(self, scope: &Scope<'_>) -> RustPathAndGenerics {
+    fn resolve_generics(
+        self,
+        scope: &Scope<'_>,
+        ctx: &mut ParseContext,
+    ) -> (Vec<RustType>, Vec<(String, RustType)>) {
+        let generics = self
+            .generics
+            .into_iter()
+            .map(|x| x.to_zngur(scope, ctx))
+            .collect();
+        let named_generics = self
+            .named_generics
+            .into_iter()
+            .map(|(name, x)| (name.to_owned(), x.to_zngur(scope, ctx)))
+            .collect();
+        (generics, named_generics)
+    }
+
+    fn into_rust_path_and_generics(
+        self,
+        path: Vec<String>,
+        scope: &Scope<'_>,
+        ctx: &mut ParseContext,
+    ) -> RustPathAndGenerics {
+        let (generics, named_generics) = self.resolve_generics(scope, ctx);
         RustPathAndGenerics {
-            path: match scope.resolve_path(self.path) {
-                EntityPath::Rust(v) => v,
-                EntityPath::Cpp(_) => todo!(
-                    "a c++::-only path was used somewhere that can't support it (e.g. as a trait); needs a proper user-facing error instead of this panic"
-                ),
-            },
-            generics: self
-                .generics
-                .into_iter()
-                .map(|x| x.to_zngur(scope))
-                .collect(),
-            named_generics: self
-                .named_generics
-                .into_iter()
-                .map(|(name, x)| (name.to_owned(), x.to_zngur(scope)))
-                .collect(),
+            path,
+            generics,
+            named_generics,
         }
     }
 }
@@ -2203,7 +2371,7 @@ impl<'a> ProcessedZngFile<'a> {
     }
 
     fn into_zngur_spec(self, zngur: &mut ZngurSpecBuilder, ctx: &mut ParseContext) {
-        let root_scope = Scope::new_root(self.aliases);
+        let root_scope = Scope::new_root(self.aliases, ctx);
 
         for item in self.items {
             item.add_to_zngur_spec(zngur, &root_scope, ctx);
@@ -2911,18 +3079,7 @@ fn rust_trait<'a>(
         output: Box::new(x.1.1),
     });
 
-    let rust_trait = fn_trait.or(rust_path_and_generics(rust_type)
-        .try_map_with(|pg, extra| {
-            if pg.path.start == ParsedPathStart::Cpp {
-                Err(Rich::custom(
-                    extra.span(),
-                    "`c++::` paths cannot be used as a trait",
-                ))
-            } else {
-                Ok(pg)
-            }
-        })
-        .map(ParsedRustTrait::Normal));
+    let rust_trait = fn_trait.or(rust_path_and_generics(rust_type).map(ParsedRustTrait::Normal));
     rust_trait.boxed()
 }
 
@@ -3212,7 +3369,7 @@ fn inner_type_item<'a>()
             method()
                 .then(
                     just(Token::KwUse)
-                        .ignore_then(non_cpp_path("a method's `use` path"))
+                        .ignore_then(path())
                         .map(Some)
                         .or(empty().to(None))
                         .boxed(),
@@ -3494,21 +3651,6 @@ fn path<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedPath<'a>, ZngParserExtra
             span: extra.span(),
         })
         .boxed()
-}
-
-fn non_cpp_path<'a>(
-    context: &'static str,
-) -> impl Parser<'a, ParserInput<'a>, ParsedPath<'a>, ZngParserExtra<'a>> + Clone {
-    path().try_map_with(move |p, extra| {
-        if p.start == ParsedPathStart::Cpp {
-            Err(Rich::custom(
-                extra.span(),
-                format!("`c++::` paths cannot be used in {context}"),
-            ))
-        } else {
-            Ok(p)
-        }
-    })
 }
 
 impl<'a> conditional::BodyItem for crate::ParsedTypeItem<'a> {

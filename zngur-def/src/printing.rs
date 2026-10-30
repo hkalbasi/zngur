@@ -829,3 +829,71 @@ safe fn crate::do_w_example(&crate::Example) -> bool;
         idl
     );
 }
+
+#[test]
+fn test_write_cpp_type_idl() {
+    let spec = crate::ZngurSpec {
+        types: vec![
+            crate::ZngurType {
+                ty: crate::RustType::Cpp(vec!["Way".into()]),
+                layout: Some(crate::LayoutPolicy::ZERO_SIZED_TYPE),
+                wellknown_traits: vec![],
+                exhaustive: true,
+                constructor: None,
+                variants: vec![],
+                fields: vec![],
+                methods: vec![],
+                cpp_heap_allocated: None,
+                cpp_ref: Some(crate::CppRef("::osmium::Way".into())),
+                cpp_stack_owned: None,
+            },
+            crate::ZngurType {
+                ty: crate::RustType::Cpp(vec!["a".into(), "b".into(), "Name".into()]),
+                layout: Some(crate::LayoutPolicy::StackAllocated { size: 16, align: 8 }),
+                wellknown_traits: vec![],
+                exhaustive: true,
+                constructor: None,
+                variants: vec![],
+                fields: vec![],
+                methods: vec![crate::ZngurMethodDetails {
+                    data: crate::ZngurMethod {
+                        name: "deref".into(),
+                        generics: vec![],
+                        receiver: crate::ZngurMethodReceiver::Ref(crate::Mutability::Not),
+                        inputs: vec![],
+                        output: crate::RustType::UNIT,
+                        is_safe: None,
+                    },
+                    use_path: Some("::core::ops::Deref".into()),
+                    deref: None,
+                    cpp_name: None,
+                }],
+                cpp_heap_allocated: Some(crate::CppHeapAllocated("::x::Name".into())),
+                cpp_ref: None,
+                cpp_stack_owned: None,
+            },
+        ],
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    crate::printing::IDLPrinter::new(&mut buf)
+        .write_idl(&spec)
+        .expect("write error");
+    let idl = String::from_utf8(buf).expect("utf8 error");
+
+    assert_eq!(
+        "type c++::Way {
+    #cpp_ref \"::osmium::Way\";
+}
+
+type c++::a::b::Name {
+    #layout(size = 16, align = 8);
+    #cpp_heap_allocated \"::x::Name\";
+
+    fn deref(&self) use ::core::ops::Deref;
+}
+",
+        idl
+    );
+}

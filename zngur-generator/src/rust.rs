@@ -723,7 +723,7 @@ pub extern "C" fn {mangled_name}(
             destructor,
         }};
         let r: Box<dyn {trait_name}> = Box::new(this);
-        std::ptr::write(o as *mut _, r)
+        ::std::ptr::write(o as *mut _, r)
     }}
 }}"#
         );
@@ -782,7 +782,7 @@ pub extern "C" fn {mangled_name}(
     unsafe {{ 
         let this = data as *mut Wrapper;
         let r: &dyn {trait_name} = &*this;
-        std::ptr::write(o as *mut _, r)
+        ::std::ptr::write(o as *mut _, r)
     }}
 }}"#
         );
@@ -838,7 +838,7 @@ pub extern "C" fn {mangled_name}(
             self,
             r#"
     }});
-    unsafe {{ std::ptr::write(o as *mut _, r) }}
+    unsafe {{ ::std::ptr::write(o as *mut _, r) }}
 }}"#
         );
         mangled_name
@@ -997,7 +997,7 @@ pub extern "C" fn {mn}(i: *const u8) -> usize {{ unsafe {{
         {owner}::{variant} {{ {name}: f, .. }} => {{
             (f as *const _ as usize) - (base as *const _ as usize)
         }}
-        _ => std::hint::unreachable_unchecked(),
+        _ => ::std::hint::unreachable_unchecked(),
     }}
 }} }}
             "#

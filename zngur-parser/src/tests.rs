@@ -6,7 +6,7 @@ use zngur_def::{
 };
 
 use crate::{
-    DefaultImportResolver, EntityPath, ImportResolver, ParsedZngFile, ReportSink, Scope,
+    DefaultImportResolver, EntityPath, ImportResolver, ParsedZngFile, ReportSink,
     cfg::{InMemoryRustCfgProvider, NullCfg, RustCfgProvider},
 };
 
@@ -927,15 +927,23 @@ fn cpp_path_rejected_in_method_use_path() {
 type crate::Foo {
     #layout(size = 1, align = 1);
     fn bar(self) -> usize use c++::a::Bar;
+    fn baz(self) -> usize use c++::a::Bar as cpp_baz;
 }
     "#,
         expect![[r#"
             Error: `c++::` paths cannot be used in a method's `use` path
-               ╭─[ test.zng:4:42 ]
+               ╭─[ test.zng:4:31 ]
                │
              4 │     fn bar(self) -> usize use c++::a::Bar;
-               │                                          ┬  
-               │                                          ╰── `c++::` paths cannot be used in a method's `use` path
+               │                               ─────┬─────  
+               │                                    ╰─────── `c++::` paths cannot be used in a method's `use` path
+            ───╯
+            Error: `c++::` paths cannot be used in a method's `use` path
+               ╭─[ test.zng:5:31 ]
+               │
+             5 │     fn baz(self) -> usize use c++::a::Bar as cpp_baz;
+               │                               ─────┬─────  
+               │                                    ╰─────── `c++::` paths cannot be used in a method's `use` path
             ───╯
         "#]],
     );
@@ -945,32 +953,44 @@ type crate::Foo {
 fn cpp_path_rejected_as_trait() {
     check_fail(
         r#"
+trait c++::Foo {
+}
+
 extern "C++" {
     impl c++::Foo for crate::X {
     }
+    safe fn take(&dyn c++::Foo);
 }
     "#,
         expect![[r#"
             Error: `c++::` paths cannot be used as a trait
-               ╭─[ test.zng:3:19 ]
+               ╭─[ test.zng:2:7 ]
                │
-             3 │     impl c++::Foo for crate::X {
-               │                   ─┬─  
-               │                    ╰─── `c++::` paths cannot be used as a trait
+             2 │ trait c++::Foo {
+               │       ────┬───  
+               │           ╰───── `c++::` paths cannot be used as a trait
+            ───╯
+            Error: `c++::` paths cannot be used as a trait
+               ╭─[ test.zng:6:10 ]
+               │
+             6 │     impl c++::Foo for crate::X {
+               │          ────┬───  
+               │              ╰───── `c++::` paths cannot be used as a trait
+            ───╯
+            Error: `c++::` paths cannot be used as a trait
+               ╭─[ test.zng:8:23 ]
+               │
+             8 │     safe fn take(&dyn c++::Foo);
+               │                       ────┬───  
+               │                           ╰───── `c++::` paths cannot be used as a trait
             ───╯
         "#]],
     );
 }
 
 #[test]
-#[should_panic(expected = "a c++::-only path was used somewhere that can't support it")]
-fn cpp_path_via_alias_indirection_as_trait_is_a_known_ice() {
-    // The syntactic check above only catches an *explicit* `c++::` prefix in
-    // trait position. An alias that itself targets a `c++::` path slips
-    // past it (nothing about `MyTrait` looks like a `c++::` path until it's
-    // resolved), and hits a deliberate `todo!()` instead of a clean
-    // diagnostic -- see the `RustPathAndGenerics::to_zngur` `Cpp` arm.
-    let _ = parse_str(
+fn cpp_path_via_alias_indirection_rejected_as_trait() {
+    check_fail(
         r#"
 use c++::Foo as MyTrait;
 
@@ -979,8 +999,124 @@ extern "C++" {
     }
 }
     "#,
-        NullCfg,
-        |_| {},
+        expect![[r#"
+            Error: `c++::` paths cannot be used as a trait
+               ╭─[ test.zng:5:10 ]
+               │
+             5 │     impl MyTrait for crate::X {
+               │          ───┬───  
+               │             ╰───── `c++::` paths cannot be used as a trait
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn relative_trait_inside_cpp_mod_rejected_with_help() {
+    check_fail(
+        r#"
+mod c++::ns {
+    extern "C++" {
+        impl std::fmt::Debug for Inventory {
+        }
+    }
+}
+    "#,
+        expect![[r#"
+            Error: `c++::` paths cannot be used as a trait
+               ╭─[ test.zng:4:14 ]
+               │
+             4 │         impl std::fmt::Debug for Inventory {
+               │              ───────┬───────  
+               │                     ╰───────── `c++::` paths cannot be used as a trait
+               │ 
+               │ Help: inside a `c++::` module, prefix Rust traits with `::` or `crate::`
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_path_alias_and_relative_use_rejected_in_method_use_path() {
+    check_fail(
+        r#"
+use c++::a::Bar as MyBar;
+
+type crate::Foo {
+    #layout(size = 1, align = 1);
+    fn bar(self) -> usize use MyBar;
+}
+    "#,
+        expect![[r#"
+            Error: `c++::` paths cannot be used in a method's `use` path
+               ╭─[ test.zng:6:31 ]
+               │
+             6 │     fn bar(self) -> usize use MyBar;
+               │                               ──┬──  
+               │                                 ╰──── `c++::` paths cannot be used in a method's `use` path
+            ───╯
+        "#]],
+    );
+    check_fail(
+        r#"
+mod c++::a {
+    type Foo {
+        #cpp_ref "::Foo";
+        fn bar(&self) use std::ops::Deref;
+    }
+}
+    "#,
+        expect![[r#"
+            Error: `c++::` paths cannot be used in a method's `use` path
+               ╭─[ test.zng:5:27 ]
+               │
+             5 │         fn bar(&self) use std::ops::Deref;
+               │                           ───────┬───────  
+               │                                  ╰───────── `c++::` paths cannot be used in a method's `use` path
+               │ 
+               │ Help: inside a `c++::` module, prefix Rust paths with `::` or `crate::`
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_path_with_generic_arguments_rejected() {
+    check_fail(
+        r#"
+extern "C++" {
+    safe fn make() -> c++::Vec<i32>;
+}
+    "#,
+        expect![[r#"
+            Error: `c++::` paths do not support generic arguments
+               ╭─[ test.zng:3:23 ]
+               │
+             3 │     safe fn make() -> c++::Vec<i32>;
+               │                       ────┬───  
+               │                           ╰───── `c++::` paths do not support generic arguments
+            ───╯
+        "#]],
+    );
+    check_fail(
+        r#"
+mod c++::ns {
+    extern "C++" {
+        safe fn make() -> Option<i32>;
+    }
+}
+    "#,
+        expect![[r#"
+            Error: `c++::` paths do not support generic arguments
+               ╭─[ test.zng:4:27 ]
+               │
+             4 │         safe fn make() -> Option<i32>;
+               │                           ───┬──  
+               │                              ╰──── `c++::` paths do not support generic arguments
+               │ 
+               │ Help: inside a `c++::` module, prefix Rust paths with `::` or `crate::`
+            ───╯
+        "#]],
     );
 }
 
@@ -1229,66 +1365,149 @@ mod c++::a {
 }
 
 #[test]
-fn scope_reference_to_cpp_target_from_top_level_cpp_base_is_bare() {
-    // At the root of the c++::-only tree (an empty `Cpp` base), there's
-    // nothing to climb out of, so the reference is just the target's own
-    // segments.
-    let scope = scope_with_base(EntityPath::Cpp(Vec::new()));
-    assert_eq!(
-        scope.reference_to(&EntityPath::cpp(["foo", "Bar"])),
-        Some("foo::Bar".to_owned()),
-    );
-}
+fn unprefixed_root_alias_referenced_inside_cpp_mod_keeps_rust_target() {
+    let parsed = parse_str(
+        r#"
+use std::string::String as MyString;
 
-fn scope_with_base(base: EntityPath) -> Scope<'static> {
-    Scope {
-        aliases: Vec::new(),
-        base,
-        type_vars: Default::default(),
+mod c++::a {
+    type Name {
+        #layout(size = 16, align = 8);
+        #cpp_heap_allocated "::x";
+        field s (offset = auto, type = MyString);
     }
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = parsed.spec.types.first().expect("no type parsed");
+    assert_cpp(&["a", "Name"], &ty.ty);
+    let field = ty.fields.first().expect("no field parsed");
+    assert_ty_path!(["std", "string", "String"], &field.ty);
 }
 
 #[test]
-fn scope_reference_to_rust_target_is_always_reachable_regardless_of_base() {
-    // A `Rust` target is crate- or globally-qualified, so it's reachable the
-    // same way no matter what the referencing scope's own base is -- even
-    // from a `Cpp` base.
-    let scope = scope_with_base(EntityPath::cpp(["a", "b"]));
+fn alias_in_cpp_mod_inherited_into_nested_mod_resolves_against_declaring_mod() {
+    let parsed = parse_str(
+        r#"
+mod c++::a {
+    use Foo as MyFoo;
+    mod b {
+        extern "C++" {
+            safe fn make() -> MyFoo;
+        }
+    }
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let func = parsed
+        .spec
+        .extern_cpp_funcs
+        .first()
+        .expect("no extern C++ fn parsed");
+    assert_cpp(&["a", "Foo"], &func.output);
+}
+
+#[test]
+fn same_module_alias_chains_are_order_independent_and_shadow_parent() {
+    let parsed = parse_str(
+        r#"
+use c++::outer as sub;
+use ns::Top as MyTop;
+use c++::root_ns as ns;
+
+mod c++::a {
+    use sub::Foo as MyFoo;
+    use b as sub;
+
+    extern "C++" {
+        safe fn make_foo() -> MyFoo;
+        safe fn make_top() -> MyTop;
+    }
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    assert_eq!(parsed.spec.extern_cpp_funcs.len(), 2);
+    assert_cpp(&["a", "b", "Foo"], &parsed.spec.extern_cpp_funcs[0].output);
+    assert_cpp(&["root_ns", "Top"], &parsed.spec.extern_cpp_funcs[1].output);
+
+    // Cyclic and duplicate aliases in the same module emit parse errors cleanly without hanging.
+    check_fail(
+        r#"
+use b as a;
+use a as b;
+extern "C++" {
+    safe fn f(&a);
+}
+"#,
+        expect![[r#"
+            Error: cyclic `use` alias definition `a`
+               ╭─[ test.zng:2:1 ]
+               │
+             2 │ use b as a;
+               │ ─────┬─────  
+               │      ╰─────── cyclic `use` alias definition `a`
+            ───╯
+        "#]],
+    );
+
+    check_fail(
+        r#"
+use c++::outer as sub;
+mod a {
+    use sub::Inner as sub;
+}
+"#,
+        expect![[r#"
+            Error: cyclic `use` alias definition `sub`
+               ╭─[ test.zng:4:5 ]
+               │
+             4 │     use sub::Inner as sub;
+               │     ───────────┬──────────  
+               │                ╰──────────── cyclic `use` alias definition `sub`
+            ───╯
+        "#]],
+    );
+
+    check_fail(
+        r#"
+use c++::x as Foo;
+use c++::y as Foo;
+"#,
+        expect![[r#"
+            Error: duplicate `use` alias `Foo` in the same module
+               ╭─[ test.zng:3:1 ]
+               │
+             3 │ use c++::y as Foo;
+               │ ─────────┬────────  
+               │          ╰────────── duplicate `use` alias `Foo` in the same module
+               │
+               ├─[ test.zng:3:1 ]
+               │
+             2 │ use c++::x as Foo;
+               │ ─────────┬────────  
+               │          ╰────────── previously defined here
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn entity_path_rust_reference_formats_rust_paths_and_rejects_empty_or_cpp() {
     assert_eq!(
-        scope.reference_to(&EntityPath::crate_relative(["foo", "Bar"])),
+        EntityPath::crate_relative(["foo", "Bar"]).rust_reference(),
         Some("crate::foo::Bar".to_owned()),
     );
     assert_eq!(
-        scope.reference_to(&EntityPath::rust(["foo", "Bar"])),
+        EntityPath::rust(["foo", "Bar"]).rust_reference(),
         Some("::foo::Bar".to_owned()),
     );
-}
-
-#[test]
-fn scope_reference_to_cpp_target_from_rust_base_is_impossible() {
-    // We don't know which module the c++::-only tree will itself be
-    // generated into relative to an arbitrary Rust path, so there's no way
-    // to reference it from a `Rust` base.
-    let scope = scope_with_base(EntityPath::Rust(Vec::new()));
-    assert_eq!(scope.reference_to(&EntityPath::cpp(["a", "Foo"])), None);
-}
-
-#[test]
-fn scope_reference_to_cpp_target_from_cpp_base_uses_super_as_needed() {
-    let scope = scope_with_base(EntityPath::cpp(["a", "b"]));
-    // Different branch entirely: climb out twice, then descend.
-    assert_eq!(
-        scope.reference_to(&EntityPath::cpp(["x", "y"])),
-        Some("super::super::x::y".to_owned()),
-    );
-    // Sibling module under the shared parent `a`: climb out once.
-    assert_eq!(
-        scope.reference_to(&EntityPath::cpp(["a", "c"])),
-        Some("super::c".to_owned()),
-    );
-    // Child of the current base: no climbing needed at all.
-    assert_eq!(
-        scope.reference_to(&EntityPath::cpp(["a", "b", "Name"])),
-        Some("Name".to_owned()),
-    );
+    assert_eq!(EntityPath::Rust(Vec::new()).rust_reference(), None);
+    assert_eq!(EntityPath::Cpp(Vec::new()).rust_reference(), None);
+    assert_eq!(EntityPath::cpp(["a", "Foo"]).rust_reference(), None);
 }

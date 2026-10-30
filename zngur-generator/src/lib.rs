@@ -120,7 +120,6 @@ impl ZngurGenerator {
                         .unwrap_or_default()
                 )
             }));
-        let mut cpp_mod_content = String::new();
         let mut cpp_tree = CppModuleTree::default();
         cpp_file.coro_support = coro_support;
         for ty_def in zng.types {
@@ -173,9 +172,9 @@ impl ZngurGenerator {
     #[repr(C)]
     #[repr(align({align}))]
     pub struct {type_name} {{
-      pub(crate) buffer: core::cell::UnsafeCell<core::mem::MaybeUninit<[u8; {size}]>>,
-      _no_auto_traits: core::marker::PhantomData<*mut ()>,
-      _pinned: core::marker::PhantomPinned,
+      pub(crate) buffer: ::core::cell::UnsafeCell<::core::mem::MaybeUninit<[u8; {size}]>>,
+      _no_auto_traits: ::core::marker::PhantomData<*mut ()>,
+      _pinned: ::core::marker::PhantomPinned,
     }}
 
     unsafe impl ::zngur_lib::ZngCppObject for {type_name} {{}}
@@ -207,9 +206,12 @@ impl ZngurGenerator {
                     cpp_tree.insert(&module_path, &struct_def);
                 } else {
                     rust_file.text.push_str(&struct_def);
-                    cpp_mod_content.push_str(&format!(
-                        "\n#[allow(dead_code)]\n#[deprecated(note = \"use `{type_name}` directly instead of `cpp::{type_name}`\")]\npub type {type_name} = super::{type_name};\n"
-                    ));
+                    cpp_tree.insert(
+                        &["cpp".to_owned()],
+                        &format!(
+                            "\n#[allow(dead_code)]\n#[deprecated(note = \"use `{type_name}` directly instead of `cpp::{type_name}`\")]\npub type {type_name} = super::{type_name};\n"
+                        ),
+                    );
                 }
             }
             if ty_def.cpp_heap_allocated.is_some() {
@@ -232,9 +234,12 @@ impl ZngurGenerator {
                     cpp_tree.insert(&module_path, &struct_def);
                 } else {
                     rust_file.text.push_str(&struct_def);
-                    cpp_mod_content.push_str(&format!(
-                        "\n#[allow(dead_code)]\n#[deprecated(note = \"use `{type_name}` directly instead of `cpp::{type_name}`\")]\npub type {type_name} = super::{type_name};\n"
-                    ));
+                    cpp_tree.insert(
+                        &["cpp".to_owned()],
+                        &format!(
+                            "\n#[allow(dead_code)]\n#[deprecated(note = \"use `{type_name}` directly instead of `cpp::{type_name}`\")]\npub type {type_name} = super::{type_name};\n"
+                        ),
+                    );
                 }
             }
             if ty_def.cpp_ref.is_some() {
@@ -247,9 +252,12 @@ impl ZngurGenerator {
                     cpp_tree.insert(&module_path, &struct_def);
                 } else {
                     rust_file.text.push_str(&struct_def);
-                    cpp_mod_content.push_str(&format!(
-                        "\n#[allow(dead_code)]\n#[deprecated(note = \"use `{type_name}` directly instead of `cpp::{type_name}`\")]\npub type {type_name} = super::{type_name};\n"
-                    ));
+                    cpp_tree.insert(
+                        &["cpp".to_owned()],
+                        &format!(
+                            "\n#[allow(dead_code)]\n#[deprecated(note = \"use `{type_name}` directly instead of `cpp::{type_name}`\")]\npub type {type_name} = super::{type_name};\n"
+                        ),
+                    );
                 }
             }
             let mut cpp_methods = vec![];
@@ -435,15 +443,6 @@ impl ZngurGenerator {
                     None
                 },
             });
-        }
-        if !cpp_mod_content.is_empty() {
-            rust_file.text.push_str(&format!(
-                r#"
-pub mod cpp {{
-{cpp_mod_content}
-}}
-"#
-            ));
         }
         rust_file.text.push_str(&cpp_tree.render());
         for func in zng.funcs {
@@ -796,5 +795,148 @@ pub type Handle = super::Handle;
         assert!(rust_code.contains("pub struct Foo"));
         assert!(rust_code.contains("pub struct Bar"));
         assert!(!rust_code.contains("pub mod cpp {"));
+    }
+
+    #[test]
+    fn old_style_type_and_cpp_module_named_cpp_merge_into_single_mod_cpp() {
+        let spec = ZngurSpec {
+            types: vec![
+                minimal_heap_allocated_type(adt(&["crate", "Old"]), "::x::Old"),
+                minimal_heap_allocated_type(cpp(&["cpp", "New"]), "::x::New"),
+            ],
+            ..Default::default()
+        };
+        let (rust_code, _h, _cpp) =
+            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
+        assert_eq!(
+            rust_code.matches("pub mod cpp {").count(),
+            1,
+            "expected a single merged `pub mod cpp {{` block in:\n{rust_code}"
+        );
+        assert!(rust_code.contains("pub struct Old"));
+        assert!(rust_code.contains("pub type Old = super::Old;"));
+        assert!(rust_code.contains("pub struct New"));
+    }
+
+    #[test]
+    fn cpp_std_and_core_modules_do_not_shadow_rust_prelude_paths() {
+        let my_trait = RustTrait::Normal(RustPathAndGenerics {
+            path: vec!["crate".to_owned(), "MyTrait".to_owned()],
+            generics: vec![],
+            named_generics: vec![],
+        });
+        let mut traits = indexmap::IndexMap::new();
+        traits.insert(
+            my_trait.clone(),
+            ZngurTrait {
+                tr: my_trait.clone(),
+                methods: vec![ZngurMethod {
+                    name: "run".to_owned(),
+                    generics: vec![],
+                    receiver: ZngurMethodReceiver::Ref(Mutability::Not),
+                    inputs: vec![],
+                    output: RustType::UNIT,
+                    is_safe: None,
+                }],
+            },
+        );
+        let spec = ZngurSpec {
+            types: vec![
+                minimal_stack_owned_type(cpp(&["std", "String"]), "::std::string", 16, 8),
+                minimal_stack_owned_type(cpp(&["core", "Widget"]), "::core::Widget", 16, 8),
+                ZngurType {
+                    ty: RustType::Boxed(Box::new(RustType::Dyn(my_trait.clone(), vec![]))),
+                    layout: Some(LayoutPolicy::StackAllocated { size: 16, align: 8 }),
+                    wellknown_traits: vec![],
+                    exhaustive: true,
+                    methods: vec![],
+                    constructor: None,
+                    variants: vec![],
+                    fields: vec![],
+                    cpp_heap_allocated: None,
+                    cpp_ref: None,
+                    cpp_stack_owned: None,
+                },
+                ZngurType {
+                    ty: RustType::Ref(Mutability::Not, Box::new(RustType::Dyn(my_trait, vec![]))),
+                    layout: Some(LayoutPolicy::StackAllocated { size: 16, align: 8 }),
+                    wellknown_traits: vec![],
+                    exhaustive: true,
+                    methods: vec![],
+                    constructor: None,
+                    variants: vec![],
+                    fields: vec![],
+                    cpp_heap_allocated: None,
+                    cpp_ref: None,
+                    cpp_stack_owned: None,
+                },
+                ZngurType {
+                    ty: RustType::Boxed(Box::new(RustType::Dyn(
+                        RustTrait::Fn {
+                            name: "Fn".to_owned(),
+                            inputs: vec![],
+                            output: Box::new(RustType::UNIT),
+                        },
+                        vec![],
+                    ))),
+                    layout: Some(LayoutPolicy::StackAllocated { size: 16, align: 8 }),
+                    wellknown_traits: vec![],
+                    exhaustive: true,
+                    methods: vec![],
+                    constructor: None,
+                    variants: vec![],
+                    fields: vec![],
+                    cpp_heap_allocated: None,
+                    cpp_ref: None,
+                    cpp_stack_owned: None,
+                },
+                ZngurType {
+                    ty: adt(&["crate", "MyEnum"]),
+                    layout: Some(LayoutPolicy::StackAllocated { size: 8, align: 4 }),
+                    wellknown_traits: vec![],
+                    exhaustive: true,
+                    methods: vec![],
+                    constructor: None,
+                    variants: vec![ZngurVariant {
+                        name: "Val".to_owned(),
+                        fields: vec![ZngurField {
+                            name: "x".to_owned(),
+                            ty: RustType::Primitive(PrimitiveRustType::Int(32)),
+                            offset: None,
+                        }],
+                        exhaustive: true,
+                    }],
+                    fields: vec![],
+                    cpp_heap_allocated: None,
+                    cpp_ref: None,
+                    cpp_stack_owned: None,
+                },
+            ],
+            traits,
+            ..Default::default()
+        };
+        let (rust_code, _h, _cpp) =
+            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
+        assert!(rust_code.contains("pub mod std {"));
+        assert!(rust_code.contains("pub mod core {"));
+        assert!(rust_code.contains("::core::cell::UnsafeCell<::core::mem::MaybeUninit<"));
+        assert!(rust_code.contains("::core::marker::PhantomData<*mut ()>"));
+        assert!(rust_code.contains("::core::marker::PhantomPinned"));
+        assert_eq!(
+            rust_code
+                .matches("::std::ptr::write(o as *mut _, r)")
+                .count(),
+            3
+        );
+        assert!(rust_code.contains("::std::hint::unreachable_unchecked()"));
+        let stripped = rust_code
+            .replace("std::String", "")
+            .replace("core::Widget", "")
+            .replace("::std::", "")
+            .replace("::core::", "");
+        assert!(
+            !stripped.contains("std::") && !stripped.contains("core::"),
+            "found unqualified `std::` or `core::` in:\n{rust_code}"
+        );
     }
 }

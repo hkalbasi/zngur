@@ -406,6 +406,11 @@ type c++::Item {
 }
 ```
 
+The `c++::` prefix tells Zngur to generate Rust wrapper structs directly inside the `generated`
+module (`generated::Inventory` and `generated::Item`, or nested submodules like `generated::ns::Foo`
+for `c++::ns::Foo`, which can also be grouped with `mod c++::ns { ... }`) and corresponding C++
+wrappers in the `rust` namespace (`rust::Inventory` and `rust::Item`).
+
 And add these to the `main.rs` file:
 
 ```Rust

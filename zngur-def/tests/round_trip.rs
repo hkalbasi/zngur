@@ -192,6 +192,53 @@ type crate::Way {
 }
 
 #[test]
+fn reparse_cpp_paths_and_modules() {
+    let _ = check_round_trip(
+        r#"
+use c++::a::b::Item as MyItem;
+
+type c++::Way {
+    #cpp_ref "::osmium::Way";
+}
+
+mod c++::a::b {
+    type Item {
+        #layout(size = 16, align = 8);
+        #cpp_heap_allocated "::x::Item";
+    }
+}
+
+extern "C++" {
+    safe fn make_item(&c++::Way) -> MyItem;
+    impl MyItem {
+        safe fn touch(&mut self, &c++::Way);
+    }
+}
+    "#,
+        expect![[r#"
+            type c++::Way {
+                #cpp_ref "::osmium::Way";
+            }
+
+            type c++::a::b::Item {
+                #layout(size = 16, align = 8);
+                #cpp_heap_allocated "::x::Item";
+            }
+
+            extern "C++" {
+
+                safe fn make_item(&c++::Way) -> c++::a::b::Item;
+
+                impl c++::a::b::Item {
+                    safe fn touch(&mut self, &c++::Way);
+                }
+
+            }
+        "#]],
+    );
+}
+
+#[test]
 fn reparse_alias() {
     let _ = check_round_trip(
         r#"

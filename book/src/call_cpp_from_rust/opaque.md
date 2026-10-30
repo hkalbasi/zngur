@@ -9,6 +9,11 @@ There are currently 3 kinds of opaque types that `zngur` is able to represent
 These types are made available to Rust with varying sets of restrictions and tradeoffs imposed
 based on your choice
 
+Each opaque C++ wrapper type is declared with a `c++::` path (such as `type c++::Way` or
+`type c++::ns::Way`). For `type c++::a::b::Name`, `zngur` generates the Rust wrapper struct at
+`generated::a::b::Name` and its C++ wrapper class at `rust::a::b::Name`. Multiple declarations
+sharing a prefix can also be grouped with `mod c++::a::b { type Name { ... } }`.
+
 ## Opaque Borrowed C++ Type
 
 For example, you define a reference-only opaque type in `main.zng` as a `#cpp_ref`:
