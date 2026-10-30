@@ -1,39 +1,39 @@
 #include "generated.h"
 #include <string>
 
-using namespace rust::crate;
+namespace rust {
 
-template <typename T> using Ref = rust::Ref<T>;
-template <typename T> using RefMut = rust::RefMut<T>;
+using std::ffi::CStr;
+using std::fmt::Debug;
+using std::fmt::Formatter;
+using std::fmt::Result;
 
-rust::Ref<rust::Str> rust_str_from_c_str(const char* input) {
-  return rust::std::ffi::CStr::from_ptr(reinterpret_cast<const int8_t*>(input)).to_str().expect("invalid_utf8"_rs);
+static Ref<Str> rust_str_from_c_str(const char* input) {
+  return CStr::from_ptr(reinterpret_cast<const int8_t*>(input)).to_str().expect("invalid_utf8"_rs);
 }
 
-Inventory rust::Impl<Inventory>::new_empty(uint32_t space) {
+Inventory Impl<Inventory>::new_empty(uint32_t space) {
   return Inventory::build(space);
 }
 
-rust::Unit rust::Impl<Inventory>::add_banana(RefMut<Inventory> self,
-                                             uint32_t count) {
+Unit Impl<Inventory>::add_banana(RefMut<Inventory> self, uint32_t count) {
   self.cpp().add_banana(count);
   return {};
 }
 
-rust::Unit rust::Impl<Inventory>::add_item(RefMut<Inventory> self, Item item) {
+Unit Impl<Inventory>::add_item(RefMut<Inventory> self, Item item) {
   self.cpp().add_item(item.cpp());
   return {};
 }
 
-Item rust::Impl<Item>::new_(Ref<rust::Str> name, uint32_t size) {
+Item Impl<Item>::new_(Ref<Str> name, uint32_t size) {
   return Item::build(cpp_inventory::Item{
       .name = ::std::string(reinterpret_cast<const char *>(name.as_ptr()),
                             name.len()),
       .size = size});
 }
 
-rust::std::fmt::Result rust::Impl<Inventory, rust::std::fmt::Debug>::fmt(
-    Ref<Inventory> self, RefMut<rust::std::fmt::Formatter> f) {
+Result Impl<Inventory, Debug>::fmt(Ref<Inventory> self, RefMut<Formatter> f) {
   ::std::string result = "Inventory { remaining_space: ";
   result += ::std::to_string(self.cpp().remaining_space);
   result += ", items: [";
@@ -53,3 +53,5 @@ rust::std::fmt::Result rust::Impl<Inventory, rust::std::fmt::Debug>::fmt(
   result += "] }";
   return f.write_str(rust_str_from_c_str(result.c_str()));
 }
+
+} // namespace rust

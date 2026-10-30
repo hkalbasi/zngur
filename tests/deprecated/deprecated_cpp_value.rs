@@ -1,7 +1,7 @@
 #[rustfmt::skip]
 mod generated;
 
-pub use generated::cpp::Accumulator;
+pub use generated::Accumulator;
 
 fn main() {
     let mut accumulator = Accumulator::new();

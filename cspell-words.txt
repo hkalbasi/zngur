@@ -78,6 +78,7 @@ rustyline
 Rustyline
 scrutinee
 scrutinees
+segs
 serde
 SIGSEGV
 sptl

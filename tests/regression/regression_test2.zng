@@ -3,13 +3,13 @@
 #include <regression_test2_impls.h>
 "
 
-type crate::CppTask {
-    #cpp_stack_owned "task::CppTaskForRust";
+type c++::task::CppTask {
+    #cpp_stack_owned "::task::CppTaskForRust";
     #layout(size = 8, align = 8);
 }
 
-type crate::Dispatcher {
-    #cpp_stack_owned "task::Dispatcher";
+type c++::task::Dispatcher {
+    #cpp_stack_owned "::task::Dispatcher";
     #layout(size = 1, align = 1);
 }
 
@@ -28,11 +28,11 @@ type crate::RustTask {
 }
 
 extern "C++" {
-    impl crate::CppTask {
+    impl c++::task::CppTask {
         safe fn constructor(&mut self);
     }
 
-    impl crate::Dispatcher {
+    impl c++::task::Dispatcher {
         safe fn constructor(&mut self);
         safe fn run_task(&self, &mut crate::RustTask);
     }

@@ -6,13 +6,12 @@
 
 namespace rust {
 
-rust::crate::MyCppWrapper Impl<rust::crate::MyCppWrapper>::new_(int32_t x,
-                                                                int32_t y) {
-  return rust::crate::MyCppWrapper::build(x, y);
+rust::MyCppWrapper Impl<rust::MyCppWrapper>::new_(int32_t x, int32_t y) {
+  return rust::MyCppWrapper::build(x, y);
 }
 
 rust::Unit
-Impl<rust::crate::MyCppWrapper>::print(rust::Ref<rust::crate::MyCppWrapper> c) {
+Impl<rust::MyCppWrapper>::print(rust::Ref<rust::MyCppWrapper> c) {
   const CppType &cpp = c.cpp();
   std::cout << "CppType " << cpp.x << " " << cpp.y << std::endl;
   return {};

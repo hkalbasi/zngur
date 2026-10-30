@@ -20,7 +20,7 @@ public:
 
 namespace rust {
 template<>
-struct is_trivially_relocatable<task::Dispatcher> : std::true_type {};
+struct is_trivially_relocatable< ::task::Dispatcher> : std::true_type {};
 template<>
-struct is_trivially_relocatable<task::CppTaskForRust> : std::true_type {};
+struct is_trivially_relocatable< ::task::CppTaskForRust> : std::true_type {};
 }

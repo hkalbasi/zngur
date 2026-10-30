@@ -1,7 +1,5 @@
 use std::io::Write;
 
-use itertools::Itertools;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IDLItem {
     Function,
@@ -203,6 +201,7 @@ impl WriteIDL for crate::RustType {
             }
             Self::Adt(pg) => p.write_idl(pg),
             Self::TypeVar(var) => p.write_idl(var),
+            Self::Cpp(segs) => write!(p, "c++::{}", segs.join("::")),
         }
     }
 }
@@ -676,12 +675,8 @@ impl WriteIDL for crate::ZngurMethodDetails {
             write!(p, "{safety}")?;
             p.write_idl(&self.data)?;
             if let Some(use_path) = &self.use_path {
-                let path = use_path.iter().join("::");
-                let path = if use_path.first().is_some_and(|p| p == "crate") {
-                    path
-                } else {
-                    format!("::{path}")
-                };
+                // `use_path` is already a Rust path (`crate::...` or `::...`).
+                let path = use_path;
                 write!(p, " use {path}")?;
             }
             if let Some((ty, _)) = &self.deref {

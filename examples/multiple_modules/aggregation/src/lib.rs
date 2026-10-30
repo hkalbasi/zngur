@@ -4,4 +4,4 @@ mod generated;
 
 pub use packet::Packet;
 
-pub use generated::cpp::StatsAccumulator;
+pub use generated::StatsAccumulator;

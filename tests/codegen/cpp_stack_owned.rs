@@ -1,8 +1,7 @@
 #[rustfmt::skip]
 mod generated;
 
-#[allow(deprecated)]
-pub use generated::cpp::{CfgBox, MergedCounter};
+pub use generated::{CfgBox, MergedCounter};
 
 fn main() {
     let mut items = Vec::new();

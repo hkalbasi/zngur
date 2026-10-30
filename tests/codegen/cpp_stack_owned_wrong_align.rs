@@ -1,7 +1,6 @@
 #[rustfmt::skip]
 mod generated;
 
-#[allow(deprecated)]
-pub use generated::cpp::MyCppType;
+pub use generated::MyCppType;
 
 fn main() {}
