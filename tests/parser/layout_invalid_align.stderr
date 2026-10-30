@@ -1,0 +1,15 @@
+Error: Alignment must be a power of two
+   ╭─[ layout_invalid_align.zng:3:24 ]
+   │
+ 3 │     #layout(size = 16, align = 0);
+   │                        ──┬──  
+   │                          ╰──── Alignment must be a power of two
+───╯
+Error: Alignment must be a power of two
+   ╭─[ layout_invalid_align.zng:7:37 ]
+   │
+ 7 │     #layout_conservative(size = 16, align = 3);
+   │                                     ──┬──  
+   │                                       ╰──── Alignment must be a power of two
+───╯
+cfg values used:

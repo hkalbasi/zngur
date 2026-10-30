@@ -190,22 +190,6 @@ type crate::Way {
         "#]],
     );
 }
-#[test]
-fn reparse_cpp_stack_owned() {
-    let _ = check_round_trip(
-        r#"
-type crate::Way {
-    #cpp_stack_owned "::osmium::Way" (size = 16, align = 8);
-}
-    "#,
-        expect![[r#"
-            type crate::Way {
-                #layout(size = 16, align = 8);
-                #cpp_stack_owned "::osmium::Way" (size = 16, align = 8);
-            }
-        "#]],
-    );
-}
 
 #[test]
 fn reparse_alias() {

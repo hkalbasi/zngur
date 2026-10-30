@@ -1,0 +1,15 @@
+//@ fail
+type crate::HeapWay {
+    #heap_allocated;
+    #cpp_stack_owned "::osmium::Way";
+}
+
+type crate::RefWay {
+    #only_by_ref;
+    #cpp_stack_owned "::osmium::Way";
+}
+
+type crate::ConservativeWay {
+    #layout_conservative(size = 16, align = 8);
+    #cpp_stack_owned "::osmium::Way";
+}

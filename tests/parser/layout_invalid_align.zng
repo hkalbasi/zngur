@@ -1,0 +1,8 @@
+//@ fail
+type crate::ZeroAlign {
+    #layout(size = 16, align = 0);
+}
+
+type crate::NonPowerOfTwoAlign {
+    #layout_conservative(size = 16, align = 3);
+}

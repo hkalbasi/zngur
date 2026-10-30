@@ -1,0 +1,46 @@
+Error: `#cpp_stack_owned` cannot be used with `#heap_allocated` for type crate::HeapWay.
+   ╭─[ cpp_stack_owned_invalid_layout_policy.zng:4:5 ]
+   │
+ 4 │     #cpp_stack_owned "::osmium::Way";
+   │     ────────────────┬────────────────  
+   │                     ╰────────────────── `#cpp_stack_owned` declared here
+   │
+   ├─[ cpp_stack_owned_invalid_layout_policy.zng:4:5 ]
+   │
+ 3 │     #heap_allocated;
+   │     ───────┬───────  
+   │            ╰───────── `#heap_allocated` declared here
+   │ 
+   │ Note: `#cpp_stack_owned` types must use `#layout(size = X, align = Y)`.
+───╯
+Error: `#cpp_stack_owned` cannot be used with `#only_by_ref` for type crate::RefWay.
+   ╭─[ cpp_stack_owned_invalid_layout_policy.zng:9:5 ]
+   │
+ 9 │     #cpp_stack_owned "::osmium::Way";
+   │     ────────────────┬────────────────  
+   │                     ╰────────────────── `#cpp_stack_owned` declared here
+   │
+   ├─[ cpp_stack_owned_invalid_layout_policy.zng:9:5 ]
+   │
+ 8 │     #only_by_ref;
+   │     ──────┬─────  
+   │           ╰─────── `#only_by_ref` declared here
+   │ 
+   │ Note: `#cpp_stack_owned` types must use `#layout(size = X, align = Y)`.
+───╯
+Error: `#cpp_stack_owned` cannot be used with `#layout_conservative` for type crate::ConservativeWay.
+    ╭─[ cpp_stack_owned_invalid_layout_policy.zng:14:5 ]
+    │
+ 14 │     #cpp_stack_owned "::osmium::Way";
+    │     ────────────────┬────────────────  
+    │                     ╰────────────────── `#cpp_stack_owned` declared here
+    │
+    ├─[ cpp_stack_owned_invalid_layout_policy.zng:14:5 ]
+    │
+ 13 │     #layout_conservative(size = 16, align = 8);
+    │     ─────────────────────┬────────────────────  
+    │                          ╰────────────────────── `#layout_conservative` declared here
+    │ 
+    │ Note: `#cpp_stack_owned` types must use `#layout(size = X, align = Y)`.
+────╯
+cfg values used:

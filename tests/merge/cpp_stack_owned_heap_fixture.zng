@@ -1,0 +1,3 @@
+type crate::Way {
+    #heap_allocated;
+}

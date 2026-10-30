@@ -398,7 +398,7 @@ enum ParsedTypeItem<'a> {
     },
     CppStackOwned {
         cpp_type: &'a str,
-        props: Vec<(Spanned<&'a str>, usize)>,
+        props: Option<Vec<(Spanned<&'a str>, usize)>>,
     },
     MatchOnCfg(Condition<CfgConditional<'a>, ParsedTypeItem<'a>, NItems>),
 }
@@ -692,7 +692,12 @@ impl ProcessedItem<'_> {
                     for (key, value) in props {
                         match key.inner {
                             "size" => size = Some(value),
-                            "align" => align = Some(value),
+                            "align" => {
+                                if !value.is_power_of_two() {
+                                    errors.push(("Alignment must be a power of two", key.span));
+                                }
+                                align = Some(value);
+                            }
                             _ => errors.push(("Unknown property", key.span)),
                         }
                     }
@@ -716,29 +721,34 @@ impl ProcessedItem<'_> {
                         ParsedTypeItem::Layout(span, p) => {
                             let l = match p {
                                 ParsedLayoutPolicy::StackAllocated(p) => {
-                                    match check_size_align(p) {
-                                        Ok((size, align)) => {
-                                            LayoutPolicy::StackAllocated { size, align }
-                                        }
-                                        Err(errs) => {
-                                            for (msg, span) in errs {
-                                                ctx.add_error_str(msg, span);
-                                            }
-                                            continue;
-                                        }
-                                    }
+                                    check_size_align(p).map(|(size, align)| {
+                                        LayoutPolicy::StackAllocated { size, align }
+                                    })
                                 }
-                                ParsedLayoutPolicy::Conservative(p) => match check_size_align(p) {
-                                    Ok((size, align)) => LayoutPolicy::Conservative { size, align },
-                                    Err(errs) => {
-                                        for (msg, span) in errs {
-                                            ctx.add_error_str(msg, span);
-                                        }
-                                        continue;
+                                ParsedLayoutPolicy::Conservative(p) => {
+                                    check_size_align(p).map(|(size, align)| {
+                                        LayoutPolicy::Conservative { size, align }
+                                    })
+                                }
+                                ParsedLayoutPolicy::HeapAllocated => {
+                                    Ok(LayoutPolicy::HeapAllocated)
+                                }
+                                ParsedLayoutPolicy::OnlyByRef => Ok(LayoutPolicy::OnlyByRef),
+                            };
+                            let l = match l {
+                                Ok(l) => l,
+                                Err(errs) => {
+                                    for (msg, err_span) in errs {
+                                        ctx.add_error_str(msg, err_span);
                                     }
-                                },
-                                ParsedLayoutPolicy::HeapAllocated => LayoutPolicy::HeapAllocated,
-                                ParsedLayoutPolicy::OnlyByRef => LayoutPolicy::OnlyByRef,
+                                    if layout.is_none() {
+                                        layout = Some(LayoutPolicy::ZERO_SIZED_TYPE);
+                                    }
+                                    if layout_span.is_none() {
+                                        layout_span = Some(span);
+                                    }
+                                    continue;
+                                }
                             };
                             ctx.record_span(
                                 &l.into_span_key_with(rust_ty.clone()),
@@ -882,6 +892,10 @@ impl ProcessedItem<'_> {
                                 item_span,
                             );
                             let cpp = CppHeapAllocated(cpp_type.to_owned());
+                            ctx.record_span(
+                                &cpp.into_span_key_with(rust_ty.clone()),
+                                item_span.into_range(),
+                            );
                             cpp_heap_allocated = Some(cpp);
                         }
                         ParsedTypeItem::CppHeapAllocated { cpp_type } => {
@@ -911,26 +925,41 @@ impl ProcessedItem<'_> {
                             cpp_ref = Some(cpp);
                         }
                         ParsedTypeItem::CppStackOwned { cpp_type, props } => {
-                            let (size, align) = match check_size_align(props) {
-                                Ok(x) => x,
-                                Err(errs) => {
-                                    for (msg, span) in errs {
-                                        ctx.add_error_str(msg, span);
-                                    }
-                                    continue;
-                                }
-                            };
-                            let cpp = CppStackOwned {
-                                cpp_type: cpp_type.to_owned(),
-                                size,
-                                align,
-                            };
+                            let has_legacy_props = props.is_some();
+                            if let Some(props) = props {
+                                let size = props
+                                    .iter()
+                                    .find(|(k, _)| k.inner == "size")
+                                    .map(|(_, v)| v.to_string())
+                                    .unwrap_or_else(|| "X".to_string());
+                                let align = props
+                                    .iter()
+                                    .find(|(k, _)| k.inner == "align")
+                                    .map(|(_, v)| v.to_string())
+                                    .unwrap_or_else(|| "Y".to_string());
+                                let report_span = ctx.report_span_for_range(item_span.into_range());
+                                let report = Report::build(ReportKind::Error, report_span.clone())
+                                    .with_message("Old syntax `#cpp_stack_owned` with layout properties is no longer supported.")
+                                    .with_label(
+                                        Label::new(report_span)
+                                            .with_message("layout parameters no longer accepted here")
+                                            .with_color(Color::Red),
+                                    )
+                                    .with_help(format!(
+                                        "layout moved to its own directive: `#cpp_stack_owned \"{cpp_type}\"; #layout(size = {size}, align = {align});`"
+                                    ))
+                                    .finish();
+                                ctx.add_fatal_report(report);
+                            }
+                            let cpp = CppStackOwned(cpp_type.to_owned());
                             ctx.record_span(
                                 &cpp.into_span_key_with(rust_ty.clone()),
                                 item_span.into_range(),
                             );
                             cpp_stack_owned = Some(cpp);
-                            layout = Some(LayoutPolicy::StackAllocated { size, align });
+                            if has_legacy_props && layout.is_none() {
+                                layout = Some(LayoutPolicy::ZERO_SIZED_TYPE);
+                            }
                         }
                         ParsedTypeItem::MatchOnCfg(match_) => {
                             let result = match_.eval(ctx);
@@ -2204,6 +2233,52 @@ impl ZngurSpecBuilder {
             }) {
                 ty.wellknown_traits.push(ZngurWellknownTrait::Drop);
             }
+            let mut cpp_directives: Vec<(&str, PartialSpanKey)> = Vec::new();
+            if ty.cpp_stack_owned.is_some() {
+                cpp_directives.push((
+                    "#cpp_stack_owned",
+                    PartialSpanKey::CppStackOwned(ty.ty.clone()),
+                ));
+            }
+            if ty.cpp_ref.is_some() {
+                cpp_directives.push(("#cpp_ref", PartialSpanKey::CppRef(ty.ty.clone())));
+            }
+            if ty.cpp_heap_allocated.is_some() {
+                cpp_directives.push((
+                    "#cpp_heap_allocated",
+                    PartialSpanKey::CppHeapAllocated(ty.ty.clone()),
+                ));
+            }
+            if cpp_directives.len() > 1 {
+                let resolved: Vec<_> = cpp_directives
+                    .iter()
+                    .map(|(name, key)| {
+                        (*name, ctx.fetch_spans_global(key).last().copied().cloned())
+                    })
+                    .collect();
+                let (first_name, ref first_span) = resolved[0];
+                let (second_name, ref second_span) = resolved[1];
+                let report_span = second_span
+                    .clone()
+                    .or_else(|| first_span.clone())
+                    .unwrap_or((0, 0usize..0));
+                let mut report =
+                    Report::build(ReportKind::Error, report_span).with_message(format!(
+                        "`{first_name}` cannot be used with `{second_name}` for type {}.",
+                        ty.ty
+                    ));
+                for (dir_name, span) in resolved {
+                    if let Some(span) = span {
+                        report = report.with_label(
+                            Label::new(span)
+                                .with_message(format!("`{dir_name}` declared here"))
+                                .with_color(Color::Yellow),
+                        );
+                    }
+                }
+                ctx.add_fatal_report(report.finish());
+                continue;
+            }
             if ty.layout.is_none() {
                 let spans = ctx.fetch_spans_global(ty);
                 let (first, rest) = {
@@ -2211,10 +2286,17 @@ impl ZngurSpecBuilder {
                     let first = it.next().cloned();
                     (first, it.collect::<Vec<_>>())
                 };
-                let mut report = Report::build(ReportKind::Error, (0, 0usize..0)).with_message(format!(
-                    "No layout policy found for type {}.",
-                    ty.ty
-                )).with_note("Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.");
+                let mut report = Report::build(ReportKind::Error, (0, 0usize..0))
+                    .with_message(format!("No layout policy found for type {}.", ty.ty));
+                if ty.cpp_stack_owned.is_some() {
+                    report = report.with_note(
+                        "Type is declared with `#cpp_stack_owned` which requires `#layout(size = X, align = Y)`.",
+                    );
+                } else {
+                    report = report.with_note(
+                        "Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.",
+                    );
+                }
 
                 if let Some(first) = first {
                     report.add_label(
@@ -2253,6 +2335,57 @@ impl ZngurSpecBuilder {
                         break;
                     }
                 }
+                ctx.add_fatal_report(report.finish());
+            }
+            if ty.cpp_stack_owned.is_some()
+                && matches!(
+                    ty.layout,
+                    Some(
+                        LayoutPolicy::HeapAllocated
+                            | LayoutPolicy::OnlyByRef
+                            | LayoutPolicy::Conservative { .. }
+                    )
+                )
+            {
+                let stack_owned_spans =
+                    ctx.fetch_spans_global(&PartialSpanKey::CppStackOwned(ty.ty.clone()));
+                let layout_spans = ctx.fetch_spans_global(&PartialSpanKey::Layout(ty.ty.clone()));
+                let report_span = stack_owned_spans
+                    .last()
+                    .copied()
+                    .cloned()
+                    .or_else(|| layout_spans.last().copied().cloned())
+                    .unwrap_or((0, 0usize..0));
+
+                let layout_name = match ty.layout {
+                    Some(LayoutPolicy::HeapAllocated) => "#heap_allocated",
+                    Some(LayoutPolicy::OnlyByRef) => "#only_by_ref",
+                    Some(LayoutPolicy::Conservative { .. }) => "#layout_conservative",
+                    _ => unreachable!(),
+                };
+
+                let mut report = Report::build(ReportKind::Error, report_span)
+                    .with_message(format!(
+                        "`#cpp_stack_owned` cannot be used with `{layout_name}` for type {}.",
+                        ty.ty
+                    ))
+                    .with_note("`#cpp_stack_owned` types must use `#layout(size = X, align = Y)`.");
+
+                if let Some(span) = stack_owned_spans.last() {
+                    report = report.with_label(
+                        Label::new((*span).clone())
+                            .with_message("`#cpp_stack_owned` declared here")
+                            .with_color(Color::Yellow),
+                    );
+                }
+                if let Some(span) = layout_spans.last() {
+                    report = report.with_label(
+                        Label::new((*span).clone())
+                            .with_message(format!("`{layout_name}` declared here"))
+                            .with_color(Color::Yellow),
+                    );
+                }
+
                 ctx.add_fatal_report(report.finish());
             }
         }
@@ -2947,6 +3080,7 @@ fn inner_type_item<'a>()
                 .separated_by(just(Token::Comma))
                 .collect::<Vec<_>>()
                 .delimited_by(just(Token::ParenOpen), just(Token::ParenClose))
+                .or_not()
                 .boxed(),
         )
         .map(|(cpp_type, props)| ParsedTypeItem::CppStackOwned { cpp_type, props });
