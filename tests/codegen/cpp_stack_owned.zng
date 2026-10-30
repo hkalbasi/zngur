@@ -1,0 +1,39 @@
+//@ pass
+#unstable(cfg_if)
+
+merge "./cpp_stack_owned_merged_layout.zng";
+
+#cpp_additional_includes r#"
+#include "cpp_stack_owned.h"
+namespace rust {
+template <>
+struct is_trivially_relocatable<::TrackedCounter> : std::true_type {};
+}
+"#
+
+type crate::MergedCounter {
+    #cpp_stack_owned "::TrackedCounter";
+}
+
+type crate::CfgBox {
+    #cpp_stack_owned "::FixedBox";
+    #if cfg!(feature = "alt_layout") {
+        #layout(size = 4, align = 4);
+    } #else {
+        #layout(size = 8, align = 8);
+    }
+}
+
+extern "C++" {
+    impl crate::MergedCounter {
+        safe fn new(i32, i32) -> crate::MergedCounter;
+        safe fn add(&mut self, i32);
+        safe fn get(&self) -> i32;
+        safe fn into_value(self) -> i32;
+    }
+
+    impl crate::CfgBox {
+        safe fn new(i64) -> crate::CfgBox;
+        safe fn get(&self) -> i64;
+    }
+}

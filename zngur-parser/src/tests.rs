@@ -492,7 +492,7 @@ type ::std::string::String {
         #layout(size = 12, align = 4);
     } #else {
         // silly size for testing
-        #layout(size = 27, align = 9);
+        #layout(size = 48, align = 16);
     }
 }
     "#;
@@ -511,7 +511,7 @@ type ::std::string::String {
     let parsed = catch_parse_fail(source, NullCfg);
     let ty = parsed.spec.types.first().expect("no type parsed");
 
-    assert_layout(27, 9, &ty.layout);
+    assert_layout(48, 16, &ty.layout);
 }
 
 #[test]
@@ -530,7 +530,7 @@ type ::std::string::String {
 
         _ => {
             // silly size for testing
-            #layout(size = 27, align = 9);
+            #layout(size = 48, align = 16);
         }
     }
 }
@@ -550,7 +550,7 @@ type ::std::string::String {
     let parsed = catch_parse_fail(source, NullCfg);
     let ty = parsed.spec.types.first().expect("no type parsed");
 
-    assert_layout(27, 9, &ty.layout);
+    assert_layout(48, 16, &ty.layout);
 }
 
 macro_rules! test_paths_with_cfg {

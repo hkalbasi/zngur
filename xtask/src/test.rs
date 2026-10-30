@@ -384,6 +384,7 @@ fn check_compile_fail(sh: &Shell, stem: &str, test_dir: &Path) -> Result<()> {
     for diagnostic in stderr.lines().filter(|line| line.starts_with("error")) {
         if diagnostic.starts_with("error: could not compile")
             || diagnostic.starts_with("error: build failed")
+            || diagnostic.starts_with("error: failed to run custom build command")
         {
             continue;
         }

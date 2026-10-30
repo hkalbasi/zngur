@@ -464,6 +464,16 @@ impl CppLayoutPolicy {
         }
     }
 
+    pub fn layout_checks(&self, cpp_type: &str) -> String {
+        match self {
+            CppLayoutPolicy::StackAllocated { size, align } => format!(
+                "static_assert(sizeof({cpp_type}) == {size}, \"Size mismatch\");\n          \
+                 static_assert(alignof({cpp_type}) == {align}, \"Alignment mismatch\");"
+            ),
+            _ => String::new(),
+        }
+    }
+
     pub fn alloc_heap(&self) -> String {
         if let CppLayoutPolicy::HeapAllocated { alloc_fn, .. } = self {
             format!("__zngur_data = {}();", alloc_fn)
@@ -540,7 +550,7 @@ impl CppTypeDefinition {
 
     pub fn cpp_short_name(&self) -> String {
         if let Some(c) = &self.cpp_stack_owned {
-            c.cpp_type.split("::").last().unwrap().to_string()
+            c.0.split("::").last().unwrap().to_string()
         } else {
             "".to_string()
         }

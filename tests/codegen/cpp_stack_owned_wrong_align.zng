@@ -1,0 +1,12 @@
+//@ compile_fail
+//@ error_contains: Alignment mismatch
+
+#cpp_additional_includes "
+#include <cstdint>
+struct alignas(8) CppAligned { int64_t a; };
+"
+
+type crate::MyCppType {
+    #cpp_stack_owned "::CppAligned";
+    #layout(size = 8, align = 4);
+}

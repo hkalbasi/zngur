@@ -1,0 +1,16 @@
+Error: `#cpp_stack_owned` cannot be used with `#heap_allocated` for type crate::Way.
+   ╭─[ cpp_stack_owned_conflict_across_files.zng:5:5 ]
+   │
+ 5 │     #cpp_stack_owned "::osmium::Way";
+   │     ────────────────┬────────────────  
+   │                     ╰────────────────── `#cpp_stack_owned` declared here
+   │
+   ├─[ ./cpp_stack_owned_heap_fixture.zng:2:5 ]
+   │
+ 2 │     #heap_allocated;
+   │     ───────┬───────  
+   │            ╰───────── `#heap_allocated` declared here
+   │ 
+   │ Note: `#cpp_stack_owned` types must use `#layout(size = X, align = Y)`.
+───╯
+cfg values used:

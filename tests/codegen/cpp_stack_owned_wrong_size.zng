@@ -1,0 +1,12 @@
+//@ compile_fail
+//@ error_contains: Size mismatch
+
+#cpp_additional_includes "
+#include <cstdint>
+struct CppBox { int64_t a; int64_t b; };
+"
+
+type crate::MyCppType {
+    #cpp_stack_owned "::CppBox";
+    #layout(size = 8, align = 8);
+}

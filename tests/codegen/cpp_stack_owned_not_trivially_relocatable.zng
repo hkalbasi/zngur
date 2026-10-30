@@ -1,0 +1,15 @@
+//@ compile_fail
+//@ error_contains: Type must be trivially relocatable
+
+#cpp_additional_includes "
+#include <cstdint>
+struct NonTrivialCpp {
+    int64_t a;
+    ~NonTrivialCpp() {}
+};
+"
+
+type crate::MyCppType {
+    #cpp_stack_owned "::NonTrivialCpp";
+    #layout(size = 8, align = 8);
+}

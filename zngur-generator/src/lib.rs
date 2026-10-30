@@ -116,7 +116,7 @@ impl ZngurGenerator {
             if is_copy {
                 rust_file.add_static_is_copy_assert(&ty);
             }
-            if let Some(cpp_stack_owned) = &ty_def.cpp_stack_owned {
+            if ty_def.cpp_stack_owned.is_some() {
                 let type_name = ty.to_string().split("::").last().unwrap().to_string();
                 let destructor_name = format!("_zngur_crate_{type_name}_destructor");
                 let mangled_name = rust_file.add_extern_cpp_function(
@@ -125,8 +125,9 @@ impl ZngurGenerator {
                     &RustType::Tuple(vec![]),
                     true,
                 );
-                let size = cpp_stack_owned.size;
-                let align = cpp_stack_owned.align;
+                let LayoutPolicy::StackAllocated { size, align } = layout else {
+                    unreachable!("Validation ensures cpp_stack_owned has StackAllocated layout");
+                };
                 cpp_mod_content.push_str(&format!(
                     r#"
     #[repr(C)]

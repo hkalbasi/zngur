@@ -152,14 +152,18 @@ object meets the trivial relocatability guarantees. Let's go over an example
 "
 
 type crate::MyCppWrapper {
-    #cpp_stack_owned "::CppType" (size = 8, align = 4);
+    #cpp_stack_owned "::CppType";
+    #layout(size = 8, align = 4);
 }
 ```
 
-Similarly to how we can define opaque C++ objects with `#cpp_ref`, we instead
-use `#cpp_stack_owned` which instructs `zngur` that this type will be stored
-directly in the Rust stack. This requires telling `zngur` the layout information
-of the type.
+Similarly to how we can define opaque C++ objects with `#cpp_ref` and `#cpp_heap_allocated`,
+`#cpp_stack_owned` only names the backing C++ type and instructs `zngur` that this type will be
+stored directly in the Rust stack. The memory layout is specified separately using `#layout`.
+
+> **NOTE**: The legacy syntax `#cpp_stack_owned "::CppType" (size = ..., align = ...);` where layout
+> parameters were embedded directly in the `#cpp_stack_owned` directive is no longer supported and
+> will emit a parse error with a suggested rewrite.
 
 Just like with C++ opaque objects, we can define functions on an `extern C++` block
 
