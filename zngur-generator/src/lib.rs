@@ -101,13 +101,19 @@ impl ZngurGenerator {
             let Some(layout) = ty_def.layout else {
                 unreachable!("Every type should have a defined layout policy before rendering")
             };
+            let is_cpp_stack_owned = ty_def.cpp_stack_owned.is_some();
             match layout {
                 LayoutPolicy::StackAllocated { size, align } => {
                     rust_file.add_static_size_assert(&ty, size);
                     rust_file.add_static_align_assert(&ty, align);
                 }
                 LayoutPolicy::Conservative { size, align } => {
-                    rust_file.add_static_size_upper_bound_assert(&ty, size);
+                    let expected_rust_size = if is_cpp_stack_owned {
+                        size.next_multiple_of(align)
+                    } else {
+                        size
+                    };
+                    rust_file.add_static_size_upper_bound_assert(&ty, expected_rust_size);
                     rust_file.add_static_align_upper_bound_assert(&ty, align);
                 }
                 LayoutPolicy::HeapAllocated => (),
@@ -116,7 +122,7 @@ impl ZngurGenerator {
             if is_copy {
                 rust_file.add_static_is_copy_assert(&ty);
             }
-            if let Some(cpp_stack_owned) = &ty_def.cpp_stack_owned {
+            if let Some(_cpp_stack_owned) = &ty_def.cpp_stack_owned {
                 let type_name = ty.to_string().split("::").last().unwrap().to_string();
                 let destructor_name = format!("_zngur_crate_{type_name}_destructor");
                 let mangled_name = rust_file.add_extern_cpp_function(
@@ -125,14 +131,21 @@ impl ZngurGenerator {
                     &RustType::Tuple(vec![]),
                     true,
                 );
-                let size = cpp_stack_owned.size;
-                let align = cpp_stack_owned.align;
+                let (buf_size, align) = match layout {
+                    LayoutPolicy::StackAllocated { size, align } => (size, align),
+                    LayoutPolicy::Conservative { size, align } => {
+                        (size.next_multiple_of(align), align)
+                    }
+                    _ => unreachable!(
+                        "Validation ensures cpp_stack_owned has StackAllocated or Conservative layout"
+                    ),
+                };
                 cpp_mod_content.push_str(&format!(
                     r#"
     #[repr(C)]
     #[repr(align({align}))]
     pub struct {type_name} {{
-      pub(crate) buffer: core::cell::UnsafeCell<core::mem::MaybeUninit<[u8; {size}]>>,
+      pub(crate) buffer: core::cell::UnsafeCell<core::mem::MaybeUninit<[u8; {buf_size}]>>,
       _no_auto_traits: core::marker::PhantomData<*mut ()>,
       _pinned: core::marker::PhantomPinned,
     }}
@@ -321,7 +334,7 @@ impl ZngurGenerator {
             }
             cpp_file.type_defs.push(CppTypeDefinition {
                 ty: ty.into_cpp(default_ns, &sanitized_crate_name),
-                layout: rust_file.add_layout_policy_shim(&ty, layout),
+                layout: rust_file.add_layout_policy_shim(&ty, layout, is_cpp_stack_owned),
                 constructor,
                 variants,
                 discriminant,
@@ -484,4 +497,46 @@ fn real_inputs_of_method(method: &ZngurMethod, ty: &RustType) -> Vec<RustType> {
         .chain(method.inputs.clone())
         .collect::<Vec<_>>();
     rusty_inputs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zngur_def::{CppStackOwned, LayoutPolicy, RustPathAndGenerics, ZngurType};
+
+    #[test]
+    fn cpp_stack_owned_conservative_layout_rounds_buffer_to_alignment() {
+        let spec = ZngurSpec {
+            types: vec![ZngurType {
+                ty: RustType::Adt(RustPathAndGenerics {
+                    path: vec!["crate".to_owned(), "Way".to_owned()],
+                    generics: vec![],
+                    named_generics: vec![],
+                }),
+                layout: Some(LayoutPolicy::Conservative { size: 20, align: 8 }),
+                wellknown_traits: vec![],
+                exhaustive: true,
+                methods: vec![],
+                constructor: None,
+                variants: vec![],
+                fields: vec![],
+                cpp_heap_allocated: None,
+                cpp_ref: None,
+                cpp_stack_owned: Some(CppStackOwned("::osmium::Way".to_owned())),
+            }],
+            ..Default::default()
+        };
+        let (rust_code, h, _cpp) =
+            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
+        assert!(rust_code.contains("MaybeUninit<[u8; 24]>"));
+        assert!(rust_code.contains("__zngur_assert_size_conservative!(crate::Way, 24);"));
+        assert!(rust_code.contains("__zngur_assert_align_conservative!(crate::Way, 8);"));
+        assert!(h.contains("::std::array< ::uint8_t, 24> __zngur_data;"));
+        assert!(h.contains(
+            "static_assert(sizeof(::osmium::Way) <= 20, \"Size exceeds conservative layout\");"
+        ));
+        assert!(h.contains(
+            "static_assert(alignof(::osmium::Way) <= 8, \"Alignment exceeds conservative layout\");"
+        ));
+    }
 }

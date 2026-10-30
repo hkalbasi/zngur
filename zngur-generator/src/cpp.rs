@@ -431,6 +431,11 @@ pub enum CppLayoutPolicy {
         size: usize,
         align: usize,
     },
+    Conservative {
+        buf_size: usize,
+        declared_size: usize,
+        align: usize,
+    },
     HeapAllocated {
         size_fn: String,
         alloc_fn: String,
@@ -445,22 +450,43 @@ impl CppLayoutPolicy {
     }
 
     pub fn is_stack_allocated(&self) -> bool {
-        matches!(self, CppLayoutPolicy::StackAllocated { .. })
+        matches!(
+            self,
+            CppLayoutPolicy::StackAllocated { .. } | CppLayoutPolicy::Conservative { .. }
+        )
     }
 
     pub fn stack_size(&self) -> usize {
-        if let CppLayoutPolicy::StackAllocated { size, .. } = self {
-            *size
-        } else {
-            0
+        match self {
+            CppLayoutPolicy::StackAllocated { size, .. } => *size,
+            CppLayoutPolicy::Conservative { buf_size, .. } => *buf_size,
+            _ => 0,
         }
     }
 
     pub fn stack_align(&self) -> usize {
-        if let CppLayoutPolicy::StackAllocated { align, .. } = self {
-            *align
-        } else {
-            1
+        match self {
+            CppLayoutPolicy::StackAllocated { align, .. }
+            | CppLayoutPolicy::Conservative { align, .. } => *align,
+            _ => 1,
+        }
+    }
+
+    pub fn layout_checks(&self, cpp_type: &str) -> String {
+        match self {
+            CppLayoutPolicy::StackAllocated { size, align } => format!(
+                "static_assert(sizeof({cpp_type}) == {size}, \"Size mismatch\");\n          \
+                 static_assert(alignof({cpp_type}) == {align}, \"Alignment mismatch\");"
+            ),
+            CppLayoutPolicy::Conservative {
+                declared_size,
+                align,
+                ..
+            } => format!(
+                "static_assert(sizeof({cpp_type}) <= {declared_size}, \"Size exceeds conservative layout\");\n          \
+                 static_assert(alignof({cpp_type}) <= {align}, \"Alignment exceeds conservative layout\");"
+            ),
+            _ => String::new(),
         }
     }
 
@@ -540,7 +566,7 @@ impl CppTypeDefinition {
 
     pub fn cpp_short_name(&self) -> String {
         if let Some(c) = &self.cpp_stack_owned {
-            c.cpp_type.split("::").last().unwrap().to_string()
+            c.0.split("::").last().unwrap().to_string()
         } else {
             "".to_string()
         }

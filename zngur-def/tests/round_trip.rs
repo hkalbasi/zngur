@@ -195,13 +195,32 @@ fn reparse_cpp_stack_owned() {
     let _ = check_round_trip(
         r#"
 type crate::Way {
-    #cpp_stack_owned "::osmium::Way" (size = 16, align = 8);
+    #layout(size = 16, align = 8);
+    #cpp_stack_owned "::osmium::Way";
 }
     "#,
         expect![[r#"
             type crate::Way {
                 #layout(size = 16, align = 8);
-                #cpp_stack_owned "::osmium::Way" (size = 16, align = 8);
+                #cpp_stack_owned "::osmium::Way";
+            }
+        "#]],
+    );
+}
+
+#[test]
+fn reparse_cpp_stack_owned_conservative() {
+    let _ = check_round_trip(
+        r#"
+type crate::Way {
+    #layout_conservative(size = 16, align = 8);
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        expect![[r#"
+            type crate::Way {
+                #layout_conservative(size = 16, align = 8);
+                #cpp_stack_owned "::osmium::Way";
             }
         "#]],
     );

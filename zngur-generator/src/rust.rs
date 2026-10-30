@@ -1441,13 +1441,23 @@ pub extern "C" fn {make_coro_future_fn}(handle: *mut u8, out: *mut u8) {{
         &mut self,
         ty: &RustType,
         layout: LayoutPolicy,
+        round_conservative_to_align: bool,
     ) -> CppLayoutPolicy {
         match layout {
             LayoutPolicy::StackAllocated { size, align } => {
                 CppLayoutPolicy::StackAllocated { size, align }
             }
             LayoutPolicy::Conservative { size, align } => {
-                CppLayoutPolicy::StackAllocated { size, align }
+                let buf_size = if round_conservative_to_align {
+                    size.next_multiple_of(align)
+                } else {
+                    size
+                };
+                CppLayoutPolicy::Conservative {
+                    buf_size,
+                    declared_size: size,
+                    align,
+                }
             }
             LayoutPolicy::HeapAllocated => {
                 let size_fn = self.mangle_name(&format!("{ty}_size_fn"));

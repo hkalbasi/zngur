@@ -46,7 +46,7 @@ extern "C" {
   {% if let Some(cpp_stack_owned) = td.cpp_stack_owned %}
     void _zngur__zngur_crate_{{ td.rust_short_name() }}_destructor_(uint8_t* i0, uint8_t* o) {
       (void)o;
-      auto* data = reinterpret_cast< {{ cpp_stack_owned.cpp_type }}* >(i0);
+      auto* data = reinterpret_cast< {{ cpp_stack_owned.0 }}* >(i0);
       data->~{{ td.cpp_short_name() }}();
     }
   {% endif %}

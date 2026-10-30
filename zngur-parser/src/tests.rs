@@ -1,7 +1,9 @@
 use std::panic::catch_unwind;
 
-use expect_test::expect;
-use zngur_def::{CppHeapAllocated, LayoutPolicy, RustPathAndGenerics, RustType, ZngurSpec};
+use expect_test::{Expect, expect};
+use zngur_def::{
+    CppHeapAllocated, CppStackOwned, LayoutPolicy, RustPathAndGenerics, RustType, ZngurSpec,
+};
 
 use crate::{
     DefaultImportResolver, ImportResolver, ParsedZngFile, ReportSink,
@@ -95,6 +97,33 @@ fn check_success(zng: &str) {
 
 pub struct ErrorText(pub String);
 
+fn check_fail(zng: &str, error: Expect) {
+    let r = catch_unwind(|| {
+        let _ = parse_str(zng, NullCfg, |_| {});
+    });
+    match r {
+        Ok(_) => panic!("Parsing succeeded but we expected fail"),
+        Err(e) => match e.downcast::<ErrorText>() {
+            Ok(t) => error.assert_eq(&t.0),
+            Err(e) => std::panic::resume_unwind(e),
+        },
+    }
+}
+
+fn check_import_fail(zng: &str, error: Expect, resolver: &MockFilesystem) {
+    let r = catch_unwind(|| {
+        let _ = parse_str_with_resolver(zng, NullCfg, resolver, |_| {});
+    });
+
+    match r {
+        Ok(_) => panic!("Parsing succeeded but we expected fail"),
+        Err(e) => match e.downcast::<ErrorText>() {
+            Ok(t) => error.assert_eq(&t.0),
+            Err(e) => std::panic::resume_unwind(e),
+        },
+    }
+}
+
 // useful for debugging a test that should succeeded on parse
 fn catch_parse_fail(
     zng: &str,
@@ -157,6 +186,366 @@ type crate::Way {
     assert_eq!(
         ty.cpp_heap_allocated,
         Some(CppHeapAllocated("::osmium::Way".to_owned())),
+    );
+}
+
+#[test]
+fn cpp_stack_owned_valid_exact_layout() {
+    let result = parse_str(
+        r#"
+type crate::Way {
+    #layout(size = 16, align = 8);
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = result.spec.types.first().expect("no type parsed");
+    assert_eq!(
+        ty.cpp_stack_owned,
+        Some(CppStackOwned("::osmium::Way".to_owned()))
+    );
+    assert_eq!(
+        ty.layout,
+        Some(LayoutPolicy::StackAllocated { size: 16, align: 8 })
+    );
+}
+
+#[test]
+fn cpp_stack_owned_valid_conservative_layout() {
+    let result = parse_str(
+        r#"
+type crate::Way {
+    #layout_conservative(size = 20, align = 8);
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        NullCfg,
+        |_| {},
+    );
+    let ty = result.spec.types.first().expect("no type parsed");
+    assert_eq!(
+        ty.cpp_stack_owned,
+        Some(CppStackOwned("::osmium::Way".to_owned()))
+    );
+    assert_eq!(
+        ty.layout,
+        Some(LayoutPolicy::Conservative { size: 20, align: 8 })
+    );
+}
+
+#[test]
+fn layout_invalid_alignment_power_of_two() {
+    check_fail(
+        r#"
+type crate::Way {
+    #layout(size = 16, align = 0);
+}
+    "#,
+        expect![[r#"
+            Error: Alignment must be a power of two
+               ╭─[ test.zng:3:24 ]
+               │
+             3 │     #layout(size = 16, align = 0);
+               │                        ──┬──  
+               │                          ╰──── Alignment must be a power of two
+            ───╯
+        "#]],
+    );
+    check_fail(
+        r#"
+type crate::Way {
+    #layout_conservative(size = 16, align = 3);
+}
+    "#,
+        expect![[r#"
+            Error: Alignment must be a power of two
+               ╭─[ test.zng:3:37 ]
+               │
+             3 │     #layout_conservative(size = 16, align = 3);
+               │                                     ──┬──  
+               │                                       ╰──── Alignment must be a power of two
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_stack_owned_error_with_heap_allocated() {
+    check_fail(
+        r#"
+type crate::Way {
+    #heap_allocated;
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        expect![[r#"
+            Error: `#cpp_stack_owned` cannot be used with `#heap_allocated` for type crate::Way.
+               ╭─[ test.zng:4:5 ]
+               │
+             4 │     #cpp_stack_owned "::osmium::Way";
+               │     ────────────────┬────────────────  
+               │                     ╰────────────────── `#cpp_stack_owned` declared here
+               │
+               ├─[ test.zng:4:5 ]
+               │
+             3 │     #heap_allocated;
+               │     ───────┬───────  
+               │            ╰───────── `#heap_allocated` declared here
+               │ 
+               │ Note: `#cpp_stack_owned` types must use `#layout` or `#layout_conservative`.
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_stack_owned_error_with_only_by_ref() {
+    check_fail(
+        r#"
+type crate::Way {
+    #only_by_ref;
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        expect![[r#"
+            Error: `#cpp_stack_owned` cannot be used with `#only_by_ref` for type crate::Way.
+               ╭─[ test.zng:4:5 ]
+               │
+             4 │     #cpp_stack_owned "::osmium::Way";
+               │     ────────────────┬────────────────  
+               │                     ╰────────────────── `#cpp_stack_owned` declared here
+               │
+               ├─[ test.zng:4:5 ]
+               │
+             3 │     #only_by_ref;
+               │     ──────┬─────  
+               │           ╰─────── `#only_by_ref` declared here
+               │ 
+               │ Note: `#cpp_stack_owned` types must use `#layout` or `#layout_conservative`.
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_directives_are_mutually_exclusive() {
+    check_fail(
+        r#"
+type crate::Way {
+    #cpp_ref "::osmium::Way";
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        expect![[r#"
+            Error: `#cpp_stack_owned` cannot be used with `#cpp_ref` for type crate::Way.
+               ╭─[ test.zng:3:5 ]
+               │
+             4 │     #cpp_stack_owned "::osmium::Way";
+               │     ────────────────┬────────────────  
+               │                     ╰────────────────── `#cpp_stack_owned` declared here
+               │
+               ├─[ test.zng:3:5 ]
+               │
+             3 │     #cpp_ref "::osmium::Way";
+               │     ────────────┬────────────  
+               │                 ╰────────────── `#cpp_ref` declared here
+            ───╯
+        "#]],
+    );
+    check_fail(
+        r#"
+type crate::Way {
+    #layout(size = 16, align = 8);
+    #cpp_heap_allocated "::osmium::Way";
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        expect![[r#"
+            Error: `#cpp_stack_owned` cannot be used with `#cpp_heap_allocated` for type crate::Way.
+               ╭─[ test.zng:4:5 ]
+               │
+             5 │     #cpp_stack_owned "::osmium::Way";
+               │     ────────────────┬────────────────  
+               │                     ╰────────────────── `#cpp_stack_owned` declared here
+               │
+               ├─[ test.zng:4:5 ]
+               │
+             4 │     #cpp_heap_allocated "::osmium::Way";
+               │     ──────────────────┬─────────────────  
+               │                       ╰─────────────────── `#cpp_heap_allocated` declared here
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_stack_owned_merged_across_files() {
+    let resolver = MockFilesystem::new(vec![(
+        "./layout.zng",
+        r#"
+type crate::Way {
+    #layout_conservative(size = 24, align = 8);
+}
+"#,
+    )]);
+    let parsed = parse_str_with_resolver(
+        r#"
+merge "./layout.zng";
+type crate::Way {
+    #cpp_stack_owned "::osmium::Way";
+}
+"#,
+        NullCfg,
+        &resolver,
+        |_| {},
+    );
+    let ty = parsed.spec.types.first().expect("no type parsed");
+    assert_eq!(
+        ty.cpp_stack_owned,
+        Some(CppStackOwned("::osmium::Way".to_owned()))
+    );
+    assert_eq!(
+        ty.layout,
+        Some(LayoutPolicy::Conservative { size: 24, align: 8 })
+    );
+
+    let conflict_resolver = MockFilesystem::new(vec![(
+        "./heap.zng",
+        r#"
+type crate::Way {
+    #heap_allocated;
+}
+"#,
+    )]);
+    check_import_fail(
+        r#"
+merge "./heap.zng";
+type crate::Way {
+    #cpp_stack_owned "::osmium::Way";
+}
+"#,
+        expect![[r#"
+            Error: `#cpp_stack_owned` cannot be used with `#heap_allocated` for type crate::Way.
+               ╭─[ test.zng:4:5 ]
+               │
+             4 │     #cpp_stack_owned "::osmium::Way";
+               │     ────────────────┬────────────────  
+               │                     ╰────────────────── `#cpp_stack_owned` declared here
+               │
+               ├─[ ./heap.zng:3:5 ]
+               │
+             3 │     #heap_allocated;
+               │     ───────┬───────  
+               │            ╰───────── `#heap_allocated` declared here
+               │ 
+               │ Note: `#cpp_stack_owned` types must use `#layout` or `#layout_conservative`.
+            ───╯
+        "#]],
+        &conflict_resolver,
+    );
+}
+
+#[test]
+fn cpp_stack_owned_with_cfg_conditional_layout() {
+    let source = r#"
+#unstable(cfg_if)
+type crate::Way {
+    #cpp_stack_owned "::osmium::Way";
+    #if cfg!(target_pointer_width = "64") {
+        #layout(size = 16, align = 8);
+    } #else {
+        #layout(size = 8, align = 4);
+    }
+}
+"#;
+    let parsed64 = catch_parse_fail(
+        source,
+        InMemoryRustCfgProvider::default().with_values([("target_pointer_width", &["64"])]),
+    );
+    assert_layout(16, 8, &parsed64.spec.types[0].layout);
+    let parsed32 = catch_parse_fail(source, NullCfg);
+    assert_layout(8, 4, &parsed32.spec.types[0].layout);
+}
+
+#[test]
+fn cpp_stack_owned_error_with_no_layout() {
+    check_fail(
+        r#"
+type crate::Way {
+    #cpp_stack_owned "::osmium::Way";
+}
+    "#,
+        expect![[r#"
+            Error: No layout policy found for type crate::Way.
+               ╭─[ test.zng:1:1 ]
+               │
+             2 │ type crate::Way {
+               │      ─────┬────  
+               │           ╰────── Type first declared here.
+               │ 
+               │ Note: Type is declared with `#cpp_stack_owned` which requires a layout directive like `#layout(size = X, align = Y)` or `#layout_conservative(size = X, align = Y)`.
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn cpp_stack_owned_old_syntax_error_with_help() {
+    check_fail(
+        r#"
+type crate::Way {
+    #cpp_stack_owned "::osmium::Way" (size = 16, align = 8);
+}
+    "#,
+        expect![[r#"
+            Error: Old syntax `#cpp_stack_owned` with layout properties is no longer supported.
+               ╭─[ test.zng:3:5 ]
+               │
+             3 │     #cpp_stack_owned "::osmium::Way" (size = 16, align = 8);
+               │     ────────────────────────────┬───────────────────────────  
+               │                                 ╰───────────────────────────── layout parameters no longer accepted here
+               │ 
+               │ Help: layout moved to its own directive: `#cpp_stack_owned "::osmium::Way"; #layout(size = 16, align = 8);`
+            ───╯
+        "#]],
+    );
+    check_fail(
+        r#"
+type crate::Way {
+    #cpp_stack_owned "::osmium::Way" (size = 16);
+}
+    "#,
+        expect![[r#"
+            Error: Old syntax `#cpp_stack_owned` with layout properties is no longer supported.
+               ╭─[ test.zng:3:5 ]
+               │
+             3 │     #cpp_stack_owned "::osmium::Way" (size = 16);
+               │     ──────────────────────┬──────────────────────  
+               │                           ╰──────────────────────── layout parameters no longer accepted here
+               │ 
+               │ Help: layout moved to its own directive: `#cpp_stack_owned "::osmium::Way"; #layout(size = 16, align = Y);`
+            ───╯
+        "#]],
+    );
+    check_fail(
+        r#"
+type crate::Way {
+    #cpp_stack_owned "::osmium::Way" ();
+}
+    "#,
+        expect![[r#"
+            Error: Old syntax `#cpp_stack_owned` with layout properties is no longer supported.
+               ╭─[ test.zng:3:5 ]
+               │
+             3 │     #cpp_stack_owned "::osmium::Way" ();
+               │     ──────────────────┬─────────────────  
+               │                       ╰─────────────────── layout parameters no longer accepted here
+               │ 
+               │ Help: layout moved to its own directive: `#cpp_stack_owned "::osmium::Way"; #layout(size = X, align = Y);`
+            ───╯
+        "#]],
     );
 }
 
@@ -492,7 +881,7 @@ type ::std::string::String {
         #layout(size = 12, align = 4);
     } #else {
         // silly size for testing
-        #layout(size = 27, align = 9);
+        #layout(size = 48, align = 16);
     }
 }
     "#;
@@ -511,7 +900,7 @@ type ::std::string::String {
     let parsed = catch_parse_fail(source, NullCfg);
     let ty = parsed.spec.types.first().expect("no type parsed");
 
-    assert_layout(27, 9, &ty.layout);
+    assert_layout(48, 16, &ty.layout);
 }
 
 #[test]
@@ -530,7 +919,7 @@ type ::std::string::String {
 
         _ => {
             // silly size for testing
-            #layout(size = 27, align = 9);
+            #layout(size = 48, align = 16);
         }
     }
 }
@@ -550,7 +939,7 @@ type ::std::string::String {
     let parsed = catch_parse_fail(source, NullCfg);
     let ty = parsed.spec.types.first().expect("no type parsed");
 
-    assert_layout(27, 9, &ty.layout);
+    assert_layout(48, 16, &ty.layout);
 }
 
 macro_rules! test_paths_with_cfg {
