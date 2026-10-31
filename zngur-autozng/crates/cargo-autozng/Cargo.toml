@@ -1,0 +1,16 @@
+[package]
+name         = "cargo-autozng"
+version      = { workspace = true }
+license      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+repository   = { workspace = true }
+authors      = { workspace = true }
+keywords     = { workspace = true }
+
+[[bin]]
+name = "cargo-autozng"
+path = "bin/cargo-autozng.rs"
+
+[dependencies]
+semver = {workspace = true}

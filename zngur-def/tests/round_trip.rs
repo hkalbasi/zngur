@@ -159,6 +159,44 @@ type [u8] {
 }
 
 #[test]
+fn reparse_unsized() {
+    // An unsized type derives its layout policy from `?Sized`; the parser rejects an explicit
+    // layout next to it, so the printer must not emit one (and must not spell it `Unsized`).
+    let _ = check_round_trip(
+        r#"
+type str {
+    wellknown_traits(?Sized);
+}
+    "#,
+        expect![[r#"
+            type str {
+                wellknown_traits(?Sized);
+            }
+        "#]],
+    );
+}
+
+#[test]
+fn reparse_implicit_drop_is_not_printed() {
+    // `Drop` is implicit for any non-`Copy` type; the parser re-adds it, and it is not a
+    // spellable trait, so the printer must leave it out.
+    let _ = check_round_trip(
+        r#"
+type MyType {
+    #layout(size = 16, align = 8);
+    wellknown_traits(Debug);
+}
+    "#,
+        expect![[r#"
+            type ::MyType {
+                #layout(size = 16, align = 8);
+                wellknown_traits(Debug);
+            }
+        "#]],
+    );
+}
+
+#[test]
 fn reparse_cpp_heap_allocated() {
     let _ = check_round_trip(
         r#"
@@ -259,6 +297,29 @@ type MyType {
                 fn renamed(&self) -> &[u8] as renamed_fn;
                 fn other_self(::Arc<::MyType>, &str);
                 fn static(&str) -> ::MyType;
+            }
+        "#]],
+    );
+}
+
+#[test]
+fn reparse_method_generics() {
+    // The turbofish must be comma-separated with no trailing comma (`<u8, >` would not parse).
+    let _ = check_round_trip(
+        r#"
+type MyType {
+    #layout(size = 24, align = 8);
+
+    fn foo<u8>(&self) -> u8;
+    fn bar<u8, u64>(self) -> u64;
+}
+    "#,
+        expect![[r#"
+            type ::MyType {
+                #layout(size = 24, align = 8);
+
+                fn foo<u8>(&self) -> u8;
+                fn bar<u8, u64>(self) -> u64;
             }
         "#]],
     );

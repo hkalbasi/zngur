@@ -1,0 +1,33 @@
+[package]
+name         = "autozng-driver"
+description  = "Generating Zngur zng files automatically for a Rust crate"
+version      = { workspace = true }
+license      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+repository   = { workspace = true }
+authors      = { workspace = true }
+keywords     = { workspace = true }
+
+[[bin]]
+name = "autozng-driver"
+path = "bin/autozng-driver.rs"
+
+[dependencies]
+zngur-def = { workspace = true, features = ["printing"] }
+indexmap = { workspace = true }
+itertools = { workspace = true }
+thiserror = { workspace = true }
+bitflags = { workspace = true }
+convert_case = { workspace = true }
+rustc-hash = { workspace = true }
+scoped-tls = { workspace = true }
+const_format = "0.2.36"
+
+[dev-dependencies]
+expect-test = { workspace = true }
+
+[package.metadata.rust-analyzer]
+# This crate uses #[feature(rustc_private)].
+# See https://github.com/rust-analyzer/rust-analyzer/pull/7891
+rustc_private = true

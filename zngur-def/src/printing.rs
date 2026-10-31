@@ -385,9 +385,16 @@ impl WriteIDL for crate::ZngurType {
             p.indent();
 
             // don't duplicate layout info
-            if self.cpp_ref.is_none() {
-                p.write_indent()?;
-                p.write_idl(&self.layout)?;
+            // An unsized type gets its implicit `#only_by_ref` policy from the `?Sized`
+            let is_unsized = self
+                .wellknown_traits
+                .iter()
+                .any(|wk| matches!(wk, crate::ZngurWellknownTrait::Unsized));
+            if self.cpp_ref.is_none() && !is_unsized {
+                if let Some(layout) = &self.layout {
+                    p.write_indent()?;
+                    p.write_idl(layout)?;
+                }
             }
             if self.cpp_heap_allocated.is_some() {
                 p.write_indent()?;
@@ -407,11 +414,12 @@ impl WriteIDL for crate::ZngurType {
                     .wellknown_traits
                     .iter()
                     .filter(|wk| !matches!(wk, crate::ZngurWellknownTrait::Drop))
+                    .copied()
                     .collect();
                 if !drop_filtered.is_empty() {
                     p.write_indent()?;
                     write!(p, "wellknown_traits(")?;
-                    p.write_idl(&self.wellknown_traits)?;
+                    p.write_idl(&drop_filtered)?;
                     writeln!(p, ");")?;
                 }
             }
@@ -473,6 +481,7 @@ impl WriteIDL for crate::ZngurTrait {
                         None => {}
                     }
                     p.write_idl(method)?;
+                    writeln!(p, ";")?;
                 }
                 p.dedent();
             }
@@ -594,7 +603,7 @@ impl WriteIDL for crate::ZngurWellknownTrait {
         match self {
             Self::Debug => write!(p, "Debug"),
             Self::Drop => write!(p, "Drop"),
-            Self::Unsized => write!(p, "Unsized"),
+            Self::Unsized => write!(p, "?Sized"),
             Self::Copy => write!(p, "Copy"),
         }
     }
@@ -728,10 +737,10 @@ impl WriteIDL for crate::ZngurMethod {
         if self.generics.len() > 0 {
             write!(p, "<")?;
             for (i, generic) in self.generics.iter().enumerate() {
-                p.write_idl(generic)?;
-                if i < self.generics.len() {
+                if i > 0 {
                     write!(p, ", ")?;
                 }
+                p.write_idl(generic)?;
             }
             write!(p, ">")?;
         }

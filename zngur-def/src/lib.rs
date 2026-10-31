@@ -491,7 +491,7 @@ impl Display for RustType {
             RustType::Dyn(tr, marker_bounds) => {
                 write!(f, "dyn {tr}")?;
                 for mb in marker_bounds {
-                    write!(f, "+ {mb}")?;
+                    write!(f, " + {mb}")?;
                 }
                 Ok(())
             }

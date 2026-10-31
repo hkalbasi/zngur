@@ -1,11 +1,33 @@
-[package]
-name = "zngur-autozng"
-description = "Generating Zngur zng files automatically for a Rust crate"
-version = "0.11.0"
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
+[workspace]
+resolver = "3"
+members = [
+    "crates/cargo-autozng", "crates/autozng-driver",
+    "examples/autozng_regression_test_1",
+    "examples/png-reexport"
+]
 
-[dependencies]
-serde = { version = "1.0.204", features = ["derive"] }
-serde_json = "1.0.122"
+[workspace.package]
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+edition = "2024"
+rust-version = "1.98"
+repository = "https://github.com/hkalbasi/zngur/tree/main/zngur-autozng"
+authors = ["Rachel Powers <powers.e.rachel@gmail.com>"]
+keywords = ["zngur", "zng"]
+
+
+[workspace.dependencies]
+zngur-def = { version = " 0.11.0", path = "../zngur-def" }
+indexmap = "2.13.0"
+itertools = "0.15"
+thiserror = "2.0.19"
+bitflags = "2.13.1"
+convert_case = "0.12.0"
+semver = "1.0.28"
+rustc-hash = "2.1.3"
+scoped-tls = "1.0.1"
+expect-test = "1.5.1"
+
+
+[profile.dev]
+opt-level = 3

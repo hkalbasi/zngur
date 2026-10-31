@@ -1,0 +1,119 @@
+use rustc_public::{
+    ty::{RigidTy, Ty, TyConstKind, TyKind},
+    visitor::Visitable,
+};
+
+pub trait RustcPublicTyExt {
+    fn base_ty(&self) -> rustc_public::ty::Ty;
+    #[allow(dead_code)] // collects a type's inner types; not consumed yet
+    fn dependent_tys(&self) -> Vec<rustc_public::ty::Ty> {
+        let mut tys = Vec::new();
+        self.dependent_tys_inner(&mut tys);
+        tys
+    }
+    #[allow(dead_code)] // only reached through `dependent_tys`
+    fn dependent_tys_inner(&self, tys: &mut Vec<rustc_public::ty::Ty>);
+
+    /// the type contains no generic params or unevaluated constants
+    fn is_concrete(&self) -> bool;
+    fn adt_def(&self) -> Option<rustc_public::ty::AdtDef>;
+
+    /// If the type is a trait object (`dyn Trait<ConcreteArgs>`, optionally behind a reference or
+    /// raw pointer), the object's primary trait reference.
+    ///
+    /// Used by `#[autozng::emit_items(emit_traits = true)]` to name a concrete trait instantiation
+    /// as an export target: a generic trait is only representable in `.zng` once all of its type
+    /// parameters are known, so the user enumerates e.g. `&dyn GenericTrait<u32>`.
+    fn concrete_trait_ref(&self) -> Option<rustc_public::ty::TraitRef>;
+}
+
+impl RustcPublicTyExt for rustc_public::ty::Ty {
+    fn base_ty(&self) -> rustc_public::ty::Ty {
+        let mut ty = *self;
+        while let TyKind::RigidTy(RigidTy::RawPtr(inner_ty, _) | RigidTy::Ref(_, inner_ty, _)) =
+            ty.kind()
+        {
+            ty = inner_ty
+        }
+        ty
+    }
+
+    fn dependent_tys_inner(&self, tys: &mut Vec<rustc_public::ty::Ty>) {
+        let kind = self.base_ty().kind();
+        if let TyKind::RigidTy(ty) = &kind {
+            match ty {
+                // push inner tys of primitive containers
+                RigidTy::Array(ty, _) | RigidTy::Slice(ty) => {
+                    tys.push(*ty);
+                }
+                RigidTy::Tuple(inner_tys) => {
+                    tys.extend(inner_tys.iter().copied());
+                }
+                // push the inputs and outputs of the callable
+                RigidTy::FnDef(..) | RigidTy::FnPtr(_) | RigidTy::Closure(..) => {
+                    let sig = kind.fn_sig().unwrap().skip_binder();
+                    tys.extend(sig.inputs_and_output.iter().copied());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn is_concrete(&self) -> bool {
+        struct GenericTyVisitor;
+
+        // a visitor that breaks on generic or unevaluated params
+        impl rustc_public::visitor::Visitor for GenericTyVisitor {
+            type Break = ();
+
+            fn visit_ty(&mut self, ty: &Ty) -> std::ops::ControlFlow<Self::Break> {
+                if matches!(ty.kind(), TyKind::Param(_)) {
+                    std::ops::ControlFlow::Break(())
+                } else {
+                    ty.super_visit(self)
+                }
+            }
+
+            fn visit_const(
+                &mut self,
+                c: &rustc_public::ty::TyConst,
+            ) -> std::ops::ControlFlow<Self::Break> {
+                if matches!(
+                    c.kind(),
+                    TyConstKind::Param(_) | TyConstKind::Unevaluated(_, _)
+                ) {
+                    std::ops::ControlFlow::Break(())
+                } else {
+                    c.super_visit(self)
+                }
+            }
+        }
+
+        let cf = self.visit(&mut GenericTyVisitor);
+        cf.is_continue()
+    }
+
+    fn adt_def(&self) -> Option<rustc_public::ty::AdtDef> {
+        if let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = self.base_ty().kind() {
+            Some(adt_def)
+        } else {
+            None
+        }
+    }
+
+    fn concrete_trait_ref(&self) -> Option<rustc_public::ty::TraitRef> {
+        use rustc_public::ty::{Binder, ExistentialPredicate};
+
+        let base = self.base_ty();
+        let TyKind::RigidTy(RigidTy::Dynamic(predicates, _)) = base.kind() else {
+            return None;
+        };
+        match predicates.into_iter().next() {
+            Some(Binder {
+                value: ExistentialPredicate::Trait(trait_ref),
+                ..
+            }) => Some(trait_ref.with_self_ty(base)),
+            _ => None,
+        }
+    }
+}
