@@ -36,7 +36,7 @@ impl Greet for Person {
 
             field name (offset = 0, type = ::std::string::String);
 
-            fn greet(&self) -> ::std::string::String use crate::Greet;
+            safe fn greet(&self) -> ::std::string::String use crate::Greet;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);
@@ -70,11 +70,11 @@ impl Greet for Person {
         type crate::Person {
             #layout(size = 0, align = 1);
 
-            fn greet(&self) -> ::std::string::String use crate::Greet;
+            safe fn greet(&self) -> ::std::string::String use crate::Greet;
         }
 
         trait crate::Greet {
-            fn greet(&self) -> ::std::string::String;
+            safe fn greet(&self) -> ::std::string::String;
         }
     "#]]);
 }
@@ -107,7 +107,7 @@ const _: [&str; 0] = [];
         type str {
             wellknown_traits(?Sized, Debug);
 
-            fn describe(&self) -> ::std::string::String use crate::Describe;
+            safe fn describe(&self) -> ::std::string::String use crate::Describe;
         }
     "#]]);
 }
@@ -145,7 +145,7 @@ const _: [Wrapper<u32>; 0] = [];
         type crate::Wrapper<u32> {
             #layout(size = 4, align = 4);
 
-            fn describe(&self) -> ::std::string::String use crate::Describe;
+            safe fn describe(&self) -> ::std::string::String use crate::Describe;
         }
     "#]]);
 }
@@ -182,7 +182,7 @@ impl<T: Marker> Describe for T {
         type crate::Marked {
             #layout(size = 0, align = 1);
 
-            fn describe(&self) -> ::std::string::String use crate::Describe;
+            safe fn describe(&self) -> ::std::string::String use crate::Describe;
         }
 
         type crate::Unmarked {
@@ -228,7 +228,7 @@ const _: () = {
 
             field value (offset = 0, type = u32);
 
-            fn describe(&self) -> ::std::string::String use crate::Describe;
+            safe fn describe(&self) -> ::std::string::String use crate::Describe;
         }
     "#]]);
 }

@@ -288,7 +288,7 @@ fn build_trait_decl_method(trait_fn: &TraitFnRecord, concrete: bool) -> Option<Z
         receiver,
         inputs,
         output,
-        is_safe: matches!(signature.safety, rustc_public::mir::Safety::Safe),
+        is_safe: Some(matches!(signature.safety, rustc_public::mir::Safety::Safe)),
     })
 }
 
@@ -762,7 +762,7 @@ fn build_method(
             receiver,
             inputs,
             output,
-            is_safe: matches!(signature.safety, rustc_public::mir::Safety::Safe),
+            is_safe: Some(matches!(signature.safety, rustc_public::mir::Safety::Safe)),
         },
         use_path: None,
         deref: None,
@@ -956,7 +956,7 @@ fn build_trait_method(
             receiver,
             inputs,
             output,
-            is_safe: matches!(signature.safety, rustc_public::mir::Safety::Safe),
+            is_safe: Some(matches!(signature.safety, rustc_public::mir::Safety::Safe)),
         },
         use_path: Some(use_path),
         deref: None,
@@ -1028,6 +1028,7 @@ fn build_fn(ctx: &AutozngContext, record: &FnRecord) -> Option<ZngurFn> {
         },
         inputs,
         output,
+        is_safe: Some(matches!(signature.safety, rustc_public::mir::Safety::Safe)),
     })
 }
 

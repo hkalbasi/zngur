@@ -83,16 +83,16 @@ const _: [(Generic<i32>, Generic<String>); 0] = [];
             #layout(size = 24, align = 8);
             wellknown_traits(Debug);
 
-            fn describe(&self) -> ::std::string::String;
-            fn clone_inner(&self) -> ::std::string::String;
+            safe fn describe(&self) -> ::std::string::String;
+            safe fn clone_inner(&self) -> ::std::string::String;
         }
 
         type crate::Generic<i32> {
             #layout(size = 4, align = 4);
             wellknown_traits(Debug);
 
-            fn describe(&self) -> ::std::string::String;
-            fn clone_inner(&self) -> i32;
+            safe fn describe(&self) -> ::std::string::String;
+            safe fn clone_inner(&self) -> i32;
         }
     "#]]);
 }
@@ -133,7 +133,7 @@ const _: [(Generic<i32>, Generic<NotDebug>); 0] = [];
             #layout(size = 4, align = 4);
             wellknown_traits(Debug);
 
-            fn describe(&self) -> ::std::string::String;
+            safe fn describe(&self) -> ::std::string::String;
         }
 
         type crate::NotDebug {
@@ -171,7 +171,7 @@ const _: [(Generic<i32>,); 0] = [];
         type crate::Generic<i32> {
             #layout(size = 4, align = 4);
 
-            fn get(&self) -> &i32;
+            safe fn get(&self) -> &i32;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#"
@@ -268,7 +268,7 @@ const _: () = {
             wellknown_traits(Copy, Debug);
         }
 
-        fn crate::twice<u8>(u8) -> (u8, u8);
+        safe fn crate::twice<u8>(u8) -> (u8, u8);
     "#]]);
 }
 
@@ -300,7 +300,7 @@ const _: () = {
         type crate::S {
             #layout(size = 0, align = 1);
 
-            fn to_string(&self) -> ::std::string::String use ::std::string::ToString;
+            safe fn to_string(&self) -> ::std::string::String use ::std::string::ToString;
         }
     "#]]);
 }
@@ -329,7 +329,7 @@ impl S {
         type crate::S {
             #layout(size = 0, align = 1);
 
-            fn give<u8>(&self, u8) -> u8;
+            safe fn give<u8>(&self, u8) -> u8;
         }
     "#]]);
 }
@@ -360,8 +360,8 @@ impl S {
         type crate::S {
             #layout(size = 0, align = 1);
 
-            fn give<u8>(&self, u8) -> u8;
-            fn give<u32>(&self, u32) -> u32 as give_u32;
+            safe fn give<u8>(&self, u8) -> u8;
+            safe fn give<u32>(&self, u32) -> u32 as give_u32;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);
@@ -391,7 +391,7 @@ impl S {
         type crate::S {
             #layout(size = 0, align = 1);
 
-            fn long_name<u8>(&self, u8) -> u8 as LongName;
+            safe fn long_name<u8>(&self, u8) -> u8 as LongName;
         }
     "#]]);
 }
@@ -413,8 +413,8 @@ const _: [&dyn GenericTrait<u32>; 0] = [];
     // export target. The method signatures are instantiated with the concrete argument.
     out.assert_zng(expect![[r#"
         trait crate::GenericTrait<u32> {
-            fn get_value(&self) -> u32;
-            fn count(&self) -> u32;
+            safe fn get_value(&self) -> u32;
+            safe fn count(&self) -> u32;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);
@@ -439,11 +439,11 @@ const _: [&dyn GenericTrait<u8>; 0] = [];
     // methods; the deduplication key includes the concrete arguments.
     out.assert_zng(expect![[r#"
         trait crate::GenericTrait<u32> {
-            fn get_value(&self) -> u32;
+            safe fn get_value(&self) -> u32;
         }
 
         trait crate::GenericTrait<u8> {
-            fn get_value(&self) -> u8;
+            safe fn get_value(&self) -> u8;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);

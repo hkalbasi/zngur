@@ -39,11 +39,11 @@ impl Counter {
 
             field value (offset = 0, type = i32);
 
-            fn new() -> crate::Counter;
-            fn get(&self) -> i32;
-            fn set(&mut self, i32);
-            fn consume(self) -> i32;
-            fn add(i32, i32) -> i32;
+            safe fn new() -> crate::Counter;
+            safe fn get(&self) -> i32;
+            safe fn set(&mut self, i32);
+            safe fn consume(self) -> i32;
+            safe fn add(i32, i32) -> i32;
         }
     "#]]);
 }
@@ -65,8 +65,8 @@ impl Thing {
         type crate::Thing {
             #layout(size = 0, align = 1);
 
-            fn original(&self) as Renamed;
-            fn long_snake_name(&self) as LongSnakeName;
+            safe fn original(&self) as Renamed;
+            safe fn long_snake_name(&self) as LongSnakeName;
         }
     "#]]);
 }
@@ -85,7 +85,7 @@ impl OnlyBoxable {
         type crate::OnlyBoxable {
             #layout(size = 0, align = 1);
 
-            fn fine(&self);
+            safe fn fine(&self);
         }
     "#]]);
 }
@@ -107,7 +107,7 @@ impl Args {
         type crate::Args {
             #layout(size = 0, align = 1);
 
-            fn ok(&self);
+            safe fn ok(&self);
         }
     "#]]);
 }
@@ -150,9 +150,9 @@ impl Callbacks {
         type crate::Callbacks {
             #layout(size = 0, align = 1);
 
-            fn set_once(&mut self, ::std::boxed::Box<dyn FnOnce(u32) -> bool>);
-            fn set_mut(&mut self, ::std::boxed::Box<dyn FnMut(&str) -> bool>);
-            fn set_ref(&mut self, ::std::boxed::Box<dyn Fn()>);
+            safe fn set_once(&mut self, ::std::boxed::Box<dyn FnOnce(u32) -> bool>);
+            safe fn set_mut(&mut self, ::std::boxed::Box<dyn FnMut(&str) -> bool>);
+            safe fn set_ref(&mut self, ::std::boxed::Box<dyn Fn()>);
         }
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);

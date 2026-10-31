@@ -88,7 +88,7 @@ impl Public {
 
             field value (offset = 0, type = u32);
 
-            fn give(&self) -> u32;
+            safe fn give(&self) -> u32;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#"
@@ -242,6 +242,6 @@ mod l {
             #layout(size = 0, align = 1);
         }
 
-        fn crate::i_fn();
+        safe fn crate::i_fn();
     "#]]);
 }

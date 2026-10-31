@@ -110,8 +110,8 @@ impl Api {
         type crate::Api {
             #layout(size = 0, align = 1);
 
-            fn visible(&self);
-            fn hidden(&self);
+            safe fn visible(&self);
+            safe fn hidden(&self);
         }
     "#]]);
 }
@@ -132,7 +132,7 @@ impl Api {
         type crate::Api {
             #layout(size = 0, align = 1);
 
-            fn kept(&self);
+            safe fn kept(&self);
         }
     "#]]);
 }
