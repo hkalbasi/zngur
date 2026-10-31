@@ -31,9 +31,9 @@ fn private() {}
             wellknown_traits(?Sized, Debug);
         }
 
-        fn crate::add(i32, i32) -> i32;
-        fn crate::borrow(&str) -> usize;
-        fn crate::into_string(u32) -> ::std::string::String;
+        safe fn crate::add(i32, i32) -> i32;
+        safe fn crate::borrow(&str) -> usize;
+        safe fn crate::into_string(u32) -> ::std::string::String;
     "#]]);
 }
 
@@ -43,7 +43,7 @@ fn a_function_returning_unit() {
 pub fn nothing() {}
 "#);
     out.assert_zng(expect![[r#"
-        fn crate::nothing();
+        safe fn crate::nothing();
     "#]]);
 }
 
@@ -65,8 +65,8 @@ pub fn alpha() {}
 pub fn in_the_middle() {}
 "#);
     out.assert_zng(expect![[r#"
-        fn crate::alpha();
-        fn crate::in_the_middle();
-        fn crate::zebra();
+        safe fn crate::alpha();
+        safe fn crate::in_the_middle();
+        safe fn crate::zebra();
     "#]]);
 }

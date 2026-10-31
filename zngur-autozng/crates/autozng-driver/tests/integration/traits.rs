@@ -24,10 +24,10 @@ pub trait Store {
         }
 
         trait crate::Store {
-            fn put(&self, u64) -> u64;
-            fn tag(&self, u64, &str);
-            fn take(self) -> u32;
-            fn stat() -> u8;
+            safe fn put(&self, u64) -> u64;
+            safe fn tag(&self, u64, &str);
+            safe fn take(self) -> u32;
+            safe fn stat() -> u8;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);
@@ -59,7 +59,7 @@ pub trait Greeter<T: std::fmt::Debug> {
     // concrete method (`count`) is emitted.
     out.assert_zng(expect![[r#"
         trait crate::Greeter<T> {
-            fn count(&self) -> u32;
+            safe fn count(&self) -> u32;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#"

@@ -51,8 +51,8 @@ impl MyType {
 
             field field1 (offset = 0, type = ::std::string::String);
 
-            fn do_stuff(&self, ::std::vec::Vec<u32>) -> bool;
-            fn do_other_stuff(&self) -> u32;
+            safe fn do_stuff(&self, ::std::vec::Vec<u32>) -> bool;
+            safe fn do_other_stuff(&self) -> u32;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);
@@ -94,7 +94,7 @@ impl Sibling {
 
             field value (offset = 0, type = u32);
 
-            fn sibling(&self) -> crate::Sibling;
+            safe fn sibling(&self) -> crate::Sibling;
         }
 
         type crate::Root {
@@ -108,7 +108,7 @@ impl Sibling {
 
             field value (offset = 0, type = u32);
 
-            fn back(&self) -> crate::Child;
+            safe fn back(&self) -> crate::Child;
         }
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);
@@ -168,9 +168,9 @@ impl Numbers {
         type crate::Numbers {
             #layout(size = 0, align = 1);
 
-            fn get(&self) -> u32;
-            fn set(&mut self, i64);
-            fn nothing(&self);
+            safe fn get(&self) -> u32;
+            safe fn set(&mut self, i64);
+            safe fn nothing(&self);
         }
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);
@@ -213,8 +213,8 @@ pub fn consume(payload: &Payload) -> Vec<u8> {
             field value (offset = 0, type = ::std::string::String);
         }
 
-        fn crate::consume(&crate::Payload) -> ::std::vec::Vec<u8>;
-        fn crate::make() -> crate::Payload;
+        safe fn crate::consume(&crate::Payload) -> ::std::vec::Vec<u8>;
+        safe fn crate::make() -> crate::Payload;
     "#]]);
     out.assert_diagnostics(expect![[r#""#]]);
 }
