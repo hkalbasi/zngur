@@ -4,6 +4,8 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use xshell::{Cmd, Shell, cmd};
 
+use crate::{autozng, repo_root};
+
 /// A throwaway cargo project used to build a `//@ pass` test. The test's `.rs`
 /// is copied to `src/main.rs` and its C++ file is compiled into the binary by
 /// `build.rs`. Kept out of the workspace so no manifest is needed in `tests/`.
@@ -54,15 +56,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=ZNGUR_E2E_CPP");
 }
 "#;
-
-/// Repository root, resolved from this crate's manifest so that the paths inside
-/// the diagnostics don't depend on the directory `cargo xtask` was invoked from.
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask lives inside the repository")
-        .to_owned()
-}
 
 /// The `//@` directive of a declarative test.
 fn directive(zng_file: &Path) -> Result<&'static str> {
@@ -520,7 +513,11 @@ fn path_matches(root: &Path, path: &Path, filters: &[String]) -> bool {
     if filters.is_empty() {
         return true;
     }
-    let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
     filters
         .iter()
         .any(|pattern| glob_matches(pattern, &relative))
@@ -550,7 +547,7 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{example_matches, glob_matches};
+    use super::{example_matches, glob_matches, path_matches};
     use std::path::Path;
 
     #[test]
@@ -565,6 +562,13 @@ mod tests {
             "tests/parser/nested/foo.zng"
         ));
         assert!(glob_matches("tests/**", "tests/cli/foo/main.nu"));
+    }
+
+    #[test]
+    fn windows_separators_match() {
+        let root = Path::new(r"C:\repo");
+        let path = root.join(r"tests\parser\foo.zng");
+        assert!(path_matches(root, &path, &["tests/parser/*".to_owned()]));
     }
 
     #[test]
@@ -759,11 +763,6 @@ fn read_filter_file(path: &Path) -> Result<Vec<String>> {
     Ok(filters)
 }
 
-/// Run every test under `tests/` without filtering. Used by `cargo xtask ci`.
-pub fn main(fix: bool) -> Result<()> {
-    main_with(fix, None, None, None, false)
-}
-
 /// Run every test under `tests/`, recursively. Directories group tests by
 /// feature area; a `*.zng` gets its mode from the directive in the file, while a
 /// directory with a `main.nu` is a free-form Nushell test.
@@ -773,6 +772,8 @@ pub fn main_with(
     filter_file: Option<PathBuf>,
     fail_list: Option<PathBuf>,
     verbose: bool,
+    only_autozng: bool,
+    require_autozng: bool,
 ) -> Result<()> {
     let sh = &Shell::new()?;
     let root = repo_root();
@@ -786,11 +787,35 @@ pub fn main_with(
         filters.extend(read_filter_file(&path)?);
     }
 
+    let _toolchain = if only_autozng || require_autozng {
+        let workspace = autozng::workspace_root(&root);
+        match autozng::resolve(&workspace) {
+            autozng::Resolution::Found(toolchain) => {
+                eprintln!("zngur-autozng toolchain: {}", toolchain.describe());
+                Some(toolchain)
+            }
+            autozng::Resolution::Skipped(reason) => {
+                if require_autozng {
+                    bail!("{reason}");
+                }
+                eprintln!("warning: skipping zngur-autozng tests: {reason}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let mut tests = Vec::new();
-    collect_tests(&root, &tests_dir, &filters, &mut tests)?;
-    collect_examples(&root, &filters, &mut tests)?;
+    if !only_autozng {
+        collect_tests(&root, &tests_dir, &filters, &mut tests)?;
+        collect_examples(&root, &filters, &mut tests)?;
+    }
     tests.sort_by(|a, b| a.path().cmp(b.path()));
     if tests.is_empty() {
+        if only_autozng {
+            bail!("no autozng tests found");
+        }
         if filters.is_empty() {
             bail!("no tests or examples found");
         }
@@ -856,8 +881,9 @@ pub fn main_with(
     for name in &failed_names {
         eprintln!("FAIL {name}");
     }
+    let skipped = 0;
     eprintln!(
-        "\nsummary: passed={}, failed={}  ({:.2}s)",
+        "\nsummary: passed={}, failed={}, skipped={skipped}  ({:.2}s)",
         passed,
         failed_names.len(),
         elapsed.as_secs_f64(),
