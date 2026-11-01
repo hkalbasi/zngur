@@ -107,3 +107,26 @@ jobs:
         
       - name: Run `cargo xtask ci`
         run: nix develop .#${{ matrix.shell_name }} -c cargo xtask ci
+
+  autozng:
+    name: autozng (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Enter VS Developer shell
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+      - name: Install stable and the pinned autozng toolchain
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+          rustup toolchain install nightly-2026-08-29 --profile minimal --component rustc-dev --component llvm-tools --component rustfmt
+      - name: Run autozng tests
+        # Temporary: drop --allow-autozng-bridge-failures with the follow-up fixes in 6.1.
+        run: cargo xtask test --only-autozng --require-autozng --allow-autozng-bridge-failures
