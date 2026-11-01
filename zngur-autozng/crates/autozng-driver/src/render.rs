@@ -803,11 +803,14 @@ fn method_signature_parts(
             _ if first_input == Some(self_ty) || first_input == self_def_ty => {
                 ZngurMethodReceiver::Move
             }
-            other => {
+            _ => {
+                let receiver = first_input
+                    .map(|ty| ty.to_string())
+                    .unwrap_or_else(|| "unknown".to_owned());
                 warn(
                     def.def_id(),
                     emit_span,
-                    format!("autozng: skipping method `{name}`: unsupported receiver `{other:?}`"),
+                    format!("autozng: skipping method `{name}`: unsupported receiver `{receiver}`"),
                 );
                 return None;
             }

@@ -14,7 +14,6 @@ mod emit_on_implementers;
 mod emit_skip;
 mod handshake;
 mod layout;
-mod methods;
 mod policy;
 mod recursive_types;
 mod reexports;

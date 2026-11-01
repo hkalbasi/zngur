@@ -1,0 +1,5 @@
+warning: autozng: skipping method `takes_array`: array types are not supported in a zngur interface
+ --> src/lib.rs:9:5
+  |
+9 |     pub fn takes_array(&self, values: [u8; 4]) {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

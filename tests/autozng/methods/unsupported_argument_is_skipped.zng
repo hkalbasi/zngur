@@ -1,0 +1,5 @@
+type crate::Args {
+    #layout(size = 0, align = 1);
+
+    safe fn ok(&self);
+}

@@ -1,0 +1,5 @@
+type crate::OnlyBoxable {
+    #layout(size = 0, align = 1);
+
+    safe fn fine(&self);
+}
