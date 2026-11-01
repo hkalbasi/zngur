@@ -571,6 +571,18 @@ impl RustFile {
         mangle_name(name, &self.mangling_base)
     }
 
+    /// Mangled C symbol for the destructor bridge of a stack-owned C++ type.
+    ///
+    /// Includes the mangling base and position-encodes `c++::` / module boundaries / generics
+    /// without colliding across modules or emitting a public Rust wrapper.
+    pub(crate) fn cpp_stack_owned_destructor_fn(&self, ty: &RustType) -> String {
+        let destructor_key = match ty {
+            RustType::Cpp(_) => format!("_c++::{ty}=cpp_stack_owned_destructor"),
+            _ => format!("_{ty}=cpp_stack_owned_destructor"),
+        };
+        self.mangle_name(&destructor_key)
+    }
+
     fn call_cpp_function(&mut self, name: &str, inputs: usize) {
         for n in 0..inputs {
             wln!(self, "let mut i{n} = ::core::mem::MaybeUninit::new(i{n});")

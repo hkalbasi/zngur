@@ -6,7 +6,7 @@ use std::{
 use indexmap::IndexMap;
 use itertools::Itertools;
 use zngur_def::{
-    CppHeapAllocatedData, CppRef, CppStackOwned, RustTrait, ZngurFieldData, ZngurMethodReceiver,
+    CppHeapAllocatedData, CppRef, CppStackOwnedData, RustTrait, ZngurFieldData, ZngurMethodReceiver,
 };
 
 use crate::{
@@ -540,22 +540,10 @@ pub struct CppTypeDefinition {
     pub wellknown_traits: Vec<ZngurWellknownTraitData>,
     pub cpp_heap_allocated: Option<CppHeapAllocatedData>,
     pub cpp_ref: Option<CppRef>,
-    pub cpp_stack_owned: Option<CppStackOwned>,
+    pub cpp_stack_owned: Option<CppStackOwnedData>,
 }
 
 impl CppTypeDefinition {
-    pub fn rust_short_name(&self) -> String {
-        self.ty.to_string().split("::").last().unwrap().to_string()
-    }
-
-    pub fn cpp_short_name(&self) -> String {
-        if let Some(c) = &self.cpp_stack_owned {
-            c.0.split("::").last().unwrap().to_string()
-        } else {
-            "".to_string()
-        }
-    }
-
     pub fn has_unsized(&self) -> bool {
         self.wellknown_traits
             .iter()
@@ -739,7 +727,12 @@ impl CppFile {
         *is_really_needed = !self.trait_defs.is_empty()
             || !self.exported_fn_defs.is_empty()
             || !self.exported_impls.is_empty()
-            || self.coro_support.is_some();
+            || self.coro_support.is_some()
+            // Rust calls the destructors of `#cpp_stack_owned` types, which are defined here.
+            || self
+                .type_defs
+                .iter()
+                .any(|td| td.cpp_stack_owned.is_some());
 
         Ok(())
     }

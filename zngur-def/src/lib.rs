@@ -302,6 +302,12 @@ pub struct CppRef(pub String);
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct CppStackOwned(pub String);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CppStackOwnedData {
+    pub destructor_fn: String,
+    pub cpp_type: String,
+}
+
 impl Display for CppStackOwned {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
