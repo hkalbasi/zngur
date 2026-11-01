@@ -23,7 +23,7 @@ use rustc_hash::FxHashSet;
 use rustc_public::abi::FieldsShape;
 use rustc_public::ty::{
     AdtDef, AssocKind, FieldDef, FnDef, GenericArgKind, GenericArgs, GenericParamDefKind, RigidTy,
-    TraitDecl, TraitDef, Ty, TyKind,
+    TraitDef, Ty, TyKind,
 };
 use rustc_public::{CrateDef, CrateDefType, DefId};
 use rustc_span::Span;
@@ -113,8 +113,7 @@ fn build_trait(record: &ExportedTraitRecord) -> Option<(RustTrait, ZngurTrait)> 
 /// Most traits are just their full path ([`RustTrait::Normal`]). The `Fn`/`FnMut`/`FnOnce`
 /// family is collapsed to [`RustTrait::Fn`] (its call signature) so codegen can build a
 /// `std::function`-style bridge instead of a vtable. A concrete instantiation
-/// (`emit_items(emit_traits = true)`) carries its concrete type arguments instead of type
-/// variables.
+/// (`emit_items(emit_traits = true)`) carries its concrete type arguments.
 fn rust_trait_for(record: &ExportedTraitRecord) -> Option<RustTrait> {
     let path = trait_path(record.decl.def_id);
     match fn_trait_name(&path) {
@@ -122,7 +121,9 @@ fn rust_trait_for(record: &ExportedTraitRecord) -> Option<RustTrait> {
         None => {
             let generics = match &record.concrete {
                 Some(trait_ref) => concrete_trait_generics(trait_ref)?,
-                None => trait_decl_generics(&record.decl)?,
+                // A declaration describes a concrete dyn compatible trait, so it has no type or
+                // const parameters; lifetimes do not contribute `.zng` generics.
+                None => Vec::new(),
             };
             Some(RustTrait::Normal(RustPathAndGenerics {
                 path,
@@ -158,28 +159,6 @@ fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec
 /// spelled `crate::...`, an external crate keeps its own name (the printer adds the leading `::`).
 fn trait_path(def: TraitDef) -> Vec<String> {
     visible_path(&def)
-}
-
-/// The trait's own generic parameters as `.zng` type variables (`trait Foo<T>` -> `Foo<T>`).
-///
-/// Returns `None` for a const generic parameter, which the `.zng` IR cannot spell.
-fn trait_decl_generics(decl: &TraitDecl) -> Option<Vec<RustType>> {
-    let generics = decl.generics_of();
-    let mut out = Vec::new();
-    for param in &generics.params {
-        // A trait's implicit `Self` is its first parameter; it is not a `.zng` generic argument.
-        if generics.has_self && param.index == 0 {
-            continue;
-        }
-        match param.kind {
-            GenericParamDefKind::Lifetime => {}
-            GenericParamDefKind::Type { .. } => {
-                out.push(RustType::TypeVar(TypeVar(param.name.to_string())));
-            }
-            GenericParamDefKind::Const { .. } => return None,
-        }
-    }
-    Some(out)
 }
 
 /// The `RustTrait::Fn` representation of a `Fn`/`FnMut`/`FnOnce` trait: its name plus the call

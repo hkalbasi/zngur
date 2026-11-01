@@ -1,3 +1,0 @@
-trait crate::Greeter<T> {
-    safe fn count(&self) -> u32;
-}

@@ -49,6 +49,8 @@ and `let` bindings.
 A few cases are worth calling out:
 
 - A trait must be tagged with `emit` to be exported at all.
+- A generic trait cannot be exported as a `trait` block; name each concrete
+  instantiation with `emit_items(emit_traits = true)` instead.
 - `skip` on an `impl` block leaves out every method in it.
 - `emit` on an item the crate cannot name from the crate root has no effect,
   and Autozng reports it.

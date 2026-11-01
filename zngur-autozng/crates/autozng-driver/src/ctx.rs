@@ -16,7 +16,8 @@ use rustc_public::CrateDef;
 use rustc_public::CrateDefType;
 use rustc_public::abi::Layout;
 use rustc_public::ty::{
-    AdtDef, FieldDef, FnDef, FnSig, GenericArgs, ImplDef, TraitDecl, TraitDef, TraitRef,
+    AdtDef, FieldDef, FnDef, FnSig, GenericArgs, GenericParamDefKind, ImplDef, TraitDecl, TraitDef,
+    TraitRef,
 };
 use rustc_public::{DefId, ty::Ty};
 use rustc_span::Span;
@@ -140,8 +141,8 @@ pub struct ExportedTraitRecord {
     pub fns: IndexSet<TraitFnRecord>,
     /// The concrete `Self: Trait<Args>` reference when the trait was selected as a *concrete*
     /// instantiation by `#[autozng::emit_items(emit_traits = true)]` naming e.g.
-    /// `&dyn GenericTrait<u32>`. `None` for a declaration selected by `#[autozng::emit]`, which
-    /// renders with its own type parameters as `.zng` type variables.
+    /// `&dyn GenericTrait<u32>`. `None` for a declaration selected by `#[autozng::emit]`;
+    /// declarations cannot be generic (see [`AutozngContext::record_trait`]).
     pub concrete: Option<TraitRef>,
 }
 
@@ -705,6 +706,50 @@ impl AutozngContext {
         })
     }
 
+    /// Reject a generic trait selected by `#[autozng::emit]`.
+    ///
+    /// A `.zng` `trait` block describes a concrete dyn compatible trait; it cannot define type or
+    /// const parameters. A declaration has no concrete `Self: Trait<Args>` reference for the
+    /// bridge, so only a concrete dyn compatible trait can be exported.
+    /// `emit_items(emit_traits = true)` names those instantiations (see
+    /// [`AutozngContext::record_concrete_trait`]).
+    ///
+    /// Returns `false` when the trait was rejected and must not be recorded.
+    fn ensure_trait_declaration_exportable(
+        &self,
+        def: TraitDef,
+        decl: &TraitDecl,
+        span: Span,
+    ) -> bool {
+        // Lifetimes do not block export: they are only lost when a signature is converted to an
+        // IDL type.
+        let generics = decl.generics_of();
+        let generic = generics.params.iter().any(|param| {
+            !(generics.has_self && param.index == 0)
+                && !matches!(&param.kind, GenericParamDefKind::Lifetime)
+        });
+        if !generic {
+            return true;
+        }
+        with_ctxt(|ctx| {
+            let source_span = span_of_def(def.def_id());
+            let name = def.name();
+            let name = name.rsplit("::").next().unwrap_or_default();
+            let mut diag = ctx.tcx.dcx().struct_span_err(
+                source_span,
+                format!("autozng: generic trait `{name}` cannot be exported as a `trait` block"),
+            );
+            if !span.is_dummy() && !source_span.contains(span) {
+                diag.span_note(span, "selected here");
+            }
+            diag.note(
+                "name a concrete instantiation with `#[autozng::emit_items(emit_traits = true)]`",
+            );
+            diag.emit();
+        });
+        false
+    }
+
     /// Record a *concrete* trait instantiation (`dyn Trait<ConcreteArgs>`) selected by
     /// `#[autozng::emit_items(emit_traits = true)]`.
     ///
@@ -829,9 +874,6 @@ impl AutozngContext {
     /// own source span is recorded alongside it. The associated functions are added separately by
     /// [`AutozngContext::record_trait_method`]. Recording is idempotent.
     pub fn record_trait(&self, def: TraitDef, span: Span) {
-        if self.is_trait_recorded(&def) {
-            return;
-        }
         // A `.zng` `trait` block is only usable through `dyn`; a non-dyn-compatible trait cannot
         // be exported (see `ensure_trait_exportable`).
         if !self.ensure_trait_exportable(def, span) {
@@ -840,6 +882,14 @@ impl AutozngContext {
         // The public `TraitDecl` is the stable description of the trait (`stable_trait` bridges
         // the internal `rustc_middle` definition to it).
         let decl = with_ctxt(|ctx| stable_trait(def.internal(ctx.tcx)));
+        // A `.zng` `trait` block describes a concrete dyn compatible trait, so only a concrete
+        // dyn compatible trait can be exported.
+        if !self.ensure_trait_declaration_exportable(def, &decl, span) {
+            return;
+        }
+        if self.is_trait_recorded(&def) {
+            return;
+        }
         self.data.traits.borrow_mut().push(ExportedTraitRecord {
             decl,
             span,
