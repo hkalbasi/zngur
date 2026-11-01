@@ -240,13 +240,31 @@ impl_attr_target!(rustc_public::ty::AssocItem, EmitTarget, RenameTarget);
 /// [`TyRecord`]: crate::ctx::TyRecord
 impl EmitTarget for rustc_public::ty::FieldDef {
     fn emit(&self, action: EmitAction, span: Span, ctx: &AutozngContext) -> bool {
+        let Some(adt) = self.adt_def() else {
+            return false;
+        };
+        // Union field access is unsafe to implement correctly, so fields are never exported.
+        // Implicit selection skips them silently; an explicit `emit` is a hard error.
+        if adt.kind().is_union() {
+            if matches!(action, EmitAction::Emit) {
+                let source_span = span_of_def(self.def_id());
+                with_ctxt(|driver| {
+                    let mut diag = driver.tcx.dcx().struct_span_err(
+                        source_span,
+                        format!("autozng: union field `{}` cannot be emitted", self.name),
+                    );
+                    if !span.is_dummy() && !source_span.contains(span) {
+                        diag.span_note(span, "selected here");
+                    }
+                    diag.emit();
+                });
+            }
+            return false;
+        }
         let vis = self.visibility();
         if !action.emit_for_visibility_or_warn(vis, ctx.config().default_emit_policy, span) {
             return false;
         }
-        let Some(adt) = self.adt_def() else {
-            return false;
-        };
         ctx.record_field(adt.ty().base_ty(), self.clone(), self.emit_span());
         true
     }

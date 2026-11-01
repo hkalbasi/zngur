@@ -1,6 +1,0 @@
-type crate::Bits {
-    #layout(size = 4, align = 4);
-
-    field integer (offset = auto, type = u32);
-    field float (offset = auto, type = f32);
-}
