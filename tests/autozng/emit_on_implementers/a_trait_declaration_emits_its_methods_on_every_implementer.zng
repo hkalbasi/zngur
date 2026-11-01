@@ -5,6 +5,7 @@ type ::std::string::String {
 
 type crate::Person {
     #layout(size = 24, align = 8);
+    constructor {name: ::std::string::String};
 
     field name (offset = 0, type = ::std::string::String);
 

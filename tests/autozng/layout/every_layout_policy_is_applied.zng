@@ -1,5 +1,6 @@
 type crate::Heaped {
     #heap_allocated;
+    constructor {a: i32};
 
     field a (offset = 0, type = i32);
 }
@@ -12,6 +13,7 @@ type crate::RefOnly {
 
 type crate::Stacked {
     #layout(size = 8, align = 4);
+    constructor {a: i32, b: i32};
 
     field a (offset = 0, type = i32);
     field b (offset = 4, type = i32);
@@ -19,6 +21,7 @@ type crate::Stacked {
 
 type crate::Wide {
     #layout_conservative(size = 16, align = 8);
+    constructor {a: i32};
 
     field a (offset = 0, type = i32);
 }

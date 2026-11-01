@@ -15,6 +15,7 @@ type bool {
 
 type crate::MyType {
     #layout(size = 24, align = 8);
+    constructor {field1: ::std::string::String};
 
     field field1 (offset = 0, type = ::std::string::String);
 

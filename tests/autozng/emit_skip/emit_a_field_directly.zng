@@ -1,5 +1,6 @@
 type crate::Direct {
     #layout(size = 4, align = 2);
+    constructor {kept: u8, forced: u16};
 
     field kept (offset = 2, type = u8);
     field forced (offset = 0, type = u16);

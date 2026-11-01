@@ -1,5 +1,6 @@
 type crate::Selection {
     #layout(size = 8, align = 4);
+    constructor {first: u8, second: u16, third: u32};
 
     field first (offset = 6, type = u8);
     field second (offset = 4, type = u16);

@@ -5,6 +5,7 @@ type ::std::string::String {
 
 type crate::Generic<crate::NotDebug> {
     #layout(size = 0, align = 1);
+    constructor {value: crate::NotDebug};
 
     field value (offset = 0, type = crate::NotDebug);
 }
@@ -12,6 +13,7 @@ type crate::Generic<crate::NotDebug> {
 type crate::Generic<i32> {
     #layout(size = 4, align = 4);
     wellknown_traits(Debug);
+    constructor {value: i32};
 
     field value (offset = 0, type = i32);
 

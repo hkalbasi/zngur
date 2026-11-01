@@ -1,5 +1,6 @@
 type crate::Generic<i32> {
     #layout(size = 4, align = 4);
+    constructor {value: i32};
 
     field value (offset = 0, type = i32);
 

@@ -1,5 +1,6 @@
 type crate::Wrapper<::std::string::String> {
     #layout(size = 32, align = 8);
+    constructor {tag: u8, value: ::std::string::String};
 
     field tag (offset = 24, type = u8);
     field value (offset = 0, type = ::std::string::String);
@@ -7,6 +8,7 @@ type crate::Wrapper<::std::string::String> {
 
 type crate::Wrapper<i32> {
     #layout(size = 8, align = 4);
+    constructor {tag: u8, value: i32};
 
     field tag (offset = 4, type = u8);
     field value (offset = 0, type = i32);

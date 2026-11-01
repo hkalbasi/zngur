@@ -30,9 +30,9 @@ use rustc_public::{CrateDef, CrateDefType, DefId};
 use rustc_span::Span;
 use zngur_def::printing::IDLPrinter;
 use zngur_def::{
-    LayoutPolicy, RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurField, ZngurFn,
-    ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver, ZngurSpec, ZngurTrait, ZngurType,
-    ZngurVariant, ZngurWellknownTrait,
+    LayoutPolicy, RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurConstructor, ZngurField,
+    ZngurFn, ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver, ZngurSpec, ZngurTrait,
+    ZngurType, ZngurVariant, ZngurWellknownTrait,
 };
 
 use crate::ctx::{
@@ -348,21 +348,48 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     // they apply to, as if the functions had been enumerated in an `emit_items` const.
     methods.extend(build_emit_for_methods(ctx, record));
 
+    // An explicit `#[autozng::layout(...)]` replaces the automatic `StackAllocated` policy
+    // derived from the type's real size and alignment.
+    let layout = match record.adt.and_then(|adt| ctx.layout_override_for(&adt)) {
+        Some(over) => Some(over.policy),
+        None => record.layout.and_then(layout_policy),
+    };
+
+    // A struct can be constructed from C++ only when every field is described and neither the
+    // Rust type nor the layout policy forbids it. Enums construct per variant, unions have no
+    // single active field, and `OnlyByRef` deletes the default constructor.
+    let constructor = adt
+        .filter(|adt| adt.kind().is_struct())
+        .filter(|adt| adt.is_exhaustive())
+        .filter(|_| !matches!(&layout, Some(LayoutPolicy::OnlyByRef)))
+        .and_then(|adt| {
+            let all_fields = adt
+                .variants()
+                .into_iter()
+                .next()
+                .map(|variant| variant.fields())
+                .unwrap_or_default();
+            if fields.is_empty() || fields.len() != all_fields.len() {
+                return None;
+            }
+            Some(ZngurConstructor {
+                inputs: fields
+                    .iter()
+                    .map(|field| (field.name.clone(), field.ty.clone()))
+                    .collect(),
+            })
+        });
+
     Some(ZngurType {
         ty: rust_ty,
-        // An explicit `#[autozng::layout(...)]` replaces the automatic `StackAllocated` policy
-        // derived from the type's real size and alignment.
-        layout: match record.adt.and_then(|adt| ctx.layout_override_for(&adt)) {
-            Some(over) => Some(over.policy),
-            None => record.layout.and_then(layout_policy),
-        },
+        layout,
         wellknown_traits: wellknown_traits(record.ty),
         // Only ADTs can be `#[non_exhaustive]`; every other type is exhaustive.
         exhaustive: adt.is_none_or(|adt| adt.is_exhaustive()),
         methods,
-        // TODO(render): constructors and the well-known-trait data payloads
-        // (pretty_print/debug_print/drop_in_place) still need analysis work.
-        constructor: None,
+        // TODO(render): the well-known-trait data payloads (pretty_print/debug_print/
+        // drop_in_place) still need analysis work.
+        constructor,
         variants,
         fields,
         cpp_heap_allocated: None,

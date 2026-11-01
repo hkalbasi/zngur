@@ -41,6 +41,9 @@ In normal use you call the frontend, and it runs the driver for you.
 - **Interface types included automatically.**
   A type that an exported field or signature mentions is declared too,
   so the generated file is self-contained.
+- **Constructors for complete structs.**
+  A struct that is not `#[non_exhaustive]` and whose fields are all exported
+  gets a constructor, so C++ can create it directly.
 
 ## In this section
 

@@ -10,6 +10,7 @@ type ::std::vec::Vec<u8> {
 
 type crate::Payload {
     #layout(size = 24, align = 8);
+    constructor {value: ::std::string::String};
 
     field value (offset = 0, type = ::std::string::String);
 }

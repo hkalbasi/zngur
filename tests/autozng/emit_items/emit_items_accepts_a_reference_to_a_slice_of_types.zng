@@ -1,11 +1,13 @@
 type crate::Container<::std::string::String> {
     #layout(size = 24, align = 8);
+    constructor {value: ::std::string::String};
 
     field value (offset = 0, type = ::std::string::String);
 }
 
 type crate::Container<i32> {
     #layout(size = 4, align = 4);
+    constructor {value: i32};
 
     field value (offset = 0, type = i32);
 }

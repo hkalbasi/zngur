@@ -1,5 +1,6 @@
 type crate::Child {
     #layout(size = 4, align = 4);
+    constructor {value: u32};
 
     field value (offset = 0, type = u32);
 
@@ -8,12 +9,14 @@ type crate::Child {
 
 type crate::Root {
     #layout(size = 4, align = 4);
+    constructor {child: crate::Child};
 
     field child (offset = 0, type = crate::Child);
 }
 
 type crate::Sibling {
     #layout(size = 4, align = 4);
+    constructor {value: u32};
 
     field value (offset = 0, type = u32);
 
