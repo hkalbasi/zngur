@@ -260,3 +260,7 @@ Available policies:
   instead of only declaring the types themselves.
 
 This can make the generated file much larger, so it is opt-in.
+
+Unstable (`#[unstable]`) items are skipped silently. The generated bridge is currently built
+with the stable toolchain; nightly bridges are not supported yet because the driver cannot know
+which unstable features the target crate's nightly exposes.

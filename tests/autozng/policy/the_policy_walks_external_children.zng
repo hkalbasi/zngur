@@ -9,17 +9,11 @@ type ::std::net::IpAddr {
     }
 
     safe fn is_unspecified(&self) -> bool;
-    safe fn unspecified_from(::std::net::IpAddr) -> ::std::net::IpAddr;
     safe fn is_loopback(&self) -> bool;
-    safe fn is_global(&self) -> bool;
     safe fn is_multicast(&self) -> bool;
-    safe fn is_documentation(&self) -> bool;
-    safe fn is_benchmarking(&self) -> bool;
     safe fn is_ipv4(&self) -> bool;
     safe fn is_ipv6(&self) -> bool;
     safe fn to_canonical(&self) -> ::std::net::IpAddr;
-    safe fn as_octets(&self) -> &[u8];
-    safe fn parse_ascii(&[u8]) -> ::std::result::Result<::std::net::IpAddr, ::std::net::AddrParseError>;
 }
 
 type ::std::net::Ipv4Addr {
@@ -33,16 +27,11 @@ type ::std::net::Ipv4Addr {
     safe fn is_loopback(&self) -> bool;
     safe fn is_private(&self) -> bool;
     safe fn is_link_local(&self) -> bool;
-    safe fn is_global(&self) -> bool;
-    safe fn is_shared(&self) -> bool;
-    safe fn is_benchmarking(&self) -> bool;
-    safe fn is_reserved(&self) -> bool;
     safe fn is_multicast(&self) -> bool;
     safe fn is_broadcast(&self) -> bool;
     safe fn is_documentation(&self) -> bool;
     safe fn to_ipv6_compatible(&self) -> ::std::net::Ipv6Addr;
     safe fn to_ipv6_mapped(&self) -> ::std::net::Ipv6Addr;
-    safe fn parse_ascii(&[u8]) -> ::std::result::Result<::std::net::Ipv4Addr, ::std::net::AddrParseError>;
 }
 
 type ::std::net::Ipv6Addr {
@@ -54,20 +43,12 @@ type ::std::net::Ipv6Addr {
     safe fn from_bits(u128) -> ::std::net::Ipv6Addr;
     safe fn is_unspecified(&self) -> bool;
     safe fn is_loopback(&self) -> bool;
-    safe fn is_global(&self) -> bool;
     safe fn is_unique_local(&self) -> bool;
-    safe fn is_unicast(&self) -> bool;
     safe fn is_unicast_link_local(&self) -> bool;
-    safe fn is_documentation(&self) -> bool;
-    safe fn is_benchmarking(&self) -> bool;
-    safe fn is_unicast_global(&self) -> bool;
-    safe fn multicast_scope(&self) -> ::std::option::Option<::std::net::Ipv6MulticastScope>;
     safe fn is_multicast(&self) -> bool;
-    safe fn is_ipv4_mapped(&self) -> bool;
     safe fn to_ipv4_mapped(&self) -> ::std::option::Option<::std::net::Ipv4Addr>;
     safe fn to_ipv4(&self) -> ::std::option::Option<::std::net::Ipv4Addr>;
     safe fn to_canonical(&self) -> ::std::net::IpAddr;
-    safe fn parse_ascii(&[u8]) -> ::std::result::Result<::std::net::Ipv6Addr, ::std::net::AddrParseError>;
 }
 
 type ::std::option::Option<::std::net::Ipv4Addr> {
@@ -80,7 +61,6 @@ type ::std::option::Option<::std::net::Ipv4Addr> {
     safe fn is_none(&self) -> bool;
     safe fn as_ref(&self) -> ::std::option::Option<&::std::net::Ipv4Addr>;
     safe fn as_mut(&mut self) -> ::std::option::Option<&mut ::std::net::Ipv4Addr>;
-    safe fn len(&self) -> usize;
     safe fn as_slice(&self) -> &[::std::net::Ipv4Addr];
     safe fn as_mut_slice(&mut self) -> &mut [::std::net::Ipv4Addr];
     safe fn expect(self, &str) -> ::std::net::Ipv4Addr;
@@ -95,106 +75,6 @@ type ::std::option::Option<::std::net::Ipv4Addr> {
     safe fn get_or_insert(&mut self, ::std::net::Ipv4Addr) -> &mut ::std::net::Ipv4Addr;
     safe fn take(&mut self) -> ::std::option::Option<::std::net::Ipv4Addr>;
     safe fn replace(&mut self, ::std::net::Ipv4Addr) -> ::std::option::Option<::std::net::Ipv4Addr>;
-}
-
-type ::std::option::Option<::std::net::Ipv6MulticastScope> {
-    #layout(size = 1, align = 1);
-    wellknown_traits(Copy, Debug);
-    variant None {}
-    variant Some {}
-
-    safe fn is_some(&self) -> bool;
-    safe fn is_none(&self) -> bool;
-    safe fn as_ref(&self) -> ::std::option::Option<&::std::net::Ipv6MulticastScope>;
-    safe fn as_mut(&mut self) -> ::std::option::Option<&mut ::std::net::Ipv6MulticastScope>;
-    safe fn len(&self) -> usize;
-    safe fn as_slice(&self) -> &[::std::net::Ipv6MulticastScope];
-    safe fn as_mut_slice(&mut self) -> &mut [::std::net::Ipv6MulticastScope];
-    safe fn expect(self, &str) -> ::std::net::Ipv6MulticastScope;
-    safe fn unwrap(self) -> ::std::net::Ipv6MulticastScope;
-    safe fn unwrap_or(self, ::std::net::Ipv6MulticastScope) -> ::std::net::Ipv6MulticastScope;
-    unsafe fn unwrap_unchecked(self) -> ::std::net::Ipv6MulticastScope;
-    safe fn iter(&self) -> ::std::option::Iter<::std::net::Ipv6MulticastScope>;
-    safe fn iter_mut(&mut self) -> ::std::option::IterMut<::std::net::Ipv6MulticastScope>;
-    safe fn or(self, ::std::option::Option<::std::net::Ipv6MulticastScope>) -> ::std::option::Option<::std::net::Ipv6MulticastScope>;
-    safe fn xor(self, ::std::option::Option<::std::net::Ipv6MulticastScope>) -> ::std::option::Option<::std::net::Ipv6MulticastScope>;
-    safe fn insert(&mut self, ::std::net::Ipv6MulticastScope) -> &mut ::std::net::Ipv6MulticastScope;
-    safe fn get_or_insert(&mut self, ::std::net::Ipv6MulticastScope) -> &mut ::std::net::Ipv6MulticastScope;
-    safe fn take(&mut self) -> ::std::option::Option<::std::net::Ipv6MulticastScope>;
-    safe fn replace(&mut self, ::std::net::Ipv6MulticastScope) -> ::std::option::Option<::std::net::Ipv6MulticastScope>;
-}
-
-type ::std::result::Result<::std::net::IpAddr, ::std::net::AddrParseError> {
-    #layout(size = 17, align = 1);
-    wellknown_traits(Debug);
-    variant Ok {}
-    variant Err {}
-
-    safe fn is_ok(&self) -> bool;
-    safe fn is_err(&self) -> bool;
-    safe fn ok(self) -> ::std::option::Option<::std::net::IpAddr>;
-    safe fn err(self) -> ::std::option::Option<::std::net::AddrParseError>;
-    safe fn as_ref(&self) -> ::std::result::Result<&::std::net::IpAddr, &::std::net::AddrParseError>;
-    safe fn as_mut(&mut self) -> ::std::result::Result<&mut ::std::net::IpAddr, &mut ::std::net::AddrParseError>;
-    safe fn iter(&self) -> ::std::result::Iter<::std::net::IpAddr>;
-    safe fn iter_mut(&mut self) -> ::std::result::IterMut<::std::net::IpAddr>;
-    safe fn expect(self, &str) -> ::std::net::IpAddr;
-    safe fn unwrap(self) -> ::std::net::IpAddr;
-    safe fn expect_err(self, &str) -> ::std::net::AddrParseError;
-    safe fn unwrap_err(self) -> ::std::net::AddrParseError;
-    safe fn unwrap_or(self, ::std::net::IpAddr) -> ::std::net::IpAddr;
-    unsafe fn unwrap_unchecked(self) -> ::std::net::IpAddr;
-    unsafe fn unwrap_err_unchecked(self) -> ::std::net::AddrParseError;
-}
-
-type ::std::result::Result<::std::net::Ipv4Addr, ::std::net::AddrParseError> {
-    #layout(size = 5, align = 1);
-    wellknown_traits(Debug);
-    variant Ok {}
-    variant Err {}
-
-    safe fn is_ok(&self) -> bool;
-    safe fn is_err(&self) -> bool;
-    safe fn ok(self) -> ::std::option::Option<::std::net::Ipv4Addr>;
-    safe fn err(self) -> ::std::option::Option<::std::net::AddrParseError>;
-    safe fn as_ref(&self) -> ::std::result::Result<&::std::net::Ipv4Addr, &::std::net::AddrParseError>;
-    safe fn as_mut(&mut self) -> ::std::result::Result<&mut ::std::net::Ipv4Addr, &mut ::std::net::AddrParseError>;
-    safe fn iter(&self) -> ::std::result::Iter<::std::net::Ipv4Addr>;
-    safe fn iter_mut(&mut self) -> ::std::result::IterMut<::std::net::Ipv4Addr>;
-    safe fn expect(self, &str) -> ::std::net::Ipv4Addr;
-    safe fn unwrap(self) -> ::std::net::Ipv4Addr;
-    safe fn expect_err(self, &str) -> ::std::net::AddrParseError;
-    safe fn unwrap_err(self) -> ::std::net::AddrParseError;
-    safe fn unwrap_or(self, ::std::net::Ipv4Addr) -> ::std::net::Ipv4Addr;
-    unsafe fn unwrap_unchecked(self) -> ::std::net::Ipv4Addr;
-    unsafe fn unwrap_err_unchecked(self) -> ::std::net::AddrParseError;
-}
-
-type ::std::result::Result<::std::net::Ipv6Addr, ::std::net::AddrParseError> {
-    #layout(size = 17, align = 1);
-    wellknown_traits(Debug);
-    variant Ok {}
-    variant Err {}
-
-    safe fn is_ok(&self) -> bool;
-    safe fn is_err(&self) -> bool;
-    safe fn ok(self) -> ::std::option::Option<::std::net::Ipv6Addr>;
-    safe fn err(self) -> ::std::option::Option<::std::net::AddrParseError>;
-    safe fn as_ref(&self) -> ::std::result::Result<&::std::net::Ipv6Addr, &::std::net::AddrParseError>;
-    safe fn as_mut(&mut self) -> ::std::result::Result<&mut ::std::net::Ipv6Addr, &mut ::std::net::AddrParseError>;
-    safe fn iter(&self) -> ::std::result::Iter<::std::net::Ipv6Addr>;
-    safe fn iter_mut(&mut self) -> ::std::result::IterMut<::std::net::Ipv6Addr>;
-    safe fn expect(self, &str) -> ::std::net::Ipv6Addr;
-    safe fn unwrap(self) -> ::std::net::Ipv6Addr;
-    safe fn expect_err(self, &str) -> ::std::net::AddrParseError;
-    safe fn unwrap_err(self) -> ::std::net::AddrParseError;
-    safe fn unwrap_or(self, ::std::net::Ipv6Addr) -> ::std::net::Ipv6Addr;
-    unsafe fn unwrap_unchecked(self) -> ::std::net::Ipv6Addr;
-    unsafe fn unwrap_err_unchecked(self) -> ::std::net::AddrParseError;
-}
-
-type [u8] {
-    wellknown_traits(?Sized, Debug);
 }
 
 type bool {

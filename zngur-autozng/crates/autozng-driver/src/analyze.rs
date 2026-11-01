@@ -33,7 +33,7 @@ use crate::{
     driver::{AnalyzeReport, with_ctxt},
     error::span_of_def,
     render,
-    rustc_ext::{GetAssocInfoExt, RustcPublicTyExt},
+    rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
 };
 use zngur_def::ZngurSpec;
@@ -168,6 +168,9 @@ fn visit_emitted_ty(ctx: &AutozngContext, ty: Ty) {
         ctx.record_ty(&ty, Span::default());
         return;
     };
+    if adt.is_unstable() {
+        return;
+    }
     // Record the *concrete* type (`Vec<u32>`, not the `Vec<T, A>` definition `record_adt` would
     // give), so it renders with its generic arguments.
     ctx.record_ty(&ty, span_of_def(adt.def_id()));

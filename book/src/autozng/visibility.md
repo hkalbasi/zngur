@@ -18,6 +18,8 @@ These are not exported by default:
 - Traits. Even a `pub` trait is only exported when you tag it with
   [`emit`](./attributes.md#emit-and-skip).
 - Private fields and methods.
+- Items from other crates that are not declared `pub`, including private inherent methods and
+  fields of external types.
 
 Autozng also declares the types that an exported item mentions,
 so the interface is complete.

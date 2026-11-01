@@ -41,8 +41,13 @@ pub(crate) trait VisibilityExt {
 ///   module that is never re-exported).
 fn visibility(tcx: TyCtxt, id: RustcDefId) -> Visibility {
     let Some(local_id) = id.as_local() else {
-        // An external item is part of another crate's public interface.
-        return Visibility::Public;
+        // An external item may only be called when it is declared `pub`: private inherent
+        // methods and fields of another crate's type are not part of its API.
+        return if tcx.visibility(id).is_public() {
+            Visibility::Public
+        } else {
+            Visibility::PrivateAPI
+        };
     };
     let vis = tcx.visibility(local_id);
 

@@ -35,7 +35,7 @@ use crate::metadata::{
 };
 use crate::rustc_ext::{
     ClausesOfExt, FnDefExt, GenericClauses, GetAssocInfoExt, RustcInternalEx, RustcPublicTyExt,
-    Visibility, VisibilityExt, fn_trait_name, stable_trait, visible_path,
+    StabilityExt, Visibility, VisibilityExt, fn_trait_name, stable_trait, visible_path,
 };
 use crate::type_map::{is_type_block_less, map_rustc_public_ty_to_zngur};
 
@@ -445,6 +445,11 @@ impl AutozngContext {
     /// `#[autozng::emit]` / `emit_items`) that selected it.
     pub fn record_ty(&self, ty: &Ty, span: Span) {
         let ty = ty.base_ty();
+        if let Some(adt) = ty.adt_def()
+            && adt.is_unstable()
+        {
+            return;
+        }
         if !self.data.have_ty(&ty) {
             // insert a default record
             let _ = self.data.ty_record_mut(ty, span);
@@ -453,6 +458,9 @@ impl AutozngContext {
 
     /// Record an ADT as selected for emission, remembering the span that selected it.
     pub fn record_adt(&self, adt: &AdtDef, span: Span) {
+        if adt.is_unstable() {
+            return;
+        }
         let ty = adt.ty().base_ty();
         if !self.data.have_ty(&ty) {
             // insert a default record
@@ -476,7 +484,7 @@ impl AutozngContext {
     pub fn request_ty_visit(&self, ty: Ty) {
         let ty = ty.base_ty();
         if let Some(adt) = ty.adt_def()
-            && matches!(adt.visibility(), Visibility::PrivateAPI)
+            && (matches!(adt.visibility(), Visibility::PrivateAPI) || adt.is_unstable())
         {
             return;
         }
@@ -539,6 +547,9 @@ impl AutozngContext {
     /// [`rustc_public::ty::FieldDef`]'s `EmitTarget` impl), after the `emit`/`skip` action and
     /// the field's visibility have been resolved.
     pub fn record_field(&self, ty: Ty, field: FieldDef, span: Span) {
+        if field.is_unstable() {
+            return;
+        }
         // A field's type is part of the type's interface: it must get its own `type` block.
         self.request_ty_visit(field.ty());
         let mut record = self.data.ty_record_mut(ty, span);
@@ -560,6 +571,9 @@ impl AutozngContext {
     /// [`FnRecord::partial_args`]); the ordinary crate walk passes `None`. `span` is the span of
     /// the item that selected the function.
     pub fn record_fn(&self, fn_def: FnDef, partial_args: Option<GenericArgs>, span: Span) {
+        if fn_def.is_unstable() {
+            return;
+        }
         // Every type the function exposes is part of the interface: queue it for a third-pass
         // visit so it gets its own `type` block.
         self.request_signature_types(fn_def, partial_args.as_ref());
@@ -585,6 +599,9 @@ impl AutozngContext {
         partial_args: Option<GenericArgs>,
         span: Span,
     ) {
+        if fn_def.is_unstable() {
+            return;
+        }
         // Every type the method exposes is part of the interface: queue it for a third-pass visit.
         self.request_signature_types(fn_def, partial_args.as_ref());
         let mut record = self.data.ty_record_mut(ty, span);
@@ -760,6 +777,9 @@ impl AutozngContext {
     /// is idempotent per trait.
     pub fn record_concrete_trait(&self, trait_ref: TraitRef, span: Span) {
         let def = trait_ref.def_id;
+        if def.is_unstable() {
+            return;
+        }
         // Deduplicate per instantiation: the same trait may be enumerated with different concrete
         // arguments (e.g. `GenericTrait<u32>` and `GenericTrait<u8>`), each becoming its own entry.
         if self
@@ -820,6 +840,9 @@ impl AutozngContext {
     /// against it and its functions are emitted when it applies (see [`EmitForRecord`]).
     /// Recording is idempotent per trait declaration.
     pub fn record_emit_for_trait(&self, trait_def: TraitDef, span: Span) {
+        if trait_def.is_unstable() {
+            return;
+        }
         if self
             .data
             .emit_for
@@ -847,6 +870,9 @@ impl AutozngContext {
     /// type, the impl is matched against it and, when it applies, the trait's functions are
     /// emitted on that type. Recording is idempotent per impl block.
     pub fn record_emit_for_impl(&self, impl_def: ImplDef, trait_ref: TraitRef, span: Span) {
+        if trait_ref.def_id.is_unstable() {
+            return;
+        }
         if self
             .data
             .emit_for
@@ -874,6 +900,9 @@ impl AutozngContext {
     /// own source span is recorded alongside it. The associated functions are added separately by
     /// [`AutozngContext::record_trait_method`]. Recording is idempotent.
     pub fn record_trait(&self, def: TraitDef, span: Span) {
+        if def.is_unstable() {
+            return;
+        }
         // A `.zng` `trait` block is only usable through `dyn`; a non-dyn-compatible trait cannot
         // be exported (see `ensure_trait_exportable`).
         if !self.ensure_trait_exportable(def, span) {
@@ -914,6 +943,9 @@ impl AutozngContext {
         generics: GenericArgs,
         span: Span,
     ) {
+        if fn_def.is_unstable() {
+            return;
+        }
         // Every type the trait method exposes is part of the interface.
         self.request_signature_types(fn_def, Some(&generics));
         let mut traits = self.data.traits.borrow_mut();
