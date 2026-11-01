@@ -1,7 +1,13 @@
 type crate::Wrapper<::std::string::String> {
     #layout(size = 32, align = 8);
+
+    field tag (offset = 24, type = u8);
+    field value (offset = 0, type = ::std::string::String);
 }
 
 type crate::Wrapper<i32> {
     #layout(size = 8, align = 4);
+
+    field tag (offset = 4, type = u8);
+    field value (offset = 0, type = i32);
 }

@@ -6,5 +6,7 @@ type ::std::string::String {
 type crate::Wrapper<u32> {
     #layout(size = 4, align = 4);
 
+    field value (offset = 0, type = u32);
+
     safe fn describe(&self) -> ::std::string::String use crate::Describe;
 }

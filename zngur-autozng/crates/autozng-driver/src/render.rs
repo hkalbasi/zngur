@@ -21,6 +21,7 @@ use indexmap::IndexMap;
 use rustc_errors::DiagMessage;
 use rustc_hash::FxHashSet;
 use rustc_public::abi::FieldsShape;
+use rustc_public::rustc_internal::{internal, stable};
 use rustc_public::ty::{
     AdtDef, AssocKind, FieldDef, FnDef, GenericArgKind, GenericArgs, GenericParamDefKind, RigidTy,
     TraitDef, Ty, TyKind,
@@ -37,6 +38,7 @@ use zngur_def::{
 use crate::ctx::{
     AutozngContext, ExportedTraitRecord, FnRecord, ImplRecord, TraitFnRecord, TyRecord,
 };
+use crate::driver::with_ctxt;
 use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_rustc_public_span};
 use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
 use crate::rustc_ext::{
@@ -369,6 +371,25 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     })
 }
 
+/// The field's type instantiated with the concrete arguments of `record.ty`.
+///
+/// A generic ADT declares its fields in terms of its type parameters
+/// (`Option<T>::Some(T)`); the concrete instance (`Option<Ipv4Addr>`) needs the substitution
+/// before the field can be mapped to `.zng`.
+fn concrete_field_ty(record: &TyRecord, field: &FieldDef) -> Ty {
+    let Some(args) = concrete_ty_args(record) else {
+        return field.ty();
+    };
+    with_ctxt(|driver| {
+        let tcx = driver.tcx;
+        stable(
+            tcx.type_of(internal(tcx, field.def_id()))
+                .instantiate(tcx, internal(tcx, &args))
+                .skip_norm_wip(),
+        )
+    })
+}
+
 /// Build the `field` entries for a struct/union.
 ///
 /// `record.fields` holds the fields the analysis pass selected (visibility + `emit`/`skip`);
@@ -384,11 +405,13 @@ fn build_fields(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<Zn
         .into_iter()
         .enumerate()
         .filter_map(|(index, field)| {
-            let emit_span = record.fields.get(&field.def_id())?.span;
+            let emit_span = ctx
+                .field_emit_span(adt, &field)
+                .or_else(|| record.fields.get(&field.def_id()).map(|field| field.span))?;
             let offset = offsets
                 .as_ref()
                 .and_then(|offsets| offsets.get(index).copied());
-            build_field(ctx, adt, &field, emit_span, offset)
+            build_field(ctx, record, adt, &field, emit_span, offset)
         })
         .collect()
 }
@@ -400,17 +423,25 @@ fn build_fields(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<Zn
 fn build_variants(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<ZngurVariant> {
     adt.variants()
         .into_iter()
-        .map(|variant| ZngurVariant {
-            name: variant.name().to_string(),
-            fields: variant
-                .fields()
-                .into_iter()
+        .map(|variant| {
+            let all_fields = variant.fields();
+            let fields = all_fields
+                .iter()
                 .filter_map(|field| {
-                    let emit_span = record.fields.get(&field.def_id())?.span;
-                    build_field(ctx, adt, &field, emit_span, None)
+                    let emit_span = ctx
+                        .field_emit_span(adt, field)
+                        .or_else(|| record.fields.get(&field.def_id()).map(|field| field.span))?;
+                    build_field(ctx, record, adt, field, emit_span, None)
                 })
-                .collect(),
-            exhaustive: variant.is_exhaustive(),
+                .collect::<Vec<_>>();
+            ZngurVariant {
+                name: variant.name().to_string(),
+                // The IDL's `non_exhaustive` means the field list may be incomplete. A generic
+                // instance whose field types were not substituted, or a policy walk that did
+                // not record the fields, cannot be constructed from C++.
+                exhaustive: variant.is_exhaustive() && fields.len() == all_fields.len(),
+                fields,
+            }
         })
         .collect()
 }
@@ -419,6 +450,7 @@ fn build_variants(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<
 /// be represented so only that field is dropped.
 fn build_field(
     ctx: &AutozngContext,
+    record: &TyRecord,
     adt: &AdtDef,
     field: &FieldDef,
     emit_span: Span,
@@ -432,7 +464,7 @@ fn build_field(
         field.def_id(),
         &format!("field `{name}` of `{}`", adt.name()),
     );
-    let field_ty = field.ty();
+    let field_ty = concrete_field_ty(record, field);
     match map_rustc_public_ty_to_zngur(field_ty) {
         Ok(ty) => Some(ZngurField { name, ty, offset }),
         Err(MapTypeError::Unsupported(msg)) => {

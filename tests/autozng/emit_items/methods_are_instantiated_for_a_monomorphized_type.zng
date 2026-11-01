@@ -7,6 +7,8 @@ type crate::Generic<::std::string::String> {
     #layout(size = 24, align = 8);
     wellknown_traits(Debug);
 
+    field value (offset = 0, type = ::std::string::String);
+
     safe fn describe(&self) -> ::std::string::String;
     safe fn clone_inner(&self) -> ::std::string::String;
 }
@@ -14,6 +16,8 @@ type crate::Generic<::std::string::String> {
 type crate::Generic<i32> {
     #layout(size = 4, align = 4);
     wellknown_traits(Debug);
+
+    field value (offset = 0, type = i32);
 
     safe fn describe(&self) -> ::std::string::String;
     safe fn clone_inner(&self) -> i32;

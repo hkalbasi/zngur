@@ -55,7 +55,9 @@ type ::std::option::Option<::std::net::Ipv4Addr> {
     #layout(size = 5, align = 1);
     wellknown_traits(Copy, Debug);
     variant None {}
-    variant Some {}
+    variant Some {
+        field 0 (offset = auto, type = ::std::net::Ipv4Addr);
+    }
 
     safe fn is_some(&self) -> bool;
     safe fn is_none(&self) -> bool;

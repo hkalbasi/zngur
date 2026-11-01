@@ -541,6 +541,17 @@ impl AutozngContext {
         }
     }
 
+    /// The span that selected `field` on the ADT definition's [`TyRecord`].
+    ///
+    /// Fields are recorded on the definition (`Option<T>`), not on each concrete instance
+    /// (`Option<Ipv4Addr>`). Rendering a concrete instance consults the definition for the
+    /// selection, then instantiates the field type with the instance's arguments.
+    pub fn field_emit_span(&self, adt: &AdtDef, field: &FieldDef) -> Option<Span> {
+        let tys = self.data.tys.borrow();
+        let record = tys.get(&adt.ty().base_ty())?;
+        record.fields.get(&field.def_id()).map(|field| field.span)
+    }
+
     /// Record a field as selected for emission onto `ty`'s [`TyRecord`].
     ///
     /// Called while walking an ADT's fields in `analyze.rs` (through
