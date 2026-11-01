@@ -122,6 +122,7 @@ fn check_round_trip_with_resolver(
     assert_eq!(parsed.spec.funcs, reparsed.spec.funcs);
     assert_eq!(parsed.spec.extern_cpp_funcs, reparsed.spec.extern_cpp_funcs);
     assert_eq!(parsed.spec.extern_cpp_impls, reparsed.spec.extern_cpp_impls);
+    assert_eq!(parsed.spec.crate_name, reparsed.spec.crate_name);
 
     (parsed.spec, reparsed.spec)
 }
@@ -460,6 +461,24 @@ extern "C++" {
                     unsafe fn u_baz();
                 }
 
+            }
+        "#]],
+    );
+}
+
+#[test]
+fn reparse_crate_directive() {
+    let _ = check_round_trip(
+        r#"
+#crate bar_bindings
+
+type c++::ns::Bar {
+}
+    "#,
+        expect![[r#"
+            #crate bar_bindings
+
+            type c++::ns::Bar {
             }
         "#]],
     );

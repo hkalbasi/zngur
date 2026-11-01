@@ -388,6 +388,11 @@ pub struct Import(pub std::path::PathBuf);
 #[derive(Debug, Clone)]
 pub struct ModuleImport {
     pub path: std::path::PathBuf,
+    /// The `#crate` of the imported module, if it has one.
+    pub crate_name: Option<String>,
+    /// The `c++::` types that the imported module declares (their paths, without `c++::`). Their
+    /// Rust wrappers live at `::<crate_name>::generated::<path>`.
+    pub cpp_types: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Default)]
@@ -403,6 +408,9 @@ pub struct ZngurSpec {
     pub cpp_include_header_name: String,
     pub mangling_base: String,
     pub cpp_namespace: Option<String>,
+    /// The Rust crate that the generated Rust code is part of, from `#crate <name>`. Other modules
+    /// that import this one find its `c++::` types at `::<crate_name>::generated::<path>`.
+    pub crate_name: Option<String>,
     pub rust_cfg: Vec<(String, Option<String>)>,
 }
 

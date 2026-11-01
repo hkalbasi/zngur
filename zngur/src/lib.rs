@@ -100,6 +100,11 @@ impl Zngur {
         self
     }
 
+    /// Set the crate name to be used in the generated code where `crate` appears.
+    ///
+    /// Must match `#crate <name>` in the `.zng` file if both are provided (hyphens and underscores
+    /// are treated as equivalent). If omitted, falls back to `#crate <name>`, then
+    /// `CARGO_PKG_NAME`, and defaults to `crate` if unset.
     pub fn with_crate_name(mut self, crate_name: &str) -> Self {
         self.crate_name = Some(crate_name.to_owned());
         self
@@ -251,10 +256,35 @@ impl Zngur {
             ));
         }
 
-        let crate_name = self
-            .crate_name
-            .or_else(|| std::env::var("CARGO_PKG_NAME").ok())
-            .unwrap_or_else(|| "crate".to_owned());
+        let crate_name = match (self.crate_name, &parse_result.spec.crate_name) {
+            (Some(given), Some(declared))
+                if given.replace('-', "_") != declared.replace('-', "_") =>
+            {
+                return Err(format!(
+                    "the crate name `{given}` doesn't match `#crate {declared}` in `{}`",
+                    self.zng_file.display()
+                ));
+            }
+            (Some(given), _) => given,
+            (None, Some(declared)) => declared.clone(),
+            (None, None) => std::env::var("CARGO_PKG_NAME")
+                .ok()
+                .unwrap_or_else(|| "crate".to_owned()),
+        };
+        let norm_crate_name = crate_name.replace('-', "_");
+        for module in &parse_result.spec.imported_modules {
+            if let Some(imp_crate) = &module.crate_name
+                && imp_crate.replace('-', "_") == norm_crate_name
+            {
+                return Err(format!(
+                    "imported module `{}` declares `#crate {imp_crate}`, which matches this crate \
+                     (`{crate_name}`); use `merge \"{}\";` to split `.zng` files within a single \
+                     crate",
+                    module.path.display(),
+                    module.path.display(),
+                ));
+            }
+        }
         // We will pass crate_name to ZngurGenerator instead of mutating spec.
         let panic_to_exception = parse_result.spec.convert_panic_to_exception.0;
         let mut file = ZngurGenerator::build_from_zng(parse_result.spec, crate_name);
@@ -397,5 +427,389 @@ impl ZngurHdr {
         std::fs::write(&out_h, rendered)
             .map_err(|_| format!("Couldn't write contents to {}", out_h.display()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        path::{Path, PathBuf},
+        process::Command,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    use super::{Zngur, ZngurHdr};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("zngur_test_{prefix}_{}_{id}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn run_checked(cmd: &mut Command) {
+        let output = cmd
+            .output()
+            .unwrap_or_else(|e| panic!("failed to spawn `{cmd:?}`: {e}"));
+        assert!(
+            output.status.success(),
+            "command `{cmd:?}` failed with {}:\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    #[test]
+    fn crate_directive_is_used_and_checked_against_with_crate_name() {
+        let temp = TempDir::new("crate_directive");
+        let dir = temp.path();
+        let zng_path = dir.join("main.zng");
+        let rs_path = dir.join("generated.rs");
+        let h_path = dir.join("generated.h");
+        std::fs::write(
+            &zng_path,
+            "#crate custom_crate\n\ntype crate::Foo {\n    #layout(size = 1, align = 1);\n}\n",
+        )
+        .unwrap();
+
+        // Matching `with_crate_name` succeeds (including hyphenated Cargo package spelling).
+        Zngur::from_zng_file(&zng_path)
+            .with_crate_name("custom_crate")
+            .with_rs_file(&rs_path)
+            .with_h_file(&h_path)
+            .try_generate()
+            .unwrap();
+        Zngur::from_zng_file(&zng_path)
+            .with_crate_name("custom-crate")
+            .with_rs_file(&rs_path)
+            .with_h_file(&h_path)
+            .try_generate()
+            .unwrap();
+
+        // Omitting `with_crate_name` falls back to `#crate`.
+        Zngur::from_zng_file(&zng_path)
+            .with_rs_file(&rs_path)
+            .with_h_file(&h_path)
+            .try_generate()
+            .unwrap();
+        let h = std::fs::read_to_string(&h_path).unwrap();
+        assert!(h.contains("namespace custom_crate {"), "{h}");
+
+        // Mismatching `with_crate_name` returns a clear error.
+        let err = Zngur::from_zng_file(&zng_path)
+            .with_crate_name("other_crate")
+            .with_rs_file(&rs_path)
+            .with_h_file(&h_path)
+            .try_generate()
+            .unwrap_err();
+        assert!(
+            err.contains("doesn't match `#crate custom_crate`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn importing_module_with_matching_resolved_crate_name_is_rejected() {
+        let temp = TempDir::new("same_crate_import");
+        let dir = temp.path();
+        std::fs::write(
+            dir.join("sub.zng"),
+            "#crate my_crate\ntype c++::ns::Bar {}\n",
+        )
+        .unwrap();
+        // `main.zng` omits `#crate`, receiving its crate name via `with_crate_name`.
+        std::fs::write(dir.join("main.zng"), "import \"./sub.zng\";\n").unwrap();
+
+        let err = Zngur::from_zng_file(dir.join("main.zng"))
+            .with_crate_name("my-crate")
+            .with_rs_file(dir.join("generated.rs"))
+            .with_h_file(dir.join("generated.h"))
+            .try_generate()
+            .unwrap_err();
+        assert!(
+            err.contains("use `merge \"./sub.zng\";`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cross_crate_cpp_types_compile_and_run_end_to_end() {
+        let temp = TempDir::new("cross_crate_e2e");
+        let dir = temp.path();
+        std::fs::create_dir_all(dir.join("bar_src")).unwrap();
+        std::fs::create_dir_all(dir.join("app_src")).unwrap();
+
+        ZngurHdr::new()
+            .with_zng_header(dir.join("zngur.h"))
+            .generate()
+            .unwrap();
+
+        std::fs::write(
+            dir.join("ns_types.h"),
+            r#"#pragma once
+#include <cstdint>
+#include <type_traits>
+#include "zngur.h"
+
+namespace ns {
+inline int g_val_dtors = 0;
+
+struct RefOnly {
+  int32_t value;
+  explicit RefOnly(int32_t v) : value(v) {}
+  RefOnly(const RefOnly&) = delete;
+  RefOnly& operator=(const RefOnly&) = delete;
+};
+
+struct Val {
+  int32_t x;
+  int32_t y;
+  Val(int32_t x, int32_t y) : x(x), y(y) {}
+  Val(const Val& other) : x(other.x), y(other.y) {}
+  Val& operator=(const Val&) = default;
+  ~Val() { ++g_val_dtors; }
+};
+}  // namespace ns
+
+template <>
+struct rust::is_trivially_relocatable<::ns::Val> : std::true_type {};
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.join("bar.zng"),
+            r#"#crate bar_bindings
+
+#cpp_additional_includes "
+#include <ns_types.h>
+"
+
+type c++::ns::RefOnly {
+}
+
+type c++::ns::Val {
+    #layout(size = 8, align = 4);
+    #trivially_relocatable;
+}
+
+extern "C++" {
+    impl c++::ns::RefOnly {
+        safe fn get(&self) -> i32;
+        safe fn add(&mut self, i32);
+    }
+    impl c++::ns::Val {
+        safe fn new(i32, i32) -> c++::ns::Val;
+        safe fn sum(&self) -> i32;
+    }
+}
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.join("app.zng"),
+            r#"#crate app_crate
+import "./bar.zng";
+
+mod crate {
+    fn forward_cpp_types(&c++::ns::RefOnly, &mut c++::ns::RefOnly, c++::ns::Val) -> c++::ns::Val;
+}
+"#,
+        )
+        .unwrap();
+
+        Zngur::from_zng_file(dir.join("bar.zng"))
+            .with_h_file(dir.join("bar.zng.h"))
+            .with_cpp_file(dir.join("bar.zng.cpp"))
+            .with_rs_file(dir.join("bar_src/generated.rs"))
+            .with_warning_sink(|_| {})
+            .try_generate()
+            .unwrap();
+
+        Zngur::from_zng_file(dir.join("app.zng"))
+            .with_h_file(dir.join("app.zng.h"))
+            .with_cpp_file(dir.join("app.zng.cpp"))
+            .with_rs_file(dir.join("app_src/generated.rs"))
+            .with_warning_sink(|_| {})
+            .try_generate()
+            .unwrap();
+
+        std::fs::write(
+            dir.join("bar_src/lib.rs"),
+            "#[rustfmt::skip]\npub mod generated;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("app_src/main.rs"),
+            r#"#[rustfmt::skip]
+mod generated;
+
+pub fn forward_cpp_types(
+    input_ref: &generated::ns::RefOnly,
+    output_ref: &mut generated::ns::RefOnly,
+    val: generated::ns::Val,
+) -> generated::ns::Val {
+    let delta = input_ref.get() + val.sum();
+    output_ref.add(delta);
+    drop(val);
+    generated::ns::Val::new(delta, 100)
+}
+
+unsafe extern "C" {
+    fn run_cpp_checks() -> i32;
+}
+
+fn main() {
+    assert_eq!(unsafe { run_cpp_checks() }, 0);
+}
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.join("main.cpp"),
+            r#"#include "app.zng.h"
+
+namespace rust {
+int32_t Impl<cpp::ns::RefOnly>::get(Ref<cpp::ns::RefOnly> self) {
+  return self.cpp().value;
+}
+Unit Impl<cpp::ns::RefOnly>::add(RefMut<cpp::ns::RefOnly> self, int32_t delta) {
+  self.cpp().value += delta;
+  return {};
+}
+cpp::ns::Val Impl<cpp::ns::Val>::new_(int32_t x, int32_t y) {
+  return cpp::ns::Val::build(x, y);
+}
+int32_t Impl<cpp::ns::Val>::sum(Ref<cpp::ns::Val> self) {
+  return self.cpp().x + self.cpp().y;
+}
+}  // namespace rust
+
+extern "C" int run_cpp_checks() {
+  ::ns::RefOnly in_ref(7);
+  ::ns::RefOnly out_ref(10);
+  int dtors_before = ::ns::g_val_dtors;
+  {
+    auto in_val = ::rust::cpp::ns::Val::build(3, 5);
+    auto out_val = ::rust::app_crate::forward_cpp_types(
+        in_ref, out_ref, ::std::move(in_val));
+    if (out_ref.value != 25) return 1;
+    if (out_val.cpp().x != 15) return 2;
+    if (out_val.cpp().y != 100) return 3;
+    // `in_val` was moved into Rust and dropped inside `app_crate`.
+    if (::ns::g_val_dtors < dtors_before + 1) return 4;
+  }
+  if (::ns::g_val_dtors < dtors_before + 2) return 5;
+  return 0;
+}
+"#,
+        )
+        .unwrap();
+
+        let cxx = std::env::var("CXX").unwrap_or_else(|_| "c++".to_owned());
+        let mut cpp_objs = Vec::new();
+        for cpp_name in ["main.cpp", "bar.zng.cpp", "app.zng.cpp"] {
+            let src = dir.join(cpp_name);
+            if !src.exists() {
+                continue;
+            }
+            let obj = dir.join(format!("{cpp_name}.o"));
+            run_checked(
+                Command::new(&cxx)
+                    .current_dir(dir)
+                    .args(["-std=c++17", "-I"])
+                    .arg(dir)
+                    .arg("-c")
+                    .arg(&src)
+                    .arg("-o")
+                    .arg(&obj),
+            );
+            cpp_objs.push(obj);
+        }
+
+        let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
+        let zngur_lib_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../zngur-lib/src/lib.rs");
+        let rlib_path = |name: &str| dir.join(format!("lib{name}.rlib"));
+        let zngur_lib_rlib = rlib_path("zngur_lib");
+        let bar_rlib = rlib_path("bar_bindings");
+        let bin = dir.join("test_bin");
+
+        run_checked(
+            Command::new(&rustc)
+                .args([
+                    "--edition",
+                    "2024",
+                    "--crate-type",
+                    "rlib",
+                    "--crate-name",
+                    "zngur_lib",
+                ])
+                .arg(&zngur_lib_src)
+                .arg("--out-dir")
+                .arg(dir),
+        );
+        run_checked(
+            Command::new(&rustc)
+                .args([
+                    "--edition",
+                    "2024",
+                    "--crate-type",
+                    "rlib",
+                    "--crate-name",
+                    "bar_bindings",
+                ])
+                .arg(dir.join("bar_src/lib.rs"))
+                .arg(format!("--extern=zngur_lib={}", zngur_lib_rlib.display()))
+                .arg("--out-dir")
+                .arg(dir),
+        );
+        let cpp_stdlib = if cfg!(target_os = "macos") {
+            "c++"
+        } else {
+            "stdc++"
+        };
+        let mut link_cmd = Command::new(&rustc);
+        link_cmd
+            .args([
+                "--edition",
+                "2024",
+                "--crate-type",
+                "bin",
+                "--crate-name",
+                "app_crate",
+            ])
+            .arg(dir.join("app_src/main.rs"))
+            .arg(format!("--extern=zngur_lib={}", zngur_lib_rlib.display()))
+            .arg(format!("--extern=bar_bindings={}", bar_rlib.display()))
+            .args(["-L", &format!("dependency={}", dir.display())]);
+        for obj in &cpp_objs {
+            link_cmd
+                .arg("-C")
+                .arg(format!("link-arg={}", obj.display()));
+        }
+        link_cmd.args(["-l", cpp_stdlib]).arg("-o").arg(&bin);
+        run_checked(&mut link_cmd);
+        run_checked(&mut Command::new(&bin));
     }
 }

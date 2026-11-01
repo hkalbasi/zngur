@@ -68,10 +68,13 @@ impl ZngurGenerator {
         cpp_file.header_file_name = zng.cpp_include_header_name.clone();
         cpp_file.additional_includes = zng.additional_includes.0;
         cpp_file.zng_header_in_place = zng_header_in_place;
+        let mut included_headers = std::collections::HashSet::new();
         for module in &zng.imported_modules {
-            cpp_file
-                .additional_includes
-                .push_str(&format!("\n#include \"{}.h\"", module.path.display()));
+            if included_headers.insert(&module.path) {
+                cpp_file
+                    .additional_includes
+                    .push_str(&format!("\n#include \"{}.h\"", module.path.display()));
+            }
         }
         let default_ns = zng.cpp_namespace.as_deref().unwrap_or("rust");
         let sanitized_crate_name = self.1.replace('-', "_");
@@ -467,6 +470,31 @@ impl ZngurGenerator {
                     None
                 },
             });
+        }
+        // `c++::` types of imported modules are defined in their own crate (at
+        // `::<crate>::generated::<path>`). Re-exporting them at the same relative path as local
+        // `c++::` types lets this module's generated code refer to both the same way.
+        let mut reexported = std::collections::HashSet::<&[String]>::new();
+        for module in &zng.imported_modules {
+            let Some(crate_name) = &module.crate_name else {
+                continue;
+            };
+            let module_crate = crate_name.replace('-', "_");
+            for segs in &module.cpp_types {
+                let Some((_, module_path)) = segs.split_last() else {
+                    continue;
+                };
+                if !reexported.insert(segs.as_slice()) {
+                    continue;
+                }
+                cpp_tree.insert(
+                    module_path,
+                    &format!(
+                        "\n#[allow(unused_imports)]\npub use ::{module_crate}::generated::{};\n",
+                        segs.join("::")
+                    ),
+                );
+            }
         }
         rust_file.text.push_str(&cpp_tree.render());
         for func in zng.funcs {
@@ -1129,6 +1157,47 @@ pub type Handle = super::Handle;
         // ...but the declared layout is still checked in C++.
         assert!(h.contains("static_assert(sizeof(::geo::Point) == 16, \"Size mismatch\");"));
         assert!(h.contains("static_assert(alignof(::geo::Point) == 8, \"Alignment mismatch\");"));
+    }
+
+    #[test]
+    fn imported_cpp_types_are_reexported_and_deduplicated() {
+        let bar_import = ModuleImport {
+            path: "./bar.zng".into(),
+            crate_name: Some("bar-bindings".to_owned()),
+            cpp_types: vec![
+                vec!["ns".to_owned(), "Bar".to_owned()],
+                vec!["Top".to_owned()],
+            ],
+        };
+        let spec = ZngurSpec {
+            // Duplicate `ModuleImport` entries (e.g. from two `merge`d files importing the same
+            // module) must emit each `pub use` only once.
+            imported_modules: vec![bar_import.clone(), bar_import],
+            // A local `c++::` type in the same namespace shares the module.
+            types: vec![minimal_opaque_cpp_type(cpp(&["ns", "Local"]))],
+            ..Default::default()
+        };
+        let (rust_code, h, _cpp) =
+            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
+        assert_eq!(
+            rust_code
+                .matches("pub use ::bar_bindings::generated::Top;")
+                .count(),
+            1
+        );
+        let ns_module = rust_code
+            .split("pub mod ns {")
+            .nth(1)
+            .expect("no `ns` module");
+        assert_eq!(
+            ns_module
+                .matches("pub use ::bar_bindings::generated::ns::Bar;")
+                .count(),
+            1
+        );
+        assert!(ns_module.contains("pub struct Local"));
+        assert_eq!(rust_code.matches("pub mod ns {").count(), 1);
+        assert_eq!(h.matches("#include \"./bar.zng.h\"").count(), 1);
     }
 
     #[test]

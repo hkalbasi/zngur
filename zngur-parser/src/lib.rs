@@ -541,6 +541,7 @@ struct ParsedImportPath {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ParsedItem<'a> {
     ConvertPanicToException(Span),
+    CrateName(&'a str, Span),
     CppAdditionalInclude(&'a str),
     UnstableFeature(&'a str),
     Mod {
@@ -573,6 +574,7 @@ enum ParsedItem<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProcessedItem<'a> {
     ConvertPanicToException(Span),
+    CrateName(&'a str, Span),
     CppAdditionalInclude(&'a str),
     Mod {
         path: ParsedPath<'a>,
@@ -966,10 +968,22 @@ impl ProcessedItem<'_> {
                     ),
                 }
             }
-            ProcessedItem::ModuleImport { path, span: _ } => {
-                r.spec
-                    .imported_modules
-                    .push(ModuleImport { path: path.clone() });
+            ProcessedItem::ModuleImport { path, span } => {
+                let resolved_path = if ctx.depth > 0
+                    && let Some((root_dir, current_dir)) =
+                        ctx.module_root_dir.as_deref().zip(ctx.path.parent())
+                {
+                    rebase_relative_import_path(root_dir, current_dir, &path)
+                } else {
+                    path
+                };
+                r.spec.imported_modules.push(ModuleImport {
+                    path: resolved_path,
+                    crate_name: None,
+                    cpp_types: vec![],
+                });
+                r.module_import_spans
+                    .push(ctx.report_span_for_range(span.into_range()));
             }
             ProcessedItem::Type {
                 ty,
@@ -1506,6 +1520,33 @@ impl ProcessedItem<'_> {
                     }
                 }
             }
+            ProcessedItem::CrateName(name, span) => {
+                if !matches!(&scope.base, EntityPath::Rust(v) if v.is_empty()) {
+                    ctx.add_error_str(
+                        "`#crate` can only be used at the top level of a file, not inside a `mod` block",
+                        span,
+                    );
+                    return;
+                }
+                if ctx.depth > 0 {
+                    ctx.add_error_str(
+                        "`#crate` can only be used in the top-level file of a zngur module, not in merged files",
+                        span,
+                    );
+                    return;
+                }
+                if is_reserved_crate_name(name) {
+                    ctx.add_error_str(&format!("`{name}` cannot be used as a `#crate` name"), span);
+                    return;
+                }
+                match &r.spec.crate_name {
+                    Some(existing) if existing != name => ctx.add_error_str(
+                        &format!("conflicting `#crate`: already set to `{existing}`"),
+                        span,
+                    ),
+                    _ => r.spec.crate_name = Some(name.to_owned()),
+                }
+            }
         }
     }
 }
@@ -1949,6 +1990,23 @@ impl<'a, T: Clone> OwnedRefMut<'a, T> {
     }
 }
 
+/// Lexically normalizes `.` and `..` components in `path` without touching the filesystem.
+pub(crate) fn normalize_lexical_path(path: &std::path::Path) -> std::path::PathBuf {
+    let out: std::path::PathBuf = normalize_lexical_components(path).into_iter().collect();
+    if out.as_os_str().is_empty() {
+        std::path::PathBuf::from(".")
+    } else {
+        out
+    }
+}
+
+#[derive(Clone)]
+struct CachedImportedModule {
+    crate_name: Option<String>,
+    cpp_types: Vec<Vec<String>>,
+    had_errors: bool,
+}
+
 #[derive(Debug, Default)]
 struct ReportCounter {
     pub errors: usize,
@@ -1960,9 +2018,15 @@ struct ReportCounter {
 /// and [report sink](ReportSink) used for this parse.
 struct ParseContext<'this, 'source, 'cfg> {
     path: &'source std::path::Path,
+    /// Parent directory of the top-level `.zng` file of the module currently being parsed.
+    /// Relative `import` paths inside nested `merge` files are rebased onto this directory.
+    module_root_dir: Option<std::path::PathBuf>,
     source: &'source str,
     source_id: SourceId,
     depth: usize,
+    /// Whether `import`ed modules are parsed (to find their `#crate` and `c++::` types). Only
+    /// for the module being generated, not for the imported modules themselves.
+    resolve_module_imports: bool,
     cfg_provider: &'cfg dyn RustCfgProvider,
     report_sink: &'cfg mut dyn ReportSink,
     /// All .zng files processed during parsing (main file + imports)
@@ -1970,6 +2034,10 @@ struct ParseContext<'this, 'source, 'cfg> {
     report_counter: OwnedRefMut<'this, ReportCounter>,
     sources: OwnedRefMut<'this, indexmap::IndexMap<std::path::PathBuf, ariadne::Source<String>>>,
     recorded_spans: OwnedRefMut<'this, indexmap::IndexMap<SpanKey, Vec<ReportSpan>>>,
+    /// Already-parsed `import`ed modules, keyed by normalized path, so multiple `merge`d files
+    /// importing the same module parse and record it at most once.
+    parsed_module_cache:
+        OwnedRefMut<'this, std::collections::HashMap<std::path::PathBuf, CachedImportedModule>>,
 }
 
 impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
@@ -1987,15 +2055,18 @@ impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
         );
         Self {
             path,
+            module_root_dir: path.parent().map(std::path::Path::to_path_buf),
             source_id,
             source,
             depth: 0,
+            resolve_module_imports: true,
             cfg_provider: cfg,
             report_sink,
             processed_files,
             report_counter: Default::default(),
             sources,
             recorded_spans: Default::default(),
+            parsed_module_cache: Default::default(),
         }
     }
 
@@ -2013,16 +2084,35 @@ impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
         self.processed_files.push(path.to_path_buf());
         ParseContext {
             path,
+            module_root_dir: self.module_root_dir.clone(),
             source_id,
             source,
             depth: self.depth + 1,
+            resolve_module_imports: self.resolve_module_imports,
             cfg_provider: self.cfg_provider,
             report_sink: self.report_sink,
             processed_files: self.processed_files.into_borrowed(),
             report_counter: self.report_counter.into_borrowed(),
             sources: self.sources.into_borrowed(),
             recorded_spans: self.recorded_spans.into_borrowed(),
+            parsed_module_cache: self.parsed_module_cache.into_borrowed(),
         }
+    }
+
+    /// Build a parse context for the top-level file of an `import`ed module, which is parsed
+    /// into its own spec (it is the top level of that module with its own isolated span table,
+    /// and its own `import`s aren't parsed).
+    fn nested_module<'borrowed, 'src>(
+        &'borrowed mut self,
+        path: &'src std::path::Path,
+        source: &'src str,
+    ) -> ParseContext<'borrowed, 'src, 'borrowed> {
+        let mut ctx = self.nested(path, source);
+        ctx.module_root_dir = path.parent().map(std::path::Path::to_path_buf);
+        ctx.depth = 0;
+        ctx.resolve_module_imports = false;
+        ctx.recorded_spans = OwnedRefMut::Owned(Default::default());
+        ctx
     }
 
     /// the [`SourceId`] of the current source which can be fetched from the cache
@@ -2332,7 +2422,220 @@ impl<const ERRORS: bool, const WARNINGS: bool> ReportSink for StdErrReportSink<E
     }
 }
 
+fn is_reserved_crate_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Self"
+            | "abstract"
+            | "as"
+            | "async"
+            | "await"
+            | "become"
+            | "box"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "do"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "final"
+            | "fn"
+            | "for"
+            | "gen"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "macro"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "override"
+            | "priv"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "try"
+            | "type"
+            | "typeof"
+            | "unsafe"
+            | "unsized"
+            | "use"
+            | "virtual"
+            | "where"
+            | "while"
+            | "yield"
+    )
+}
+
+fn normalize_lexical_components(path: &std::path::Path) -> Vec<Component<'_>> {
+    let mut out = Vec::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => match out.last() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir) => {}
+                _ => out.push(Component::ParentDir),
+            },
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Rebases a `./`- or `../`-prefixed `import` path written inside a `merge`d file (`current_dir`)
+/// so that it is relative to the top-level `.zng` file's directory (`module_root_dir`). Bare
+/// C++ include-search paths (like `"packet.zng"`) are returned unchanged.
+fn rebase_relative_import_path(
+    module_root_dir: &std::path::Path,
+    current_dir: &std::path::Path,
+    import_path: &std::path::Path,
+) -> std::path::PathBuf {
+    use std::path::{Path, PathBuf};
+    if !matches!(
+        import_path.components().next(),
+        Some(Component::CurDir | Component::ParentDir)
+    ) {
+        return import_path.to_path_buf();
+    }
+    let joined = current_dir.join(import_path);
+    let root_comps = normalize_lexical_components(module_root_dir);
+    let joined_comps = normalize_lexical_components(&joined);
+    let common = root_comps
+        .iter()
+        .zip(&joined_comps)
+        .take_while(|(a, b)| a == b)
+        .count();
+    if !root_comps[common..]
+        .iter()
+        .all(|c| matches!(c, Component::Normal(_)))
+    {
+        return joined;
+    }
+    let up_count = root_comps[common..].len();
+    if let Some(tail_utf8) = joined_comps[common..]
+        .iter()
+        .map(|comp| comp.as_os_str().to_str())
+        .collect::<Option<Vec<&str>>>()
+    {
+        let mut parts: Vec<&str> = Vec::with_capacity(up_count + tail_utf8.len());
+        parts.extend(std::iter::repeat_n("..", up_count));
+        parts.extend(tail_utf8);
+        return if parts.is_empty() {
+            PathBuf::from(".")
+        } else if parts[0] == ".." {
+            PathBuf::from(parts.join("/"))
+        } else {
+            PathBuf::from(format!("./{}", parts.join("/")))
+        };
+    }
+    let mut out = PathBuf::new();
+    for _ in 0..up_count {
+        out.push("..");
+    }
+    for comp in &joined_comps[common..] {
+        out.push(comp.as_os_str());
+    }
+    if matches!(out.components().next(), Some(Component::ParentDir)) {
+        out
+    } else {
+        Path::new(".").join(out)
+    }
+}
+
 impl<'a> ParsedZngFile<'a> {
+    /// Parses the modules that the current file `import`s (from `first` on), to find their
+    /// `#crate` and the `c++::` types they declare, which this module can then refer to.
+    fn resolve_module_imports(
+        zngur: &mut ZngurSpecBuilder,
+        first: usize,
+        ctx: &mut ParseContext,
+        resolver: &impl ImportResolver,
+    ) {
+        let Some(base_dir) = ctx
+            .module_root_dir
+            .clone()
+            .or_else(|| ctx.path.parent().map(std::path::Path::to_path_buf))
+        else {
+            return;
+        };
+        for index in first..zngur.spec.imported_modules.len() {
+            let import_path = zngur.spec.imported_modules[index].path.clone();
+            let report_span = zngur.module_import_spans[index].clone();
+            let path = base_dir.join(&import_path);
+            let norm_path = normalize_lexical_path(&path);
+            let cached = if let Some(cached) = ctx.parsed_module_cache.get(&norm_path).cloned() {
+                cached
+            } else {
+                let Ok(text) = resolver.resolve_import(&base_dir, &import_path) else {
+                    // Not an error: an `import` only has to name the generated header (found via
+                    // the C++ include path), so the `.zng` file may not be at this relative path.
+                    // Its `c++::` types just can't be referred to from this module then.
+                    continue;
+                };
+                let errors_before = ctx.reports().errors;
+                let imported = {
+                    let mut module_ctx = ctx.nested_module(&path, &text);
+                    let mut module = ZngurSpecBuilder::default();
+                    Self::parse_into(&mut module, &mut module_ctx, resolver);
+                    module.to_zngur(&mut module_ctx)
+                };
+                let had_errors = ctx.reports().errors > errors_before;
+                let cpp_types: Vec<Vec<String>> = imported
+                    .types
+                    .iter()
+                    .filter_map(|ty| match &ty.ty {
+                        RustType::Cpp(segs) => Some(segs.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let cached = CachedImportedModule {
+                    crate_name: imported.crate_name,
+                    cpp_types,
+                    had_errors,
+                };
+                ctx.parsed_module_cache.insert(norm_path, cached.clone());
+                cached
+            };
+            if !cached.had_errors && !cached.cpp_types.is_empty() && cached.crate_name.is_none() {
+                let msg = format!(
+                    "imported module `{}` declares `c++::` types, so it needs a `#crate <name>` \
+                     directive for this module to find their Rust wrappers \
+                     (at `::<name>::generated::...`)",
+                    import_path.display()
+                );
+                ctx.add_fatal_report(
+                    Report::build(ReportKind::Error, report_span.clone())
+                        .with_message(&msg)
+                        .with_label(
+                            Label::new(report_span)
+                                .with_message(&msg)
+                                .with_color(Color::Red),
+                        )
+                        .finish(),
+                );
+            }
+            let module_import = &mut zngur.spec.imported_modules[index];
+            module_import.crate_name = cached.crate_name;
+            module_import.cpp_types = cached.cpp_types;
+        }
+    }
+
     fn parse_into(
         zngur: &mut ZngurSpecBuilder,
         ctx: &mut ParseContext,
@@ -2362,9 +2665,14 @@ impl<'a> ParsedZngFile<'a> {
                 .into_iter()
                 .map(|item| process_parsed_item(item, ctx)),
         );
+        let errors_before = ctx.reports().errors;
+        let first_new_module_import = zngur.spec.imported_modules.len();
         ProcessedZngFile::new(aliases, items).into_zngur_spec(zngur, ctx);
-        if ctx.reports().errors > 0 {
+        if ctx.reports().errors > errors_before {
             return;
+        }
+        if ctx.resolve_module_imports {
+            Self::resolve_module_imports(zngur, first_new_module_import, ctx, resolver);
         }
 
         if let Some(dirname) = ctx.path.to_owned().parent() {
@@ -2497,6 +2805,7 @@ fn process_parsed_item<'a>(
         ParsedItem::ConvertPanicToException(span) => {
             Ret::Processed(ProcessedItem::ConvertPanicToException(span))
         }
+        ParsedItem::CrateName(name, span) => Ret::Processed(ProcessedItem::CrateName(name, span)),
         ParsedItem::UnstableFeature(_) => {
             // ignore
             Ret::Ignore
@@ -2588,6 +2897,8 @@ struct ZngurSpecBuilder {
     spec: ZngurSpec,
     templates: Vec<TemplateDef>,
     imports: Vec<Import>,
+    /// The span of each entry of `spec.imported_modules`, in the file that imports it.
+    module_import_spans: Vec<ReportSpan>,
 }
 
 impl ZngurSpecBuilder {
@@ -2596,6 +2907,7 @@ impl ZngurSpecBuilder {
             mut spec,
             templates,
             imports: _,
+            module_import_spans,
         } = self;
         for ty in &mut spec.types {
             let mut template_locations = Vec::new();
@@ -2932,6 +3244,97 @@ impl ZngurSpecBuilder {
                 }
             }
         }
+        // Check that imported `c++::` types do not collide with local `c++::` declarations or
+        // with `c++::` types imported from a different crate.
+        let mut seen_reexports: HashSet<(String, Vec<String>)> = HashSet::new();
+        let mut imported_owners: std::collections::HashMap<Vec<String>, (String, ReportSpan)> =
+            std::collections::HashMap::new();
+        for (module, import_span) in spec.imported_modules.iter().zip(&module_import_spans) {
+            let Some(crate_name) = &module.crate_name else {
+                continue;
+            };
+            let norm_crate = crate_name.replace('-', "_");
+            if let Some(own_crate) = &spec.crate_name
+                && own_crate.replace('-', "_") == norm_crate
+            {
+                let msg = format!(
+                    "imported module `{}` has the same `#crate` (`{crate_name}`) as this module; \
+                     use `merge \"{}\";` to split `.zng` files within a single crate",
+                    module.path.display(),
+                    module.path.display(),
+                );
+                ctx.add_fatal_report(
+                    Report::build(ReportKind::Error, import_span.clone())
+                        .with_message(&msg)
+                        .with_label(
+                            Label::new(import_span.clone())
+                                .with_message(&msg)
+                                .with_color(Color::Red),
+                        )
+                        .finish(),
+                );
+                continue;
+            }
+            for segs in &module.cpp_types {
+                if !seen_reexports.insert((norm_crate.clone(), segs.clone())) {
+                    continue;
+                }
+                let local_ty = RustType::Cpp(segs.clone());
+                if spec.types.iter().any(|t| t.ty == local_ty) {
+                    let local_span = ctx
+                        .fetch_spans_global(&local_ty)
+                        .first()
+                        .copied()
+                        .cloned()
+                        .unwrap_or_else(|| import_span.clone());
+                    let msg = format!(
+                        "`c++::{}` is already imported from `{}` (`#crate {crate_name}`), and \
+                         cannot also be declared in this module",
+                        segs.join("::"),
+                        module.path.display(),
+                    );
+                    let report = Report::build(ReportKind::Error, local_span.clone())
+                        .with_message(&msg)
+                        .with_label(
+                            Label::new(local_span)
+                                .with_message("declared locally here")
+                                .with_color(Color::Red),
+                        )
+                        .with_label(
+                            Label::new(import_span.clone())
+                                .with_message(format!(
+                                    "imported from `{}` (`#crate {crate_name}`) here",
+                                    module.path.display()
+                                ))
+                                .with_color(Color::Yellow),
+                        )
+                        .finish();
+                    ctx.add_fatal_report(report);
+                } else if let Some((prev_crate, prev_span)) = imported_owners.get(segs) {
+                    let msg = format!(
+                        "`c++::{}` is imported from multiple crates (`{prev_crate}` and \
+                         `{norm_crate}`)",
+                        segs.join("::")
+                    );
+                    let report = Report::build(ReportKind::Error, import_span.clone())
+                        .with_message(&msg)
+                        .with_label(
+                            Label::new(import_span.clone())
+                                .with_message(format!("also imported from `{norm_crate}` here"))
+                                .with_color(Color::Red),
+                        )
+                        .with_label(
+                            Label::new(prev_span.clone())
+                                .with_message(format!("first imported from `{prev_crate}` here"))
+                                .with_color(Color::Yellow),
+                        )
+                        .finish();
+                    ctx.add_fatal_report(report);
+                } else {
+                    imported_owners.insert(segs.clone(), (norm_crate.clone(), import_span.clone()));
+                }
+            }
+        }
         spec
     }
 }
@@ -3017,10 +3420,68 @@ impl<'a> Token<'a> {
             x => Token::Ident(x),
         }
     }
+
+    fn as_word(&self) -> Option<&'a str> {
+        match self {
+            Token::Ident(x) => Some(x),
+            Token::KwAs => Some("as"),
+            Token::KwAsync => Some("async"),
+            Token::KwDyn => Some("dyn"),
+            Token::KwUse => Some("use"),
+            Token::KwFor => Some("for"),
+            Token::KwMod => Some("mod"),
+            Token::KwCrate => Some("crate"),
+            Token::KwType => Some("type"),
+            Token::KwTrait => Some("trait"),
+            Token::KwFn => Some("fn"),
+            Token::KwMut => Some("mut"),
+            Token::KwConst => Some("const"),
+            Token::KwExtern => Some("extern"),
+            Token::KwImpl => Some("impl"),
+            Token::KwImport => Some("import"),
+            Token::KwMerge => Some("merge"),
+            Token::KwIf => Some("if"),
+            Token::KwElse => Some("else"),
+            Token::KwMatch => Some("match"),
+            Token::KwSafe => Some("safe"),
+            Token::KwUnsafe => Some("unsafe"),
+            Token::Arrow
+            | Token::ArrowArm
+            | Token::AngleOpen
+            | Token::AngleClose
+            | Token::BracketOpen
+            | Token::BracketClose
+            | Token::Colon
+            | Token::ColonColon
+            | Token::ParenOpen
+            | Token::ParenClose
+            | Token::BraceOpen
+            | Token::BraceClose
+            | Token::And
+            | Token::Star
+            | Token::Sharp
+            | Token::Plus
+            | Token::Eq
+            | Token::Question
+            | Token::Comma
+            | Token::Semicolon
+            | Token::Pipe
+            | Token::Underscore
+            | Token::Dot
+            | Token::Bang
+            | Token::CppPathStart
+            | Token::Str(_)
+            | Token::RawStr(_, _)
+            | Token::Number(_) => None,
+        }
+    }
 }
 
 impl Display for Token<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(word) = self.as_word() {
+            return write!(f, "{word}");
+        }
         match self {
             Token::Arrow => write!(f, "->"),
             Token::ArrowArm => write!(f, "=>"),
@@ -3046,35 +3507,35 @@ impl Display for Token<'_> {
             Token::Underscore => write!(f, "_"),
             Token::Dot => write!(f, "."),
             Token::Bang => write!(f, "!"),
-            Token::KwAs => write!(f, "as"),
-            Token::KwAsync => write!(f, "async"),
-            Token::KwDyn => write!(f, "dyn"),
-            Token::KwUse => write!(f, "use"),
-            Token::KwFor => write!(f, "for"),
-            Token::KwMod => write!(f, "mod"),
-            Token::KwCrate => write!(f, "crate"),
-            Token::KwType => write!(f, "type"),
-            Token::KwTrait => write!(f, "trait"),
-            Token::KwFn => write!(f, "fn"),
-            Token::KwMut => write!(f, "mut"),
-            Token::KwConst => write!(f, "const"),
-            Token::KwExtern => write!(f, "extern"),
-            Token::KwImpl => write!(f, "impl"),
-            Token::KwImport => write!(f, "import"),
-            Token::KwMerge => write!(f, "merge"),
-            Token::KwIf => write!(f, "if"),
-            Token::KwElse => write!(f, "else"),
-            Token::KwMatch => write!(f, "match"),
-            Token::KwSafe => write!(f, "safe"),
-            Token::KwUnsafe => write!(f, "unsafe"),
             Token::CppPathStart => write!(f, "c++"),
-            Token::Ident(i) => write!(f, "{i}"),
             Token::Number(n) => write!(f, "{n}"),
             Token::Str(s) => write!(f, r#""{s}""#),
             Token::RawStr(hashes, s) => {
                 let h = "#".repeat(*hashes);
                 write!(f, r#"r{h}"{s}"{h}"#)
             }
+            Token::Ident(_)
+            | Token::KwAs
+            | Token::KwAsync
+            | Token::KwDyn
+            | Token::KwUse
+            | Token::KwFor
+            | Token::KwMod
+            | Token::KwCrate
+            | Token::KwType
+            | Token::KwTrait
+            | Token::KwFn
+            | Token::KwMut
+            | Token::KwConst
+            | Token::KwExtern
+            | Token::KwImpl
+            | Token::KwImport
+            | Token::KwMerge
+            | Token::KwIf
+            | Token::KwElse
+            | Token::KwMatch
+            | Token::KwSafe
+            | Token::KwUnsafe => unreachable!(),
         }
     }
 }
@@ -3773,6 +4234,12 @@ fn fn_item<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedItem<'a>, ZngParserEx
     .boxed()
 }
 
+fn word_token<'a>() -> impl Parser<'a, ParserInput<'a>, &'a str, ZngParserExtra<'a>> + Clone {
+    select! {
+        tok if Token::as_word(&tok).is_some() => Token::as_word(&tok).unwrap(),
+    }
+}
+
 fn additional_include_item<'a>()
 -> impl Parser<'a, ParserInput<'a>, ParsedItem<'a>, ZngParserExtra<'a>> + Clone {
     just(Token::Sharp)
@@ -3785,6 +4252,10 @@ fn additional_include_item<'a>()
                 .boxed(),
             just(Token::Ident("convert_panic_to_exception"))
                 .map_with(|_, extra| ParsedItem::ConvertPanicToException(extra.span()))
+                .boxed(),
+            just(Token::KwCrate)
+                .ignore_then(word_token())
+                .map_with(|name, extra| ParsedItem::CrateName(name, extra.span()))
                 .boxed(),
         )))
         .boxed()

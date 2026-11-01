@@ -109,6 +109,20 @@ fn check_fail(zng: &str, expected: Expect) {
     }
 }
 
+#[track_caller]
+fn check_import_fail(zng: &str, expected: Expect, resolver: &MockFilesystem) {
+    let r = catch_unwind(|| {
+        let _ = parse_str_with_resolver(zng, NullCfg, resolver, |_| {});
+    });
+    match r {
+        Ok(_) => panic!("Parsing unexpectedly succeeded"),
+        Err(e) => match e.downcast::<ErrorText>() {
+            Ok(t) => expected.assert_eq(&t.0),
+            Err(e) => std::panic::resume_unwind(e),
+        },
+    }
+}
+
 pub struct ErrorText(pub String);
 
 // useful for debugging a test that should succeeded on parse
@@ -1872,4 +1886,493 @@ type c++::D {
         err.contains("`#heap_allocated` and `#only_by_ref` are for Rust types"),
         "unexpected error:\n{err}"
     );
+}
+
+#[test]
+fn processed_files_includes_imported_module_and_its_merged_files() {
+    let resolver = MockFilesystem::new(vec![
+        (
+            "./bar.zng",
+            "#crate bar_bindings\nmerge \"./bar_part.zng\";\ntype c++::ns::Bar {}\n",
+        ),
+        ("./bar_part.zng", "type c++::ns::BarPart {}\n"),
+    ]);
+    let parsed = parse_str_with_resolver("import \"./bar.zng\";\n", NullCfg, &resolver, |_| {});
+    let file_names: Vec<_> = parsed
+        .processed_files
+        .iter()
+        .map(|p| p.file_name().unwrap().to_str().unwrap())
+        .collect();
+    assert_eq!(file_names.len(), 3, "got: {file_names:?}");
+    assert!(file_names.contains(&"test.zng"));
+    assert!(file_names.contains(&"bar.zng"));
+    assert!(file_names.contains(&"bar_part.zng"));
+}
+
+#[test]
+fn crate_directive_sets_the_crate_name_and_allows_identical_duplicates() {
+    let parsed = parse_str(
+        r#"
+#crate my_bindings
+#crate my_bindings
+"#,
+        NullCfg,
+        |w| panic!("unexpected warning: {w}"),
+    );
+    assert_eq!(parsed.spec.crate_name.as_deref(), Some("my_bindings"));
+
+    // Valid Rust crate names that happen to be Zngur-only keywords (`merge`, `import`, `safe`).
+    for kw_crate in ["merge", "import", "safe"] {
+        let parsed = parse_str(&format!("#crate {kw_crate}\n"), NullCfg, |w| {
+            panic!("unexpected warning: {w}")
+        });
+        assert_eq!(parsed.spec.crate_name.as_deref(), Some(kw_crate));
+    }
+}
+
+#[test]
+fn crate_directive_rejects_self_and_super() {
+    check_fail(
+        r#"
+#crate self
+#crate super
+#crate Self
+#crate struct
+#crate crate
+#crate mod
+mod foo {
+    #crate bar
+}
+"#,
+        expect![[r#"
+            Error: `self` cannot be used as a `#crate` name
+               ╭─[ test.zng:2:2 ]
+               │
+             2 │ #crate self
+               │  ─────┬────  
+               │       ╰────── `self` cannot be used as a `#crate` name
+            ───╯
+            Error: `super` cannot be used as a `#crate` name
+               ╭─[ test.zng:3:2 ]
+               │
+             3 │ #crate super
+               │  ─────┬─────  
+               │       ╰─────── `super` cannot be used as a `#crate` name
+            ───╯
+            Error: `Self` cannot be used as a `#crate` name
+               ╭─[ test.zng:4:2 ]
+               │
+             4 │ #crate Self
+               │  ─────┬────  
+               │       ╰────── `Self` cannot be used as a `#crate` name
+            ───╯
+            Error: `struct` cannot be used as a `#crate` name
+               ╭─[ test.zng:5:2 ]
+               │
+             5 │ #crate struct
+               │  ──────┬─────  
+               │        ╰─────── `struct` cannot be used as a `#crate` name
+            ───╯
+            Error: `crate` cannot be used as a `#crate` name
+               ╭─[ test.zng:6:2 ]
+               │
+             6 │ #crate crate
+               │  ─────┬─────  
+               │       ╰─────── `crate` cannot be used as a `#crate` name
+            ───╯
+            Error: `mod` cannot be used as a `#crate` name
+               ╭─[ test.zng:7:2 ]
+               │
+             7 │ #crate mod
+               │  ────┬────  
+               │      ╰────── `mod` cannot be used as a `#crate` name
+            ───╯
+            Error: `#crate` can only be used at the top level of a file, not inside a `mod` block
+               ╭─[ test.zng:9:6 ]
+               │
+             9 │     #crate bar
+               │      ────┬────  
+               │          ╰────── `#crate` can only be used at the top level of a file, not inside a `mod` block
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn crate_directive_not_allowed_in_merged_files() {
+    let resolver = MockFilesystem::new(vec![("./merged.zng", "#crate other")]);
+    check_import_fail(
+        r#"
+merge "./merged.zng";
+"#,
+        expect![[r#"
+            Error: `#crate` can only be used in the top-level file of a zngur module, not in merged files
+               ╭─[ ./merged.zng:1:2 ]
+               │
+             1 │ #crate other
+               │  ─────┬─────  
+               │       ╰─────── `#crate` can only be used in the top-level file of a zngur module, not in merged files
+            ───╯
+        "#]],
+        &resolver,
+    );
+}
+
+#[test]
+fn conflicting_crate_directives_are_rejected() {
+    check_fail(
+        r#"
+#crate first
+#crate second
+"#,
+        expect![[r#"
+            Error: conflicting `#crate`: already set to `first`
+               ╭─[ test.zng:3:2 ]
+               │
+             3 │ #crate second
+               │  ──────┬─────  
+               │        ╰─────── conflicting `#crate`: already set to `first`
+            ───╯
+        "#]],
+    );
+}
+
+#[test]
+fn imported_module_cpp_types_and_crate_are_resolved_including_merged_files() {
+    let resolver = MockFilesystem::new(vec![
+        (
+            "./bar.zng",
+            r#"
+#crate bar_bindings
+merge "./bar_extra.zng";
+
+type c++::ns::Bar {
+    #layout(size = 8, align = 4);
+    #trivially_relocatable;
+}
+
+type crate::RustOnly {
+    #layout(size = 1, align = 1);
+}
+"#,
+        ),
+        (
+            "./bar_extra.zng",
+            r#"
+type c++::ns::BarExtra {
+}
+"#,
+        ),
+    ]);
+    let parsed = parse_str_with_resolver(
+        r#"
+import "./bar.zng";
+
+mod crate {
+    fn use_bar(&c++::ns::Bar, &c++::ns::BarExtra);
+}
+"#,
+        NullCfg,
+        &resolver,
+        |w| panic!("unexpected warning: {w}"),
+    );
+    let [module] = parsed.spec.imported_modules.as_slice() else {
+        panic!("expected one imported module");
+    };
+    assert_eq!(module.crate_name.as_deref(), Some("bar_bindings"));
+    assert_eq!(
+        module.cpp_types,
+        vec![
+            vec!["ns".to_owned(), "Bar".to_owned()],
+            vec!["ns".to_owned(), "BarExtra".to_owned()],
+        ]
+    );
+    // The imported module's types aren't part of this module's spec.
+    assert!(parsed.spec.types.is_empty());
+}
+
+#[test]
+fn duplicate_module_import_across_merged_files_succeeds() {
+    let resolver = MockFilesystem::new(vec![
+        ("./bar.zng", "#crate bar_bindings\ntype c++::ns::Bar {}\n"),
+        ("./a.zng", "import \"./bar.zng\";\n"),
+        ("./b.zng", "import \"./bar.zng\";\n"),
+    ]);
+    let parsed = parse_str_with_resolver(
+        "merge \"./a.zng\";\nmerge \"./b.zng\";\n",
+        NullCfg,
+        &resolver,
+        |w| panic!("unexpected warning: {w}"),
+    );
+    assert_eq!(parsed.spec.imported_modules.len(), 2);
+    let bar_count = parsed
+        .processed_files
+        .iter()
+        .filter(|p| p.file_name().and_then(|s| s.to_str()) == Some("bar.zng"))
+        .count();
+    assert_eq!(
+        bar_count, 1,
+        "processed_files: {:?}",
+        parsed.processed_files
+    );
+}
+
+#[test]
+fn colliding_cpp_types_across_local_and_imported_modules_are_rejected() {
+    // 1. Local `c++::` type colliding with imported `c++::` type.
+    let resolver = MockFilesystem::new(vec![(
+        "./bar.zng",
+        "#crate bar_bindings\ntype c++::ns::Bar {}\n",
+    )]);
+    let r = catch_unwind(|| {
+        let _ = parse_str_with_resolver(
+            "import \"./bar.zng\";\ntype c++::ns::Bar {}\n",
+            NullCfg,
+            &resolver,
+            |_| {},
+        );
+    });
+    let err = r
+        .expect_err("expected failure")
+        .downcast::<ErrorText>()
+        .expect("expected ErrorText")
+        .0;
+    assert!(
+        err.contains("`c++::ns::Bar` is already imported from `./bar.zng`"),
+        "unexpected error:\n{err}"
+    );
+
+    // 2. Two imported modules from different crates declaring the same `c++::` type.
+    let resolver2 = MockFilesystem::new(vec![
+        (
+            "./one.zng",
+            "#crate one_bindings\ntype c++::ns::Shared {}\n",
+        ),
+        (
+            "./two.zng",
+            "#crate two_bindings\ntype c++::ns::Shared {}\n",
+        ),
+    ]);
+    let r2 = catch_unwind(|| {
+        let _ = parse_str_with_resolver(
+            "import \"./one.zng\";\nimport \"./two.zng\";\n",
+            NullCfg,
+            &resolver2,
+            |_| {},
+        );
+    });
+    let err2 = r2
+        .expect_err("expected failure")
+        .downcast::<ErrorText>()
+        .expect("expected ErrorText")
+        .0;
+    assert!(
+        err2.contains(
+            "`c++::ns::Shared` is imported from multiple crates (`one_bindings` and `two_bindings`)"
+        ),
+        "unexpected error:\n{err2}"
+    );
+}
+
+#[test]
+fn imported_module_spans_do_not_pollute_importing_module_diagnostics() {
+    // `./bar.zng` declares `crate::Foo` (valid). `test.zng` declares `crate::Foo` WITHOUT a
+    // layout: the missing-layout error must point to `test.zng`, never `./bar.zng`.
+    let resolver = MockFilesystem::new(vec![(
+        "./bar.zng",
+        "#crate bar_bindings\ntype crate::Foo { #layout(size = 1, align = 1); }\n",
+    )]);
+    let r = catch_unwind(|| {
+        let _ = parse_str_with_resolver(
+            "import \"./bar.zng\";\ntype crate::Foo {}\n",
+            NullCfg,
+            &resolver,
+            |_| {},
+        );
+    });
+    let err = r
+        .expect_err("expected failure")
+        .downcast::<ErrorText>()
+        .expect("expected ErrorText")
+        .0;
+    assert!(err.contains("test.zng"), "missing `test.zng` in:\n{err}");
+    assert!(
+        !err.contains("bar.zng"),
+        "imported module `./bar.zng` polluted spans in:\n{err}"
+    );
+}
+
+#[test]
+fn error_in_imported_module_does_not_cascade_or_abort_sibling_merges() {
+    // `./broken.zng` mistakenly puts `#crate` in a merged file `./broken_sub.zng`.
+    // 1. We should NOT get a second misleading "needs a `#crate <name>`" error.
+    // 2. Sibling `merge "./sibling.zng";` must still be parsed (so an error in `./sibling.zng`
+    //    is still reported).
+    let resolver = MockFilesystem::new(vec![
+        (
+            "./broken.zng",
+            "merge \"./broken_sub.zng\";\ntype c++::ns::Bar {}\n",
+        ),
+        ("./broken_sub.zng", "#crate bar_bindings\n"),
+        ("./sibling.zng", "type crate::MissingLayout {}\n"),
+    ]);
+    let r = catch_unwind(|| {
+        let _ = parse_str_with_resolver(
+            "import \"./broken.zng\";\nmerge \"./sibling.zng\";\n",
+            NullCfg,
+            &resolver,
+            |_| {},
+        );
+    });
+    let err = r
+        .expect_err("expected failure")
+        .downcast::<ErrorText>()
+        .expect("expected ErrorText")
+        .0;
+    assert!(
+        err.contains("`#crate` can only be used in the top-level file"),
+        "missing `#crate` merged-file error in:\n{err}"
+    );
+    assert!(
+        !err.contains("needs a `#crate <name>` directive"),
+        "unexpected cascading missing-`#crate` error in:\n{err}"
+    );
+    assert!(
+        err.contains("sibling.zng"),
+        "sibling merge `./sibling.zng` was skipped:\n{err}"
+    );
+}
+
+#[test]
+fn imported_module_with_cpp_types_needs_a_crate() {
+    let resolver = MockFilesystem::new(vec![(
+        "./bar.zng",
+        r#"
+type c++::ns::Bar {
+}
+"#,
+    )]);
+    check_import_fail(
+        r#"
+import "./bar.zng";
+"#,
+        expect![[r#"
+            Error: imported module `./bar.zng` declares `c++::` types, so it needs a `#crate <name>` directive for this module to find their Rust wrappers (at `::<name>::generated::...`)
+               ╭─[ test.zng:2:1 ]
+               │
+             2 │ import "./bar.zng";
+               │ ─────────┬─────────  
+               │          ╰─────────── imported module `./bar.zng` declares `c++::` types, so it needs a `#crate <name>` directive for this module to find their Rust wrappers (at `::<name>::generated::...`)
+            ───╯
+        "#]],
+        &resolver,
+    );
+}
+
+#[test]
+fn relative_module_imports_inside_merged_subdirectory_are_rebased_onto_root() {
+    let resolver = MockFilesystem::new(vec![
+        (
+            "./sub/part.zng",
+            "import \"./bar.zng\";\nimport \"../other/baz.zng\";\nimport \"../../outside/qux.zng\";\nimport \"header_only.zng\";\n",
+        ),
+        (
+            "./sub/bar.zng",
+            "#crate bar_bindings\ntype c++::ns::Bar {}\n",
+        ),
+        (
+            "./other/baz.zng",
+            "#crate baz_bindings\ntype c++::ns::Baz {}\n",
+        ),
+        (
+            "../outside/qux.zng",
+            "#crate qux_bindings\ntype c++::ns::Qux {}\n",
+        ),
+    ]);
+    let parsed = parse_str_with_resolver("merge \"./sub/part.zng\";\n", NullCfg, &resolver, |w| {
+        panic!("unexpected warning: {w}")
+    });
+    assert_eq!(parsed.spec.imported_modules.len(), 4);
+    assert_eq!(
+        parsed.spec.imported_modules[0].path.to_str(),
+        Some("./sub/bar.zng")
+    );
+    assert_eq!(
+        parsed.spec.imported_modules[0].crate_name.as_deref(),
+        Some("bar_bindings")
+    );
+    assert_eq!(
+        parsed.spec.imported_modules[0].cpp_types,
+        vec![vec!["ns".to_owned(), "Bar".to_owned()]]
+    );
+    assert_eq!(
+        parsed.spec.imported_modules[1].path.to_str(),
+        Some("./other/baz.zng")
+    );
+    assert_eq!(
+        parsed.spec.imported_modules[1].crate_name.as_deref(),
+        Some("baz_bindings")
+    );
+    assert_eq!(
+        parsed.spec.imported_modules[1].cpp_types,
+        vec![vec!["ns".to_owned(), "Baz".to_owned()]]
+    );
+    assert_eq!(
+        parsed.spec.imported_modules[2].path.to_str(),
+        Some("../outside/qux.zng")
+    );
+    assert_eq!(
+        parsed.spec.imported_modules[2].crate_name.as_deref(),
+        Some("qux_bindings")
+    );
+    assert_eq!(
+        parsed.spec.imported_modules[2].cpp_types,
+        vec![vec!["ns".to_owned(), "Qux".to_owned()]]
+    );
+    // Bare C++ include-search paths without `./` or `../` are preserved as-is.
+    assert_eq!(
+        parsed.spec.imported_modules[3].path,
+        std::path::PathBuf::from("header_only.zng")
+    );
+    assert_eq!(parsed.spec.imported_modules[3].crate_name, None);
+}
+
+#[test]
+fn importing_module_with_same_crate_directive_suggests_merge() {
+    let resolver = MockFilesystem::new(vec![(
+        "./sub.zng",
+        "#crate my_crate\ntype c++::ns::Bar {}\n",
+    )]);
+    check_import_fail(
+        r#"
+#crate my_crate
+import "./sub.zng";
+"#,
+        expect![[r#"
+            Error: imported module `./sub.zng` has the same `#crate` (`my_crate`) as this module; use `merge "./sub.zng";` to split `.zng` files within a single crate
+               ╭─[ test.zng:3:1 ]
+               │
+             3 │ import "./sub.zng";
+               │ ─────────┬─────────  
+               │          ╰─────────── imported module `./sub.zng` has the same `#crate` (`my_crate`) as this module; use `merge "./sub.zng";` to split `.zng` files within a single crate
+            ───╯
+        "#]],
+        &resolver,
+    );
+}
+
+#[test]
+fn unreadable_imported_module_is_not_an_error() {
+    // `import` only has to name the generated header, which may be found via the C++ include
+    // path even if the `.zng` file isn't at the relative path.
+    let resolver = MockFilesystem::new(vec![] as Vec<(&str, &str)>);
+    let parsed = parse_str_with_resolver(
+        r#"
+import "elsewhere.zng";
+"#,
+        NullCfg,
+        &resolver,
+        |_| {},
+    );
+    assert_eq!(parsed.spec.imported_modules[0].crate_name, None);
 }

@@ -282,8 +282,14 @@ impl WriteIDL for crate::ZngurSpec {
         if self.convert_panic_to_exception.0 {
             writeln!(p, "#convert_panic_to_exception")?;
         }
-        if !self.types.is_empty() {
+        if let Some(crate_name) = &self.crate_name {
             if self.convert_panic_to_exception.0 {
+                writeln!(p)?;
+            }
+            writeln!(p, "#crate {crate_name}")?;
+        }
+        if !self.types.is_empty() {
+            if self.convert_panic_to_exception.0 || self.crate_name.is_some() {
                 writeln!(p)?;
             }
             for (i, ty) in self.types.iter().enumerate() {
@@ -295,7 +301,7 @@ impl WriteIDL for crate::ZngurSpec {
             }
         }
         if !self.funcs.is_empty() {
-            if !self.types.is_empty() || self.convert_panic_to_exception.0 {
+            if !self.types.is_empty() || self.convert_panic_to_exception.0 || self.crate_name.is_some() {
                 writeln!(p)?;
             }
             for func in &self.funcs {
@@ -303,7 +309,7 @@ impl WriteIDL for crate::ZngurSpec {
             }
         }
         if !self.traits.is_empty() {
-            if !self.funcs.is_empty() || !self.types.is_empty() || self.convert_panic_to_exception.0
+            if !self.funcs.is_empty() || !self.types.is_empty() || self.convert_panic_to_exception.0 || self.crate_name.is_some()
             {
                 writeln!(p)?;
             }
@@ -319,6 +325,7 @@ impl WriteIDL for crate::ZngurSpec {
                 || !self.funcs.is_empty()
                 || !self.types.is_empty()
                 || self.convert_panic_to_exception.0
+                || self.crate_name.is_some()
             {
                 writeln!(p)?;
             }

@@ -172,6 +172,51 @@ mod ::crate {
 }
 ```
 
+## Importing C++ types
+
+`c++::` types don't have a Rust path of their own, so a module that declares them names its crate
+with `#crate`, in its top-level file:
+
+**bar.zng** (generated into the crate `bar_bindings`):
+
+```zng
+#crate bar_bindings
+
+type c++::ns::Bar {
+}
+```
+
+Modules that import it can then refer to the type by its `c++::` path, the same way as to their own
+`c++::` types:
+
+**main.zng:**
+
+```zng
+import "./bar.zng";
+
+mod crate {
+    fn use_bar(&c++::ns::Bar);
+}
+```
+
+zngur reads the imported `.zng` file (if it's at the relative path) to find its `#crate` and the
+`c++::` types it declares. Their Rust wrappers are assumed to be at
+`::<crate>::generated::<c++ path>` (`::bar_bindings::generated::ns::Bar` above). So the crate must
+include its generated code as a public `generated` module at its root:
+
+```rust
+// bar_bindings/src/lib.rs
+#[rustfmt::skip]
+pub mod generated;
+
+// Optional, to also have the types at the root of the crate.
+pub use generated::*;
+```
+
+`#crate` also sets the crate name of the module itself, so it must match `--crate-name`
+(`with_crate_name`) if that's given too. An imported module that declares `c++::` types without a
+`#crate` is an error.
+
 ## Note: Build System Integration
 
 This feature requires significantly more involvement with the build system
