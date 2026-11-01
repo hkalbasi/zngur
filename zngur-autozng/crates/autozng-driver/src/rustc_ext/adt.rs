@@ -54,6 +54,9 @@ impl FieldDefExt for FieldDef {
 pub(crate) trait VariantDefExt {
     /// `true` when this variant's field list is *not* `#[non_exhaustive]`.
     fn is_exhaustive(&self) -> bool;
+
+    /// `true` when this variant is gated behind `#[unstable]`.
+    fn is_unstable(&self) -> bool;
 }
 
 impl VariantDefExt for VariantDef {
@@ -71,6 +74,22 @@ impl VariantDefExt for VariantDef {
                 .into_iter()
                 .nth(index)
                 .is_none_or(|variant| !variant.is_field_list_non_exhaustive())
+        })
+    }
+
+    fn is_unstable(&self) -> bool {
+        let adt = self.adt_def();
+        let Some(index) = adt.variants().iter().position(|variant| variant == self) else {
+            return false;
+        };
+        with_ctxt(|driver| {
+            let tcx = driver.tcx;
+            tcx.adt_def(internal(tcx, adt.def_id()))
+                .variants()
+                .into_iter()
+                .nth(index)
+                .and_then(|variant| tcx.lookup_stability(variant.def_id))
+                .is_some_and(|stability| stability.is_unstable())
         })
     }
 }

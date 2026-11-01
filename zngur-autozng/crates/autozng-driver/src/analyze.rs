@@ -33,7 +33,7 @@ use crate::{
     driver::{AnalyzeReport, with_ctxt},
     error::span_of_def,
     render,
-    rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt},
+    rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
 };
 use zngur_def::ZngurSpec;
@@ -138,6 +138,9 @@ fn record_trait_methods(trait_def: &rustc_public::ty::TraitDef, ctx: &AutozngCon
 /// [`AutozngContext::request_ty_visit`]).
 fn visit_adt_children(adt: &rustc_public::ty::AdtDef, ctx: &AutozngContext) {
     for variant in adt.variants() {
+        if variant.is_unstable() {
+            continue;
+        }
         for field in variant.fields() {
             let field_attrs = field.autozng_attrs();
             field_attrs.visit(&field, ctx);

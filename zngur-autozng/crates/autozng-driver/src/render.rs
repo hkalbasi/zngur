@@ -450,6 +450,7 @@ fn build_fields(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<Zn
 fn build_variants(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<ZngurVariant> {
     adt.variants()
         .into_iter()
+        .filter(|variant| !variant.is_unstable())
         .map(|variant| {
             let all_fields = variant.fields();
             let fields = all_fields
