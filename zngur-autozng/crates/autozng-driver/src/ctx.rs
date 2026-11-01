@@ -699,6 +699,41 @@ impl AutozngContext {
             let fn_trait = fn_trait_name(&visible_path(&def));
             let dyn_compatible = ctx.tcx.is_dyn_compatible(def.def_id().internal(ctx.tcx));
             if dyn_compatible && fn_trait.is_none() {
+                if self.data.unexportable_traits.borrow().contains(&def) {
+                    return false;
+                }
+                let static_method = def.associated_items().into_iter().find(|item| {
+                    matches!(
+                        &item.kind,
+                        rustc_public::ty::AssocKind::Fn {
+                            has_self: false,
+                            ..
+                        }
+                    )
+                });
+                if let Some(item) = static_method {
+                    self.data.unexportable_traits.borrow_mut().push(def);
+                    let name = match &item.kind {
+                        rustc_public::ty::AssocKind::Fn { name, .. } => name.clone(),
+                        _ => unreachable!(),
+                    };
+                    let name = name.rsplit("::").next().unwrap_or_default();
+                    let source_span = span_of_def(def.def_id());
+                    let method_span = span_of_def(item.def_id.def_id());
+                    let mut diag = ctx.tcx.dcx().struct_span_err(
+                        source_span,
+                        format!(
+                            "autozng: trait `{}` has a static method `{name}` and cannot be exported as a `trait` block",
+                            def.name()
+                        ),
+                    );
+                    diag.span_note(method_span, "static method declared here");
+                    if !span.is_dummy() && !source_span.contains(span) {
+                        diag.span_note(span, "selected here");
+                    }
+                    diag.emit();
+                    return false;
+                }
                 return true;
             }
             if self.data.unexportable_traits.borrow().contains(&def) {

@@ -138,7 +138,8 @@ trait crate::Producer<u32> {
 ```
 
 A trait must be dyn compatible to be exported this way: a trait with generic methods, an
-associated constant, or a static method without a `where Self: Sized` bound is rejected.
+associated constant, or a static method is rejected. A static method with `where Self: Sized`
+is dyn compatible, but a C++ type has no way to implement it, so the trait block is rejected.
 A `pub use` of another crate's items never exports its traits; select a trait explicitly.
 
 Leave `emit_traits` off to export the trait object *type* instead: the same binding produces

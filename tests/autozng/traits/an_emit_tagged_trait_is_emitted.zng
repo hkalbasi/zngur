@@ -5,6 +5,4 @@ type str {
 trait crate::Store {
     safe fn put(&self, u64) -> u64;
     safe fn tag(&self, u64, &str);
-    safe fn take(self) -> u32;
-    safe fn stat() -> u8;
 }
