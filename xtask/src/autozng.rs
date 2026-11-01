@@ -92,7 +92,6 @@ pub enum Resolution {
 }
 
 /// The frontend and driver built from the nested workspace.
-#[allow(dead_code)] // used by the autozng test modes
 pub struct DriverBinaries {
     pub driver: PathBuf,
     pub frontend: PathBuf,
@@ -329,24 +328,37 @@ impl Toolchain {
         format!("{} ({source}, {})", self.root.display(), self.rustc_version)
     }
 
-    /// Build the driver and frontend in the nested workspace.
-    #[allow(dead_code)] // used by the autozng test modes
+    /// Build the driver with the pinned toolchain and the frontend with stable.
     pub fn build_driver(&self, sh: &Shell, workspace: &Path) -> Result<DriverBinaries> {
         let cargo = self.cargo();
         {
             let _dir = sh.push_dir(workspace);
-            self.apply_env(cmd!(sh, "{cargo} build -p autozng-driver -p cargo-autozng"))
-                .run()?;
+            run_build(
+                self.apply_env(cmd!(sh, "{cargo} build -p autozng-driver")),
+                "building autozng-driver",
+            )?;
         }
-        let bin = self.target_dir.join("debug");
-        Ok(DriverBinaries {
-            driver: bin.join(exe("autozng-driver")),
-            frontend: bin.join(exe("cargo-autozng")),
-        })
+        let driver = self.target_dir.join("debug").join(exe("autozng-driver"));
+
+        let repo = workspace
+            .parent()
+            .context("zngur-autozng lives inside the repository")?;
+        let frontend_target = repo.join("target/autozng-frontend");
+        let manifest = workspace.join("crates/cargo-autozng/Cargo.toml");
+        run_build(
+            cmd!(
+                sh,
+                "cargo build --manifest-path {manifest} -p cargo-autozng"
+            )
+            .env("CARGO_TARGET_DIR", &frontend_target),
+            "building cargo-autozng",
+        )?;
+        let frontend = frontend_target.join("debug").join(exe("cargo-autozng"));
+
+        Ok(DriverBinaries { driver, frontend })
     }
 
     /// A command for the driver with the environment it needs to start.
-    #[allow(dead_code)] // used by the autozng test modes
     pub fn driver_command(&self, driver: &Path) -> Command {
         let mut command = Command::new(driver);
         command.env("RUSTC_TOOLCHAIN", &self.root);
@@ -372,7 +384,6 @@ impl Toolchain {
     }
 
     /// Apply the toolchain environment to a command.
-    #[allow(dead_code)] // used by the autozng test modes
     pub fn apply_env<C: CommandEnv>(&self, cmd: C) -> C {
         let mut cmd = cmd
             .env_var("PATH", self.path_with_bin())
@@ -392,6 +403,19 @@ impl Toolchain {
     fn path_with_bin(&self) -> OsString {
         prepend_to_path(&self.root.join("bin"), "PATH")
     }
+}
+
+fn run_build(command: Cmd<'_>, action: &str) -> Result<()> {
+    let output = command.quiet().ignore_status().output()?;
+    if !output.status.success() {
+        bail!(
+            "{action} failed with {}\n--- stdout ---\n{}--- stderr ---\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+    Ok(())
 }
 
 fn prepend_to_path(dir: &Path, env_var: &str) -> OsString {

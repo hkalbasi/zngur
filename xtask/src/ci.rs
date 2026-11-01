@@ -32,7 +32,12 @@ fn check_book_formatting() -> Result<()> {
         .with_context(|| "Book markdown files are not formatted. Run `cargo xtask format-book`")
 }
 
-pub fn main(fix: bool, only_autozng: bool, require_autozng: bool) -> Result<()> {
+pub fn main(
+    fix: bool,
+    only_autozng: bool,
+    require_autozng: bool,
+    allow_autozng_bridge_failures: bool,
+) -> Result<()> {
     let sh = &Shell::new()?;
     println!("Cargo version = {}", cmd!(sh, "cargo --version").read()?);
 
@@ -125,8 +130,17 @@ pub fn main(fix: bool, only_autozng: bool, require_autozng: bool) -> Result<()> 
         }
     }
 
-    test::main_with(fix, None, None, None, false, only_autozng, require_autozng)
-        .with_context(|| "End-to-end tests and examples failed")?;
+    test::main_with(
+        fix,
+        None,
+        None,
+        None,
+        false,
+        only_autozng,
+        require_autozng,
+        allow_autozng_bridge_failures,
+    )
+    .with_context(|| "End-to-end tests and examples failed")?;
 
     // it's nigh impossible to get this to run under MSVC
     #[cfg(not(target_os = "windows"))]

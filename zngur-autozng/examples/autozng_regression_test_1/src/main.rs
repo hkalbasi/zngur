@@ -1,3 +1,5 @@
+//@ cargo_autozng
+//@ contains: type crate::Example {
 #![cfg_attr(autozng, feature(register_tool, custom_inner_attributes))]
 #![cfg_attr(autozng, register_tool(autozng))]
 #![allow(dead_code)]

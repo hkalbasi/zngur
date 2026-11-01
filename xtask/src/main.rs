@@ -28,6 +28,9 @@ enum Command {
         /// Fail instead of skipping `zngur-autozng` tests when no toolchain resolves.
         #[arg(long)]
         require_autozng: bool,
+        /// Report autozng bridge generation/compile failures as skipped instead of failed.
+        #[arg(long)]
+        allow_autozng_bridge_failures: bool,
     },
     /// Run the end-to-end tests and examples.
     Test {
@@ -54,6 +57,9 @@ enum Command {
         /// Fail instead of skipping `zngur-autozng` tests when no toolchain resolves.
         #[arg(long)]
         require_autozng: bool,
+        /// Report autozng bridge generation/compile failures as skipped instead of failed.
+        #[arg(long)]
+        allow_autozng_bridge_failures: bool,
     },
     FormatBook {
         #[arg(long)]
@@ -72,7 +78,13 @@ fn main() -> anyhow::Result<()> {
             fix,
             only_autozng,
             require_autozng,
-        } => ci::main(fix, only_autozng, require_autozng),
+            allow_autozng_bridge_failures,
+        } => ci::main(
+            fix,
+            only_autozng,
+            require_autozng,
+            allow_autozng_bridge_failures,
+        ),
         Command::FormatBook { fix } => format_book::main(fix),
         Command::FormatTemplates { fix } => format_templates::main(fix),
         Command::Test {
@@ -83,6 +95,7 @@ fn main() -> anyhow::Result<()> {
             verbose,
             only_autozng,
             require_autozng,
+            allow_autozng_bridge_failures,
         } => test::main_with(
             fix,
             filter,
@@ -91,6 +104,7 @@ fn main() -> anyhow::Result<()> {
             verbose,
             only_autozng,
             require_autozng,
+            allow_autozng_bridge_failures,
         ),
     }
 }

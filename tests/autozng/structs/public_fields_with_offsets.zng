@@ -1,0 +1,6 @@
+type crate::Point {
+    #layout(size = 8, align = 4);
+
+    field x (offset = 0, type = i32);
+    field y (offset = 4, type = i32);
+}
