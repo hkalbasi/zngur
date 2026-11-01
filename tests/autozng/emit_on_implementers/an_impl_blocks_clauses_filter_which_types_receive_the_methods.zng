@@ -1,0 +1,14 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type crate::Marked {
+    #layout(size = 0, align = 1);
+
+    safe fn describe(&self) -> ::std::string::String use crate::Describe;
+}
+
+type crate::Unmarked {
+    #layout(size = 0, align = 1);
+}

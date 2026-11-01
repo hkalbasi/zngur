@@ -1,0 +1,12 @@
+type (u8, bool) {
+    #layout(size = 2, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type [u8] {
+    wellknown_traits(?Sized, Debug);
+}
+
+type str {
+    wellknown_traits(?Sized, Debug);
+}

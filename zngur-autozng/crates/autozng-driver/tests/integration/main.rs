@@ -9,8 +9,6 @@
 
 mod harness;
 
-mod emit_items;
-mod emit_on_implementers;
 mod handshake;
 mod layout;
 mod policy;

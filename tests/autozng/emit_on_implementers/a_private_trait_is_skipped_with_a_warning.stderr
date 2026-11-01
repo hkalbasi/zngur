@@ -1,0 +1,5 @@
+warning: autozng: private traits and functions can be exposed in a zngur interface
+ --> src/lib.rs:7:25
+  |
+7 |     #[cfg_attr(autozng, autozng::emit_on_implementers)]
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

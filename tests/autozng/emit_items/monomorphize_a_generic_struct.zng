@@ -1,0 +1,7 @@
+type crate::Container<i32> {
+    #layout(size = 4, align = 4);
+}
+
+type crate::Container<u8> {
+    #layout(size = 1, align = 1);
+}

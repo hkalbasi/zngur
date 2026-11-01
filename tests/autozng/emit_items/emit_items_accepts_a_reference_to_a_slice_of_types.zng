@@ -1,0 +1,7 @@
+type crate::Container<::std::string::String> {
+    #layout(size = 24, align = 8);
+}
+
+type crate::Container<i32> {
+    #layout(size = 4, align = 4);
+}

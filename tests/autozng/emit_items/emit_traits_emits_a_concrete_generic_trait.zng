@@ -1,0 +1,4 @@
+trait crate::GenericTrait<u32> {
+    safe fn get_value(&self) -> u32;
+    safe fn count(&self) -> u32;
+}

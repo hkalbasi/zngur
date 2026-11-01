@@ -1,0 +1,14 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type crate::Foo {
+    #layout(size = 4, align = 4);
+
+    field value (offset = 0, type = u32);
+}
+
+type crate::Marked {
+    #layout(size = 0, align = 1);
+}

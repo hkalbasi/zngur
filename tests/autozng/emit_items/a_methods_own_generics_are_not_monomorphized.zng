@@ -1,0 +1,5 @@
+type crate::Generic<i32> {
+    #layout(size = 4, align = 4);
+
+    safe fn get(&self) -> &i32;
+}

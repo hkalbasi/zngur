@@ -1,0 +1,7 @@
+type crate::Wrapper<::std::string::String> {
+    #layout(size = 32, align = 8);
+}
+
+type crate::Wrapper<i32> {
+    #layout(size = 8, align = 4);
+}

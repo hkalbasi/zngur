@@ -1,0 +1,10 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type str {
+    wellknown_traits(?Sized, Debug);
+
+    safe fn describe(&self) -> ::std::string::String use crate::Describe;
+}

@@ -1,0 +1,10 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type crate::S {
+    #layout(size = 0, align = 1);
+
+    safe fn to_string(&self) -> ::std::string::String use ::std::string::ToString;
+}

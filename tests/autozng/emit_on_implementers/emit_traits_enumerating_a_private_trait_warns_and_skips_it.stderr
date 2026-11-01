@@ -1,0 +1,5 @@
+warning: autozng: private traits and functions can be exposed in a zngur interface
+  --> src/lib.rs:11:5
+   |
+11 |     const _: [&dyn Secret<u32>; 0] = [];
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

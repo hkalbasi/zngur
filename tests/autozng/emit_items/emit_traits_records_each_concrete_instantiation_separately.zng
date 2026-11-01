@@ -1,0 +1,7 @@
+trait crate::GenericTrait<u32> {
+    safe fn get_value(&self) -> u32;
+}
+
+trait crate::GenericTrait<u8> {
+    safe fn get_value(&self) -> u8;
+}

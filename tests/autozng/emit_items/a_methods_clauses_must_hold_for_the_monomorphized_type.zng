@@ -1,0 +1,19 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type crate::Generic<crate::NotDebug> {
+    #layout(size = 0, align = 1);
+}
+
+type crate::Generic<i32> {
+    #layout(size = 4, align = 4);
+    wellknown_traits(Debug);
+
+    safe fn describe(&self) -> ::std::string::String;
+}
+
+type crate::NotDebug {
+    #layout(size = 0, align = 1);
+}
