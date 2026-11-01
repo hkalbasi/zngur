@@ -382,9 +382,13 @@ impl WriteIDL for crate::ZngurType {
             p.indent();
 
             // don't duplicate layout info
-            if self.cpp_ref.is_none() {
+            if self.layout.is_some() && self.cpp_ref.is_none() {
                 p.write_indent()?;
                 p.write_idl(&self.layout)?;
+            }
+            if self.trivially_relocatable {
+                p.write_indent()?;
+                writeln!(p, "#trivially_relocatable;")?;
             }
             if self.cpp_heap_allocated.is_some() {
                 p.write_indent()?;
@@ -779,6 +783,7 @@ fn print_spec() {
             cpp_heap_allocated: None,
             cpp_ref: None,
             cpp_stack_owned: None,
+            trivially_relocatable: false,
         }],
         traits: indexmap::IndexMap::default(),
         funcs: vec![crate::ZngurFn {
@@ -846,6 +851,7 @@ fn test_write_cpp_type_idl() {
                 cpp_heap_allocated: None,
                 cpp_ref: Some(crate::CppRef("::osmium::Way".into())),
                 cpp_stack_owned: None,
+                trivially_relocatable: false,
             },
             crate::ZngurType {
                 ty: crate::RustType::Cpp(vec!["a".into(), "b".into(), "Name".into()]),
@@ -871,6 +877,7 @@ fn test_write_cpp_type_idl() {
                 cpp_heap_allocated: Some(crate::CppHeapAllocated("::x::Name".into())),
                 cpp_ref: None,
                 cpp_stack_owned: None,
+                trivially_relocatable: false,
             },
         ],
         ..Default::default()

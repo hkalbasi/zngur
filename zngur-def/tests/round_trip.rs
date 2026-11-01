@@ -239,6 +239,45 @@ extern "C++" {
 }
 
 #[test]
+fn reparse_cpp_reference_only() {
+    let _ = check_round_trip(
+        r#"
+type c++::osmium::Way {
+}
+type c++::osmium::Node {
+    #layout(size = 16, align = 8);
+}
+    "#,
+        expect![[r#"
+            type c++::osmium::Way {
+            }
+
+            type c++::osmium::Node {
+                #layout(size = 16, align = 8);
+            }
+        "#]],
+    );
+}
+
+#[test]
+fn reparse_cpp_trivially_relocatable() {
+    let _ = check_round_trip(
+        r#"
+type c++::osmium::Way {
+    #layout(size = 16, align = 8);
+    #trivially_relocatable;
+}
+    "#,
+        expect![[r#"
+            type c++::osmium::Way {
+                #layout(size = 16, align = 8);
+                #trivially_relocatable;
+            }
+        "#]],
+    );
+}
+
+#[test]
 fn reparse_alias() {
     let _ = check_round_trip(
         r#"

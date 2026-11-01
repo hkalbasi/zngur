@@ -231,6 +231,7 @@ pub fn try_match_template(ty: &RustType, template: &ZngurType) -> Option<Templat
     let ZngurType {
         ty: template_ty,
         layout,
+        trivially_relocatable,
         wellknown_traits,
         exhaustive,
         methods,
@@ -245,6 +246,7 @@ pub fn try_match_template(ty: &RustType, template: &ZngurType) -> Option<Templat
     let new_ty = ZngurType {
         ty: ty.clone(),
         layout: *layout,
+        trivially_relocatable: *trivially_relocatable,
         wellknown_traits: wellknown_traits.clone(),
         exhaustive: *exhaustive,
         methods: methods

@@ -140,6 +140,10 @@ namespace {{ self.namespace }} {
     template<>
     struct zngur_is_unsized< {{ td.ty }} > : ::std::true_type {};
   {% endif %}
+  {% if let Some(cpp_ref) = td.cpp_ref %}
+    {# Rust only refers to these, but their declared layout (if any) is still checked. #}
+    {{ cpp_ref.layout_checks() }}
+  {% endif %}
 {% endfor %}
 
 }
@@ -710,10 +714,10 @@ namespace {{ self.namespace }} {
     {% endif %}
 
     {% if let Some(cpp_ref) = td.cpp_ref %}
-      inline {{ cpp_ref.0 }}& cpp() {
-          return *reinterpret_cast< {{ cpp_ref.0 }}* >(__zngur_data);
+      inline {{ cpp_ref.name }}& cpp() {
+          return *reinterpret_cast< {{ cpp_ref.name }}* >(__zngur_data);
       }
-      inline RefMut(const {{ cpp_ref.0 }}& t) : __zngur_data(reinterpret_cast<size_t>(&t)) {}
+      inline RefMut(const {{ cpp_ref.name }}& t) : __zngur_data(reinterpret_cast<size_t>(&t)) {}
     {% endif %}
 
     {% if let Some(cpp_stack_owned) = td.cpp_stack_owned %}
@@ -934,10 +938,10 @@ namespace {{ self.namespace }} {
     {% endif %}
 
     {% if let Some(cpp_ref) = td.cpp_ref %}
-      inline {{ cpp_ref.0 }}& cpp() {
-        return *reinterpret_cast< {{ cpp_ref.0 }}* >(__zngur_data);
+      inline {{ cpp_ref.name }}& cpp() {
+        return *reinterpret_cast< {{ cpp_ref.name }}* >(__zngur_data);
       }
-      inline Ref(const {{ cpp_ref.0 }}& t) : __zngur_data(reinterpret_cast<size_t>(&t)) {}
+      inline Ref(const {{ cpp_ref.name }}& t) : __zngur_data(reinterpret_cast<size_t>(&t)) {}
     {% endif %}
 
     {% if let Some(cpp_stack_owned) = td.cpp_stack_owned %}

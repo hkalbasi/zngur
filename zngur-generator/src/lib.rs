@@ -124,9 +124,35 @@ impl ZngurGenerator {
         cpp_file.coro_support = coro_support;
         for ty_def in zng.types {
             let ty = &ty_def.ty;
+            // What Rust can do with a C++ (`c++::`) type: hold it by value if it has a layout and
+            // is trivially relocatable, and otherwise only refer to it.
+            let cpp_name = ty_def.cpp_name();
+            let cpp_by_value_type = if ty_def.cpp_by_value_layout().is_some() {
+                cpp_name.clone()
+            } else {
+                None
+            };
+            let cpp_ref = if cpp_by_value_type.is_none() && ty_def.cpp_heap_allocated.is_none() {
+                cpp_name.map(|name| cpp::CppRef {
+                    name,
+                    layout: if ty_def.cpp_ref.is_some() {
+                        None
+                    } else {
+                        ty_def.layout
+                    },
+                })
+            } else {
+                None
+            };
             let is_copy = ty_def.wellknown_traits.contains(&ZngurWellknownTrait::Copy);
-            let Some(layout) = ty_def.layout else {
-                unreachable!("Every type should have a defined layout policy before rendering")
+            // In Rust, C++ types that are only referred to are zero-sized. (Their layout, if
+            // any, is only checked in C++.)
+            let layout = if cpp_ref.is_some() {
+                LayoutPolicy::ZERO_SIZED_TYPE
+            } else {
+                ty_def
+                    .layout
+                    .expect("Every type should have a defined layout policy before rendering")
             };
             match layout {
                 LayoutPolicy::StackAllocated { size, align } => {
@@ -157,11 +183,11 @@ impl ZngurGenerator {
                 ),
             };
             let mut cpp_stack_owned_data = None;
-            if let Some(cpp_stack_owned) = &ty_def.cpp_stack_owned {
+            if let Some(cpp_type) = cpp_by_value_type {
                 let mangled_name = rust_file.cpp_stack_owned_destructor_fn(&ty);
                 cpp_stack_owned_data = Some(CppStackOwnedData {
                     destructor_fn: mangled_name.clone(),
-                    cpp_type: cpp_stack_owned.0.clone(),
+                    cpp_type,
                 });
                 let LayoutPolicy::StackAllocated { size, align } = layout else {
                     unreachable!("Validation ensures cpp_stack_owned has StackAllocated layout");
@@ -240,7 +266,7 @@ impl ZngurGenerator {
                     );
                 }
             }
-            if ty_def.cpp_ref.is_some() {
+            if cpp_ref.is_some() {
                 let struct_def = format!(
                     r#"
     pub struct {type_name}(());
@@ -403,7 +429,7 @@ impl ZngurGenerator {
                         cpp_type: cpp_heap_allocated.0,
                     }
                 }),
-                cpp_ref: ty_def.cpp_ref,
+                cpp_ref,
                 cpp_stack_owned: cpp_stack_owned_data,
                 from_trait: if let RustType::Boxed(b) = &ty {
                     if let RustType::Dyn(tr, _) = b.as_ref() {
@@ -556,6 +582,7 @@ mod tests {
         ZngurType {
             ty,
             layout: Some(LayoutPolicy::HeapAllocated),
+            trivially_relocatable: false,
             wellknown_traits: vec![],
             exhaustive: true,
             methods: vec![],
@@ -577,6 +604,7 @@ mod tests {
         ZngurType {
             ty,
             layout: Some(LayoutPolicy::StackAllocated { size, align }),
+            trivially_relocatable: false,
             wellknown_traits: vec![],
             exhaustive: true,
             methods: vec![],
@@ -593,6 +621,7 @@ mod tests {
         ZngurType {
             ty,
             layout: Some(LayoutPolicy::ZERO_SIZED_TYPE),
+            trivially_relocatable: false,
             wellknown_traits: vec![],
             exhaustive: true,
             methods: vec![],
@@ -602,6 +631,33 @@ mod tests {
             cpp_heap_allocated: None,
             cpp_ref: Some(CppRef(cpp_type.to_owned())),
             cpp_stack_owned: None,
+        }
+    }
+
+    /// A `c++::` type that Rust holds by value via `#layout` + `#trivially_relocatable`.
+    fn minimal_by_value_cpp_type(ty: RustType, size: usize, align: usize) -> ZngurType {
+        ZngurType {
+            ty,
+            layout: Some(LayoutPolicy::StackAllocated { size, align }),
+            trivially_relocatable: true,
+            wellknown_traits: vec![],
+            exhaustive: true,
+            methods: vec![],
+            constructor: None,
+            variants: vec![],
+            fields: vec![],
+            cpp_heap_allocated: None,
+            cpp_ref: None,
+            cpp_stack_owned: None,
+        }
+    }
+
+    /// A `c++::` type without legacy directives that Rust only refers to.
+    fn minimal_opaque_cpp_type(ty: RustType) -> ZngurType {
+        ZngurType {
+            layout: None,
+            trivially_relocatable: false,
+            ..minimal_by_value_cpp_type(ty, 0, 1)
         }
     }
 
@@ -907,6 +963,7 @@ pub type Handle = super::Handle;
                 ZngurType {
                     ty: RustType::Boxed(Box::new(RustType::Dyn(my_trait.clone(), vec![]))),
                     layout: Some(LayoutPolicy::StackAllocated { size: 16, align: 8 }),
+                    trivially_relocatable: false,
                     wellknown_traits: vec![],
                     exhaustive: true,
                     methods: vec![],
@@ -920,6 +977,7 @@ pub type Handle = super::Handle;
                 ZngurType {
                     ty: RustType::Ref(Mutability::Not, Box::new(RustType::Dyn(my_trait, vec![]))),
                     layout: Some(LayoutPolicy::StackAllocated { size: 16, align: 8 }),
+                    trivially_relocatable: false,
                     wellknown_traits: vec![],
                     exhaustive: true,
                     methods: vec![],
@@ -940,6 +998,7 @@ pub type Handle = super::Handle;
                         vec![],
                     ))),
                     layout: Some(LayoutPolicy::StackAllocated { size: 16, align: 8 }),
+                    trivially_relocatable: false,
                     wellknown_traits: vec![],
                     exhaustive: true,
                     methods: vec![],
@@ -953,6 +1012,7 @@ pub type Handle = super::Handle;
                 ZngurType {
                     ty: adt(&["crate", "MyEnum"]),
                     layout: Some(LayoutPolicy::StackAllocated { size: 8, align: 4 }),
+                    trivially_relocatable: false,
                     wellknown_traits: vec![],
                     exhaustive: true,
                     methods: vec![],
@@ -1005,6 +1065,7 @@ pub type Handle = super::Handle;
         let rust_string = ZngurType {
             ty: adt(&["std", "string", "String"]),
             layout: Some(LayoutPolicy::StackAllocated { size: 24, align: 8 }),
+            trivially_relocatable: false,
             wellknown_traits: vec![],
             exhaustive: true,
             methods: vec![],
@@ -1032,5 +1093,55 @@ pub type Handle = super::Handle;
             h.contains("namespace rust {\nnamespace std {\nnamespace string {\nstruct String {"),
             "missing `rust::std::string::String` wrapper in:\n{h}"
         );
+    }
+
+    #[test]
+    fn cpp_type_with_layout_and_trivially_relocatable_is_held_by_value() {
+        let spec = ZngurSpec {
+            types: vec![minimal_by_value_cpp_type(cpp(&["geo", "Point"]), 16, 8)],
+            ..Default::default()
+        };
+        let (rust_code, h, _cpp) =
+            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
+        assert!(rust_code.contains("pub mod geo {"));
+        assert!(rust_code.contains("pub struct Point {"));
+        assert!(rust_code.contains("unsafe impl ::zngur_lib::ZngCppStackObject for Point {}"));
+        assert!(h.contains(
+            "static_assert(::rust::is_trivially_relocatable< ::geo::Point >::value, \"Type must \
+             be trivially relocatable\");"
+        ));
+    }
+
+    #[test]
+    fn cpp_type_with_layout_but_not_trivially_relocatable_is_reference_only() {
+        let spec = ZngurSpec {
+            types: vec![ZngurType {
+                trivially_relocatable: false,
+                ..minimal_by_value_cpp_type(cpp(&["geo", "Point"]), 16, 8)
+            }],
+            ..Default::default()
+        };
+        let (rust_code, h, _cpp) =
+            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
+        // Zero-sized in Rust...
+        assert!(rust_code.contains("pub struct Point(());"));
+        assert!(!rust_code.contains("ZngCppStackObject"));
+        // ...but the declared layout is still checked in C++.
+        assert!(h.contains("static_assert(sizeof(::geo::Point) == 16, \"Size mismatch\");"));
+        assert!(h.contains("static_assert(alignof(::geo::Point) == 8, \"Alignment mismatch\");"));
+    }
+
+    #[test]
+    fn cpp_type_without_layout_is_reference_only_and_has_no_layout_checks() {
+        let spec = ZngurSpec {
+            types: vec![minimal_opaque_cpp_type(cpp(&["geo", "Point"]))],
+            ..Default::default()
+        };
+        let (rust_code, h, _cpp) =
+            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
+        assert!(rust_code.contains("pub struct Point(());"));
+        assert!(!rust_code.contains("ZngCppStackObject"));
+        assert!(!h.contains("sizeof(::geo::Point)"));
+        assert!(h.contains("inline ::geo::Point& cpp()"));
     }
 }

@@ -3,13 +3,37 @@
 "
 
 type c++::MyCppWrapper {
-    #cpp_stack_owned "::CppType";
+    #trivially_relocatable;
     #layout(size = 8, align = 4);
 }
 
+type c++::BoxedInt {
+    #trivially_relocatable;
+    #layout(size = 8, align = 8);
+}
+
+type c++::OpaqueRef {
+    #layout(size = 4, align = 4);
+}
+
+mod crate {
+    fn read_opaque(&c++::OpaqueRef) -> i32;
+}
+
 extern "C++" {
+    safe fn run_with_opaque_ref() -> i32;
+
     impl c++::MyCppWrapper {
         safe fn new(i32, i32) -> c++::MyCppWrapper;
         safe fn print(&self);
+    }
+
+    impl c++::BoxedInt {
+        safe fn new(i32) -> c++::BoxedInt;
+        safe fn get(&self) -> i32;
+    }
+
+    impl c++::OpaqueRef {
+        safe fn read(&self) -> i32;
     }
 }

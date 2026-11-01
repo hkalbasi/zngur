@@ -323,7 +323,12 @@ impl Display for CppRef {
 #[derive(Debug, PartialEq)]
 pub struct ZngurType {
     pub ty: RustType,
+    /// Required for Rust types. For C++ (`c++::`) types, Rust holds them by value if they have a
+    /// `StackAllocated` layout and are `trivially_relocatable`, and only refers to them otherwise.
     pub layout: Option<LayoutPolicy>,
+    /// `#trivially_relocatable`: the C++ type can be moved with `memcpy`, so Rust can hold it by
+    /// value. The generated C++ code checks this with `rust::is_trivially_relocatable`.
+    pub trivially_relocatable: bool,
     pub wellknown_traits: Vec<ZngurWellknownTrait>,
     pub exhaustive: bool,
     pub methods: Vec<ZngurMethodDetails>,
@@ -333,6 +338,36 @@ pub struct ZngurType {
     pub cpp_heap_allocated: Option<CppHeapAllocated>,
     pub cpp_ref: Option<CppRef>,
     pub cpp_stack_owned: Option<CppStackOwned>,
+}
+
+impl ZngurType {
+    /// The C++ name of a C++ type, e.g. `::a::B` (or the explicit name from a legacy
+    /// `#cpp_stack_owned`, `#cpp_ref`, or `#cpp_heap_allocated` directive).
+    pub fn cpp_name(&self) -> Option<String> {
+        if let Some(c) = &self.cpp_stack_owned {
+            return Some(c.0.clone());
+        }
+        if let Some(c) = &self.cpp_ref {
+            return Some(c.0.clone());
+        }
+        if let Some(c) = &self.cpp_heap_allocated {
+            return Some(c.0.clone());
+        }
+        self.ty.cpp_spelling()
+    }
+
+    /// The size and alignment of a C++ type that Rust holds by value (see [`ZngurType::layout`]).
+    pub fn cpp_by_value_layout(&self) -> Option<LayoutPolicy> {
+        let held_by_value = self.cpp_stack_owned.is_some()
+            || (matches!(self.ty, RustType::Cpp(_))
+                && self.trivially_relocatable
+                && self.cpp_ref.is_none()
+                && self.cpp_heap_allocated.is_none());
+        match self.layout {
+            Some(layout @ LayoutPolicy::StackAllocated { .. }) if held_by_value => Some(layout),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -429,6 +464,14 @@ pub enum RustType {
 
 impl RustType {
     pub const UNIT: Self = RustType::Tuple(Vec::new());
+
+    /// The C++ spelling of a `c++::` type, e.g. `::a::B` for `c++::a::B`.
+    pub fn cpp_spelling(&self) -> Option<String> {
+        match self {
+            RustType::Cpp(segs) => Some(format!("::{}", segs.join("::"))),
+            _ => None,
+        }
+    }
 }
 
 impl Display for RustPathAndGenerics {

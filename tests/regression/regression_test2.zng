@@ -4,12 +4,13 @@
 "
 
 type c++::task::CppTask {
-    #cpp_stack_owned "::task::CppTaskForRust";
+    // `::task::CppTask` is an alias of `::task::CppTaskForRust`.
+    #trivially_relocatable;
     #layout(size = 8, align = 8);
 }
 
 type c++::task::Dispatcher {
-    #cpp_stack_owned "::task::Dispatcher";
+    #trivially_relocatable;
     #layout(size = 1, align = 1);
 }
 

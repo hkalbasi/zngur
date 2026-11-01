@@ -1,5 +1,6 @@
 #pragma once
 #include <iostream>
+#include <memory>
 #include <type_traits>
 #include <zngur.h>
 
@@ -14,3 +15,11 @@ struct CppType {
     std::cout << "Constructed CppType " << x << " " << y << std::endl;
   }
 };
+
+struct OpaqueRef {
+  int value;
+};
+
+// The `.zng` file names C++ types by their C++ path, so these aliases give them the names it uses.
+using MyCppWrapper = CppType;
+using BoxedInt = std::unique_ptr<int>;
