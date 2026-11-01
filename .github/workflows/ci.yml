@@ -116,6 +116,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
+      - name: Turn off autocrlf
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v3
       - name: Enter VS Developer shell
         if: runner.os == 'Windows'
