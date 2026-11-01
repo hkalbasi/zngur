@@ -120,6 +120,7 @@ struct Annotations {
     error_code: Option<String>,
     error_contains: Option<String>,
     contains: Vec<String>,
+    no_stderr: bool,
 }
 
 fn read_annotations(path: &Path) -> Result<Annotations> {
@@ -134,7 +135,12 @@ fn parse_annotations(text: &str, path: &Path) -> Result<Annotations> {
         let Some(body) = line.trim().strip_prefix("//@") else {
             continue;
         };
-        let Some((key, value)) = body.trim().split_once(':') else {
+        let body = body.trim();
+        if body == "no_stderr" {
+            annotations.no_stderr = true;
+            continue;
+        }
+        let Some((key, value)) = body.split_once(':') else {
             continue;
         };
         let value = value.trim();
@@ -691,6 +697,7 @@ fn check_autozng(
         .unwrap_or(source)
         .display()
         .to_string();
+    let annotations = read_annotations(source)?;
     let scratch = autozng_scratch(&root, tests_dir, source);
     if scratch.exists() {
         std::fs::remove_dir_all(&scratch)
@@ -714,13 +721,20 @@ fn check_autozng(
     let zng = zng.trim_end().to_owned();
     check_snapshot(fix, &source.with_extension("zng"), &zng, true, &name)?;
 
-    let diagnostics = autozng_diagnostics(&output.stderr);
-    check_autozng_stderr(
-        fix,
-        &source.with_extension("stderr"),
-        diagnostics.trim_end(),
-        &name,
-    )?;
+    if annotations.no_stderr {
+        let path = source.with_extension("stderr");
+        if fix && path.exists() {
+            std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+        }
+    } else {
+        let diagnostics = autozng_diagnostics(&output.stderr);
+        check_autozng_stderr(
+            fix,
+            &source.with_extension("stderr"),
+            diagnostics.trim_end(),
+            &name,
+        )?;
+    }
 
     if zng.is_empty() {
         return Ok(None);

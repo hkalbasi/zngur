@@ -1,0 +1,4 @@
+type crate::Generic<u32> {
+    #heap_allocate;
+    wellknown_traits(Debug);
+}

@@ -1,0 +1,23 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type ::std::vec::Vec<u32> {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type crate::MyType {
+    #layout(size = 24, align = 8);
+
+    field field1 (offset = 0, type = ::std::string::String);
+
+    safe fn do_stuff(&self, ::std::vec::Vec<u32>) -> bool;
+    safe fn do_other_stuff(&self) -> u32;
+}

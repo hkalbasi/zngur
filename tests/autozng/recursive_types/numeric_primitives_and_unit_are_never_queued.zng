@@ -1,0 +1,7 @@
+type crate::Numbers {
+    #layout(size = 0, align = 1);
+
+    safe fn get(&self) -> u32;
+    safe fn set(&mut self, i64);
+    safe fn nothing(&self);
+}

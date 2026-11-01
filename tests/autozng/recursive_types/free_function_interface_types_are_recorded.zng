@@ -1,0 +1,18 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type ::std::vec::Vec<u8> {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type crate::Payload {
+    #layout(size = 24, align = 8);
+
+    field value (offset = 0, type = ::std::string::String);
+}
+
+safe fn crate::consume(&crate::Payload) -> ::std::vec::Vec<u8>;
+safe fn crate::make() -> crate::Payload;
