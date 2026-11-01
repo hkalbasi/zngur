@@ -11,7 +11,7 @@ based on your choice
 
 Each opaque C++ wrapper type is declared with a `c++::` path (such as `type c++::Way` or
 `type c++::ns::Way`). For `type c++::a::b::Name`, `zngur` generates the Rust wrapper struct at
-`generated::a::b::Name` and its C++ wrapper class at `rust::a::b::Name`. Multiple declarations
+`generated::a::b::Name` and its C++ wrapper class at `rust::cpp::a::b::Name`. Multiple declarations
 sharing a prefix can also be grouped with `mod c++::a::b { type Name { ... } }`.
 
 ## Opaque Borrowed C++ Type
@@ -25,14 +25,17 @@ type c++::Way {
 ```
 
 Note that `#cpp_ref` types don't need manual layout policy.
-This enables creating `rust::Ref<rust::Way>` from a `const osmium::Way&` in C++
+This enables creating `rust::Ref<rust::cpp::Way>` from a `const osmium::Way&` in C++
 and you can pass it to the Rust side.
 Rust side can't do anything meaningful with it, except passing it again to the C++ side.
-In the C++ side `rust::Ref<rust::Way>` has a `.cpp()` method
+In the C++ side `rust::Ref<rust::cpp::Way>` has a `.cpp()` method
 which will return the `osmium::Way&` back to you.
 If you want to use the methods on your C++ type in the Rust side,
 you can write `impl` and `impl trait` blocks for the newtype wrapper `Way` inside C++.
 See the [`examples/osmium`](https://github.com/HKalbasi/zngur/blob/main/examples/osmium) for a full working example.
+
+> **NOTE**: In C++, the Rust wrapper of a `c++::a::B` type is `rust::cpp::a::B`, apart from the
+> wrappers of Rust types (`rust::crate::...`, `rust::std::...`, ...).
 
 ### Semantics of Opaque Borrowed Types
 

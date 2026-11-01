@@ -122,8 +122,12 @@ impl IntoCpp for RustType {
                 tail: None,
             },
             RustType::Adt(pg) => pg.into_cpp(namespace, crate_name),
+            // The C++ wrappers of `c++::` types are in `rust::cpp`, apart from those of Rust types
+            // (`rust::crate`, `rust::std`, ...): `c++::a::B` is `rust::cpp::a::B`.
             RustType::Cpp(segs) => RustPathAndGenerics {
-                path: segs.clone(),
+                path: std::iter::once("cpp".to_owned())
+                    .chain(segs.iter().cloned())
+                    .collect(),
                 generics: vec![],
                 named_generics: vec![],
             }
@@ -1511,6 +1515,6 @@ mod tests {
     fn test_cpp_into_cpp() {
         let cpp = RustType::Cpp(vec!["a".to_owned(), "Name".to_owned()]);
         let cpp_type = cpp.into_cpp("rust", "my_crate");
-        assert_eq!(cpp_type.to_string(), "::rust::a::Name");
+        assert_eq!(cpp_type.to_string(), "::rust::cpp::a::Name");
     }
 }

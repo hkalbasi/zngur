@@ -5,8 +5,8 @@
 namespace rust {
 
 using crate::RustTask;
-using task::CppTask;
-using task::Dispatcher;
+using cpp::task::CppTask;
+using cpp::task::Dispatcher;
 
 Unit Impl<Dispatcher>::constructor(RefMut<Dispatcher> dispatcher) {
   new (&dispatcher.cpp()) ::task::Dispatcher();

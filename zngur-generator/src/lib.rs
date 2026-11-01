@@ -999,4 +999,38 @@ pub type Handle = super::Handle;
             "found unqualified `std::` or `core::` in:\n{rust_code}"
         );
     }
+
+    #[test]
+    fn cpp_type_wrappers_live_in_rust_cpp_namespace_and_do_not_collide_with_rust_std() {
+        let rust_string = ZngurType {
+            ty: adt(&["std", "string", "String"]),
+            layout: Some(LayoutPolicy::StackAllocated { size: 24, align: 8 }),
+            wellknown_traits: vec![],
+            exhaustive: true,
+            methods: vec![],
+            constructor: None,
+            variants: vec![],
+            fields: vec![],
+            cpp_heap_allocated: None,
+            cpp_ref: None,
+            cpp_stack_owned: None,
+        };
+        let spec = ZngurSpec {
+            types: vec![
+                rust_string,
+                minimal_ref_type(cpp(&["std", "string"]), "::std::string"),
+            ],
+            ..Default::default()
+        };
+        let (_rust_code, h, _cpp) =
+            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
+        assert!(
+            h.contains("namespace rust {\nnamespace cpp {\nnamespace std {\nstruct string {"),
+            "missing `rust::cpp::std::string` wrapper in:\n{h}"
+        );
+        assert!(
+            h.contains("namespace rust {\nnamespace std {\nnamespace string {\nstruct String {"),
+            "missing `rust::std::string::String` wrapper in:\n{h}"
+        );
+    }
 }
