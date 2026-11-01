@@ -146,6 +146,7 @@ namespace {{ self.namespace }} {
 
 {% for (_, td) in self.trait_defs %}
   {% if let Some(normal) = td.as_normal() %}
+    {{ normal.0.header() }}
     {{ normal.0.path.open_namespace() }}
     {{ normal.0.specialization_decl() }} {
       public:
