@@ -12,7 +12,6 @@ mod harness;
 mod emit_items;
 mod emit_on_implementers;
 mod emit_skip;
-mod free_functions;
 mod handshake;
 mod layout;
 mod methods;

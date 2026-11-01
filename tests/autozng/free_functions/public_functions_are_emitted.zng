@@ -1,0 +1,12 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type str {
+    wellknown_traits(?Sized, Debug);
+}
+
+safe fn crate::add(i32, i32) -> i32;
+safe fn crate::borrow(&str) -> usize;
+safe fn crate::into_string(u32) -> ::std::string::String;
