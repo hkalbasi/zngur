@@ -209,12 +209,10 @@ fn visit_reexported_items(ctx: &AutozngContext) {
                 let fn_def = rustc_public::ty::FnDef(stable(def_id));
                 fn_def.emit(EmitAction::Emit, fn_def.emit_span(), ctx);
             }
-            DefKind::Trait => {
-                let trait_def = rustc_public::ty::TraitDef(stable(def_id));
-                if trait_def.emit(EmitAction::Emit, trait_def.emit_span(), ctx) {
-                    record_trait_methods(&trait_def, ctx);
-                }
-            }
+            // A trait is never exported through a re-export: a glob (`pub use some_crate::*;`)
+            // would expose far too much surface, and an external trait cannot carry
+            // `#[autozng::emit]`. Traits require an explicit local selection.
+            DefKind::Trait => {}
             // A module has no `.zng` spelling of its own, and every other kind (a const, a type
             // alias, a macro, ...) is not exported yet.
             _ => {}

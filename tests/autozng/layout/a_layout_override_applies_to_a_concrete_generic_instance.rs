@@ -7,5 +7,5 @@ pub struct Generic<T> {
 }
 
 #[cfg(autozng)]
-#[cfg_attr(autozng, autozng::emit_items)]
+#[autozng::emit_items]
 const _: &[Generic<u32>] = &[];

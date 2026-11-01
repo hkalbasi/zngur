@@ -1,0 +1,7 @@
+trait crate::First {
+    safe fn first(&self) -> u32;
+}
+
+trait crate::Second {
+    safe fn second(&self) -> u32;
+}

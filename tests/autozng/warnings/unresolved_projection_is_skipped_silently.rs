@@ -13,5 +13,5 @@ struct Holder<T> {
 }
 
 #[cfg(autozng)]
-#[cfg_attr(autozng, autozng::emit_items)]
+#[autozng::emit_items]
 const _: [(Holder<<u32 as HasAssoc>::Output>,); 0] = [];

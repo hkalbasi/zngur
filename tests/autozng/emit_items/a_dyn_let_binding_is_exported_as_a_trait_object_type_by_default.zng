@@ -1,0 +1,3 @@
+type dyn crate::Producer<u32> {
+    wellknown_traits(?Sized);
+}

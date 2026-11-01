@@ -318,7 +318,10 @@ pub trait GenericTrait<T> {
 
 #[cfg(autozng)]
 #[autozng::emit_items(emit_traits = true)]
-const _: [(&dyn GenericTrait<Vec<u32>>, &dyn GenericTrait<u64>); 0] = [];
+const _: () = {
+    let _: &dyn GenericTrait<Vec<u32>>;
+    let _: &dyn GenericTrait<u64>;
+};
 
 #[derive(Default)]
 #[allow(clippy::type_complexity)]

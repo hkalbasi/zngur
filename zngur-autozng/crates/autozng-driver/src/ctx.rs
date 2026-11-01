@@ -28,13 +28,13 @@ use std::hash::Hash;
 use crate::config::Config;
 
 use crate::driver::with_ctxt;
-use crate::error::span_of_def;
+use crate::error::{emit_warning_for_span, span_of_def};
 use crate::metadata::{
     ExportName, IntoMetadataKey, LayoutOverride, MetadataKey, MetadataMap, MetadataRecordRefMut,
 };
 use crate::rustc_ext::{
     ClausesOfExt, FnDefExt, GenericClauses, GetAssocInfoExt, RustcInternalEx, RustcPublicTyExt,
-    Visibility, VisibilityExt, stable_trait,
+    Visibility, VisibilityExt, fn_trait_name, stable_trait, visible_path,
 };
 use crate::type_map::{is_type_block_less, map_rustc_public_ty_to_zngur};
 
@@ -263,6 +263,10 @@ struct AutozngContextData {
     /// Guards [`AutozngContextData::visit_queue`]: a type is queued at most once, so a cyclic
     /// interface (or a type reached through several paths) is never visited twice.
     seen_tys: RefCell<FxHashSet<Ty>>,
+    /// Traits already rejected as not dyn compatible, so the error is emitted once per trait even
+    /// when the crate walk and the re-export pass both reach it (see
+    /// [`AutozngContext::ensure_trait_exportable`]).
+    unexportable_traits: RefCell<Vec<TraitDef>>,
 }
 
 impl AutozngContextData {
@@ -648,6 +652,59 @@ impl AutozngContext {
             .any(|record| record.decl.def_id == *trait_def && record.concrete.is_some())
     }
 
+    /// Reject a trait that cannot be exported as a `.zng` `trait` block.
+    ///
+    /// A `trait` block exists so a C++ type can inherit the trait and be used through `dyn`
+    /// (see the `trait` IDL block docs), and that requires dyn compatibility: no generic methods,
+    /// no associated constants, and so on. A trait that is not dyn compatible cannot cross the
+    /// ABI as a trait object, so selecting one is a hard error rather than a warn-and-skip. The
+    /// `Fn`/`FnMut`/`FnOnce` call traits are likewise never a `trait` block: they are represented
+    /// by the `dyn Fn(...)` type (zngur builds a `std::function`-style bridge), so selecting one
+    /// is a warning.
+    ///
+    /// `span` is the item that selected the trait; the error points at the declaration itself and
+    /// only adds a `selected here` note when the two differ. Returns `false` when the trait was
+    /// rejected and must not be recorded. The diagnosis is emitted once per trait.
+    fn ensure_trait_exportable(&self, def: TraitDef, span: Span) -> bool {
+        with_ctxt(|ctx| {
+            let fn_trait = fn_trait_name(&visible_path(&def));
+            let dyn_compatible = ctx.tcx.is_dyn_compatible(def.def_id().internal(ctx.tcx));
+            if dyn_compatible && fn_trait.is_none() {
+                return true;
+            }
+            if self.data.unexportable_traits.borrow().contains(&def) {
+                return false;
+            }
+            self.data.unexportable_traits.borrow_mut().push(def);
+
+            if let Some(name) = fn_trait {
+                // A call trait has no meaningful vtable export; selecting one is a warning and
+                // the trait is skipped.
+                emit_warning_for_span(
+                    span,
+                    format!(
+                        "autozng: `{name}` cannot be exported as a `trait` block; use the `dyn` type instead"
+                    ),
+                );
+                return false;
+            }
+
+            let source_span = span_of_def(def.def_id());
+            let mut diag = ctx.tcx.dcx().struct_span_err(
+                source_span,
+                format!(
+                    "autozng: trait `{}` is not dyn compatible and cannot be exported as a `trait` block",
+                    def.name()
+                ),
+            );
+            if !span.is_dummy() && !source_span.contains(span) {
+                diag.span_note(span, "selected here");
+            }
+            diag.emit();
+            false
+        })
+    }
+
     /// Record a *concrete* trait instantiation (`dyn Trait<ConcreteArgs>`) selected by
     /// `#[autozng::emit_items(emit_traits = true)]`.
     ///
@@ -667,6 +724,14 @@ impl AutozngContext {
             .iter()
             .any(|record| record.concrete.as_ref() == Some(&trait_ref))
         {
+            return;
+        }
+
+        // A `.zng` `trait` block is only usable through `dyn`, so the trait must be dyn compatible
+        // (see `ensure_trait_exportable`). This is unreachable through `dyn` syntax — rustc
+        // already rejects a `dyn` object of a non-dyn-compatible trait — but keeps the invariant
+        // local to the recording entry point.
+        if !self.ensure_trait_exportable(def, span) {
             return;
         }
 
@@ -758,13 +823,18 @@ impl AutozngContext {
         });
     }
 
-    /// Record a trait declaration as selected for emission (see [`ExportedTraitRecord`]).
+    /// Record a trait declaration selected for emission (see [`ExportedTraitRecord`]).
     ///
     /// `span` is the span of the `#[autozng::emit]` that selected the trait; the declaration's
     /// own source span is recorded alongside it. The associated functions are added separately by
     /// [`AutozngContext::record_trait_method`]. Recording is idempotent.
     pub fn record_trait(&self, def: TraitDef, span: Span) {
         if self.is_trait_recorded(&def) {
+            return;
+        }
+        // A `.zng` `trait` block is only usable through `dyn`; a non-dyn-compatible trait cannot
+        // be exported (see `ensure_trait_exportable`).
+        if !self.ensure_trait_exportable(def, span) {
             return;
         }
         // The public `TraitDecl` is the stable description of the trait (`stable_trait` bridges

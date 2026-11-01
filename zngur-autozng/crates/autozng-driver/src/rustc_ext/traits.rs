@@ -415,3 +415,16 @@ fn type_implements<'tcx>(
         .type_implements_trait(trait_ref.def_id, trait_ref.args.iter(), ParamEnv::empty())
         .must_apply_modulo_regions()
 }
+
+/// The `Fn`/`FnMut`/`FnOnce` call-trait name a `.zng` path denotes, if any.
+///
+/// The `Fn*` family is represented by the `dyn Fn(...)` type (zngur builds a
+/// `std::function`-style bridge instead of a vtable), never by a `trait` block.
+pub(crate) fn fn_trait_name(path: &[String]) -> Option<String> {
+    match path {
+        [krate, ops, name] if (krate == "std" || krate == "core") && ops == "ops" => {
+            matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce").then(|| name.clone())
+        }
+        _ => None,
+    }
+}

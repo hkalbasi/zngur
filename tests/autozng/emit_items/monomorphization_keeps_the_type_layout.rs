@@ -6,5 +6,5 @@ pub struct Wrapper<T> {
 }
 
 #[cfg(autozng)]
-#[cfg_attr(autozng, autozng::emit_items)]
+#[autozng::emit_items]
 const _: [(Wrapper<i32>, Wrapper<String>); 0] = [];

@@ -101,11 +101,12 @@ which applies to that instantiation only.
 
 `emit_items` takes one optional argument:
 
-- `emit_traits = true` — treat the enumerated `dyn Trait<...>` items as concrete trait
-  instantiations instead of as types. The default is `false`.
+- `emit_traits = true` — treat every `dyn Trait<...>` in the enumerated items as a concrete
+  trait instantiation instead of as a trait-object type. The default is `false`.
 
 A generic trait is only representable once its type arguments are known,
-so name the instantiations you need:
+so name the instantiations you need.
+Put them in the const's body, one per line:
 
 ```rust
 pub trait Producer<T> {
@@ -113,8 +114,33 @@ pub trait Producer<T> {
 }
 
 #[autozng::emit_items(emit_traits = true)]
-const _: [(&dyn Producer<u32>, &dyn Producer<String>); 0] = [];
+const _: () = {
+    let _: &dyn Producer<u32>;
+    let _: &dyn Producer<String>;
+};
 ```
+
+The `dyn Trait` may sit inside any type the binding names (`Option<&dyn Trait>`,
+`Box<dyn Trait>`, ...): every trait object in it names its principal trait, and auto traits such
+as `Send` are ignored.
+The const's type works too: `const _: [&dyn Producer<u32>; 0] = [];`.
+
+With `emit_traits = true` each instantiation becomes a `trait` block, which C++ types can
+inherit from (see [Creating trait objects from C++ types](../call_cpp_from_rust/trait_object.md)):
+
+```zng
+trait crate::Producer<u32> {
+    fn produce(&self) -> u32;
+}
+```
+
+A trait must be dyn compatible to be exported this way: a trait with generic methods, an
+associated constant, or a static method without a `where Self: Sized` bound is rejected.
+A `pub use` of another crate's items never exports its traits; select a trait explicitly.
+
+Leave `emit_traits` off to export the trait object *type* instead: the same binding produces
+`type dyn crate::Producer<u32>`, which is what you need to call methods on a trait object
+created in C++.
 
 ## `emit_on_implementers`
 

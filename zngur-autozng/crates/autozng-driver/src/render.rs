@@ -41,7 +41,7 @@ use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_r
 use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
 use crate::rustc_ext::{
     AdtDefExt, EmitForExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKnownTrait,
-    WellKnownTraitsExt, visible_path,
+    WellKnownTraitsExt, fn_trait_name, visible_path,
 };
 use crate::type_map::{MapTypeError, is_type_block_less, map_rustc_public_ty_to_zngur};
 
@@ -158,16 +158,6 @@ fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec
 /// spelled `crate::...`, an external crate keeps its own name (the printer adds the leading `::`).
 fn trait_path(def: TraitDef) -> Vec<String> {
     visible_path(&def)
-}
-
-/// The name of the `Fn*` trait this path denotes, if any (`Fn`/`FnMut`/`FnOnce` in `std`/`core`).
-fn fn_trait_name(path: &[String]) -> Option<String> {
-    match path {
-        [krate, ops, name] if (krate == "std" || krate == "core") && ops == "ops" => {
-            matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce").then(|| name.clone())
-        }
-        _ => None,
-    }
 }
 
 /// The trait's own generic parameters as `.zng` type variables (`trait Foo<T>` -> `Foo<T>`).

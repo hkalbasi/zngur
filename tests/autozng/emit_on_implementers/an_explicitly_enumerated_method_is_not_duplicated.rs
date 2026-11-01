@@ -16,7 +16,7 @@ impl Describe for Thing {
 }
 
 #[cfg(autozng)]
-#[cfg_attr(autozng, autozng::emit_items)]
+#[autozng::emit_items]
 const _: () = {
     let _ = <Thing as Describe>::describe;
 };

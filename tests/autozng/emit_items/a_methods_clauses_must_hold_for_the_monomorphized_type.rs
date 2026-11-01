@@ -14,5 +14,5 @@ impl<T: std::fmt::Debug> Generic<T> {
 }
 
 #[cfg(autozng)]
-#[cfg_attr(autozng, autozng::emit_items)]
+#[autozng::emit_items]
 const _: [(Generic<i32>, Generic<NotDebug>); 0] = [];

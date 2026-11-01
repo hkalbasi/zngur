@@ -134,6 +134,7 @@ tokenstream
 turbofish
 typeck
 undropped
+unexportable
 unimportability
 Uninit
 uninit

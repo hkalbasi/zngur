@@ -1,0 +1,12 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+trait crate::Producer<::std::string::String> {
+    safe fn produce(&self) -> ::std::string::String;
+}
+
+trait crate::Producer<u32> {
+    safe fn produce(&self) -> u32;
+}

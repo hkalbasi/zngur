@@ -9,7 +9,7 @@ impl std::fmt::Display for S {
 }
 
 #[cfg(autozng)]
-#[cfg_attr(autozng, autozng::emit_items)]
+#[autozng::emit_items]
 const _: () = {
     let _ = S::to_string;
 };

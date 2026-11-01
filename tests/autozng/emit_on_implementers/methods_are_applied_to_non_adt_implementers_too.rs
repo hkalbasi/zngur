@@ -12,5 +12,5 @@ impl Describe for str {
 }
 
 #[cfg(autozng)]
-#[cfg_attr(autozng, autozng::emit_items)]
+#[autozng::emit_items]
 const _: [&str; 0] = [];

@@ -1,0 +1,5 @@
+warning: autozng: `Fn` cannot be exported as a `trait` block; use the `dyn` type instead
+ --> src/lib.rs:7:5
+  |
+7 |     let _: &dyn Fn(u32) -> bool;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

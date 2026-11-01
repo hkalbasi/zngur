@@ -33,6 +33,11 @@ pub struct HirLetBindStmt {
     pub parent: rustc_hir::OwnerId,
     pub hir_id: rustc_hir::HirId,
     pub ty: rustc_public::ty::Ty,
+    /// A trait object in the binding's type (`let _: &dyn Trait<Args>;`) names a concrete trait
+    /// export target rather than the trait-object type when the enclosing
+    /// `#[autozng::emit_items]` const carries `emit_traits = true` (see
+    /// [`crate::attrs::attributes::emit_items::EmitItemsTarget`]).
+    pub emit_traits: bool,
 }
 
 impl IntoMetadataKey for HirLetBindStmt {
@@ -94,7 +99,7 @@ impl HirConstItem {
         with_ctxt(|ctx| ctx.tcx.def_span(self.owner_id.def_id))
     }
 
-    pub fn body_let_bind_stmts(&self) -> Vec<HirLetBindStmt> {
+    pub fn body_let_bind_stmts(&self, emit_traits: bool) -> Vec<HirLetBindStmt> {
         with_ctxt(|ctx| {
             let tcx = ctx.tcx;
             if let Some(rustc_hir::Expr {
@@ -110,6 +115,7 @@ impl HirConstItem {
             {
                 Some(stmts.iter().filter_map(|stmt| {
                     if let rustc_hir::StmtKind::Let(rustc_hir::LetStmt{
+                        hir_id: let_hir_id,
                         pat: rustc_hir::Pat {
                             kind: rustc_hir::PatKind::Wild | rustc_hir::PatKind::Binding(..),
                             ..
@@ -118,21 +124,27 @@ impl HirConstItem {
                         ty: stmt_ty,
                         ..
                     }) = stmt.kind {
-                        if stmt_ty.is_some() {
-                            stmt_ty.map(|ty| stable(rustc_hir_analysis::lower_ty(tcx, ty)))
-                        } else if let Some(rustc_hir::Expr {
-                            hir_id: stmt_expr_id, ..
-                        }) = stmt_init {
-                            tcx.typeck(stmt.hir_id.owner.def_id).node_type_opt(*stmt_expr_id).map(stable)
-                        } else {
-                            None
-                        }.map(|ty|{
-                            HirLetBindStmt {
-                                parent: self.owner_id,
-                                hir_id: stmt.hir_id,
-                                ty
-                            }
-                        })
+                        let typeck = tcx.typeck(stmt.hir_id.owner.def_id);
+                        // Typeck records the local's resolved type under the `LetStmt`'s own
+                        // `HirId` (`FnCtxt::check_decl_local`), so elided lifetimes
+                        // (`let _: &dyn Trait;`) are resolved exactly as a normal build resolves
+                        // them. `lower_ty` is the fallback for a statement typeck did not record,
+                        // and the initializer's type the last resort.
+                        typeck
+                            .node_type_opt(*let_hir_id)
+                            .or_else(|| stmt_ty.map(|ty| rustc_hir_analysis::lower_ty(tcx, ty)))
+                            .or_else(|| {
+                                stmt_init.and_then(|expr| typeck.node_type_opt(expr.hir_id))
+                            })
+                            .map(stable)
+                            .map(|ty|{
+                                HirLetBindStmt {
+                                    parent: self.owner_id,
+                                    hir_id: stmt.hir_id,
+                                    ty,
+                                    emit_traits,
+                                }
+                            })
                     } else {
                         None
                     }
@@ -140,7 +152,8 @@ impl HirConstItem {
             } else {
                 None
             }
-        }).unwrap_or_default()
+        })
+        .unwrap_or_default()
     }
 
     /// The types directly enumerated inside a `const` tagged `emit_items`.

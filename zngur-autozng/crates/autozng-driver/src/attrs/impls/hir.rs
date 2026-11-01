@@ -9,6 +9,8 @@ use rustc_public::CrateDef;
 use rustc_public::rustc_internal::stable;
 use rustc_span::Span;
 
+use rustc_middle::ty::TypeVisitableExt;
+
 use crate::{
     attrs::{
         AttrCollectionExt, AutozngAttrsExt,
@@ -21,8 +23,8 @@ use crate::{
     },
     ctx::AutozngContext,
     driver::with_ctxt,
-    error::warn_private_item_skipped,
-    rustc_ext::{FnDefExt, RustcPublicTyExt, Visibility, VisibilityExt},
+    error::{emit_warning_for_span, warn_private_item_skipped},
+    rustc_ext::{FnDefExt, RustcInternalEx, RustcPublicTyExt, Visibility, VisibilityExt},
 };
 
 impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
@@ -32,28 +34,24 @@ impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
         let span = self.span();
         // record any relevant inner type in the `const`
         for ty in self.inner_emit_types() {
-            // With `emit_traits = true` an enumerated `dyn Trait<ConcreteArgs>` names a concrete
-            // trait instantiation to export rather than a type: a generic trait is only
-            // representable in `.zng` once all of its type parameters are known. The `dyn` object
-            // itself is not a usable `.zng` type, so it is not recorded as one.
-            if emit_traits && let Some(trait_ref) = ty.concrete_trait_ref() {
-                // A trait is only exportable when it is `pub`/`pub(crate)`, mirroring
-                // `#[autozng::emit]`. A private trait is skipped, but not silently: the
-                // `emit_items` item is warned about.
-                let vis = trait_ref.def_id.visibility();
-                if EmitAction::Emit.emit_for_visibility(vis, crate::config::DefaultEmitPolicy::None)
-                {
-                    ctx.record_concrete_trait(trait_ref, span);
-                } else {
-                    warn_private_item_skipped(span);
+            // With `emit_traits = true` the enumerated items are concrete trait instantiations
+            // rather than types: a generic trait is only representable in `.zng` once all of its
+            // type parameters are known, so every trait object in an item names its principal
+            // trait. The `dyn` object itself is not then recorded as a type.
+            if emit_traits {
+                let traits = ty.trait_objects();
+                if !traits.is_empty() {
+                    for trait_ref in traits {
+                        record_trait_instantiation(trait_ref, span, ctx);
+                    }
+                    continue;
                 }
-                continue;
             }
             ctx.record_ty(&ty, span);
         }
 
         // visit any let bindings inside the `const`'s block
-        for stmt in self.body_let_bind_stmts() {
+        for stmt in self.body_let_bind_stmts(emit_traits) {
             // A `let` binding has no `DefId` of its own, so its attribute key resolves to the
             // enclosing `const`: `autozng_attrs` therefore returns the *const's* attributes
             // (forwarding any child-targeted ones onto the binding). The binding's own implicit
@@ -70,10 +68,60 @@ impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
 
 impl_attr_target!(crate::rustc_ext::HirConstItem, EmitItemsTarget);
 
+/// Record one trait object's principal trait as a concrete export target.
+///
+/// A trait is only exportable when it is `pub`/`pub(crate)`, mirroring `#[autozng::emit]`. A
+/// private trait is skipped, but not silently: the item (or `let` binding) that selected it is
+/// warned about.
+fn record_trait_instantiation(
+    trait_ref: rustc_public::ty::TraitRef,
+    span: Span,
+    ctx: &AutozngContext,
+) {
+    // A trait object behind a higher-ranked binder (`fn(&dyn Trait)`) keeps the binder's region
+    // inside the object, and `rustc_public` cannot stabilize an escaping bound region. Ignore it
+    // (with a warning) rather than aborting the analysis.
+    if with_ctxt(|ctx| {
+        trait_ref
+            .clone()
+            .internal(ctx.tcx)
+            .has_escaping_bound_vars()
+    }) {
+        emit_warning_for_span(
+            span,
+            "autozng: a trait object behind a higher-ranked binder is not supported; name it directly with `&dyn Trait`",
+        );
+        return;
+    }
+    let vis = trait_ref.def_id.visibility();
+    if EmitAction::Emit.emit_for_visibility(vis, crate::config::DefaultEmitPolicy::None) {
+        ctx.record_concrete_trait(trait_ref, span);
+    } else {
+        warn_private_item_skipped(span);
+    }
+}
+
 impl EmitTarget for crate::rustc_ext::HirLetBindStmt {
     fn emit(&self, action: EmitAction, _span: Span, ctx: &AutozngContext) -> bool {
         if !action.emit_visibility_na() {
             return false;
+        }
+
+        // The span of the `let` binding that selected the item.
+        let span = self.emit_span();
+
+        // With `emit_traits = true` a trait object in the binding's type names a concrete trait
+        // instantiation instead of a type (see [`EmitItemsTarget`]). The binding is consumed even
+        // when every named trait is private, so the `dyn` object never falls through to
+        // `record_ty`.
+        if self.emit_traits {
+            let traits = self.ty.trait_objects();
+            if !traits.is_empty() {
+                for trait_ref in traits {
+                    record_trait_instantiation(trait_ref, span, ctx);
+                }
+                return true;
+            }
         }
 
         // A `let` binding inside an `emit_items` const enumerates either a concrete type, or a
@@ -85,8 +133,6 @@ impl EmitTarget for crate::rustc_ext::HirLetBindStmt {
             return true;
         };
 
-        // The span of the `let` binding that selected the item.
-        let span = self.emit_span();
         // `tref` is `Some` when the fn item is a trait method; `partial_args` are the fn item's
         // own generic args, present when it was monomorphized (`foo::<u8>`).
         let tref = fn_def.trait_ref(&generics);
