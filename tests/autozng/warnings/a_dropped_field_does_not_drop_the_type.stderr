@@ -1,0 +1,5 @@
+warning: autozng: skipping field `values` of `scratch_crate::HasArray`: array types are not supported in a zngur interface
+ --> src/lib.rs:5:5
+  |
+5 |     pub values: [u8; 4],
+  |     ^^^^^^^^^^^^^^^^^^^

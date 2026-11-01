@@ -11,13 +11,10 @@ mod harness;
 
 mod emit_items;
 mod emit_on_implementers;
-mod emit_skip;
 mod handshake;
 mod layout;
 mod policy;
 mod recursive_types;
 mod reexports;
-mod traits;
 mod visibility;
-mod warnings;
 mod wrapper;

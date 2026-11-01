@@ -1,0 +1,11 @@
+warning: autozng: ignoring `rename` on fn `scratch_crate::twice`: only associated methods can be renamed
+  --> src/lib.rs:4:1
+   |
+ 4 | fn twice<T: Clone>(value: T) -> (T, T) {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: renamed here
+  --> src/lib.rs:11:25
+   |
+11 |     #[cfg_attr(autozng, autozng::rename("Twice"))]
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+warning: autozng: skipping method `greet`: type parameters are not supported in a zngur interface
+ --> src/lib.rs:6:5
+  |
+6 |     fn greet(&self) -> T;
+  |     ^^^^^^^^^^^^^^^^^^^^^

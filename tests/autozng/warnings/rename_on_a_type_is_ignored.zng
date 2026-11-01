@@ -1,0 +1,5 @@
+type crate::Original {
+    #layout(size = 1, align = 1);
+
+    field value (offset = 0, type = u8);
+}

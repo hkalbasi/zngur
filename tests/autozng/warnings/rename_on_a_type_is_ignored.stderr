@@ -1,0 +1,11 @@
+warning: autozng: ignoring `rename` on type `scratch_crate::Original`: only associated methods can be renamed
+ --> src/lib.rs:5:1
+  |
+5 | pub struct Original {
+  | ^^^^^^^^^^^^^^^^^^^
+  |
+note: renamed here
+ --> src/lib.rs:4:21
+  |
+4 | #[cfg_attr(autozng, autozng::rename("Renamed"))]
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^

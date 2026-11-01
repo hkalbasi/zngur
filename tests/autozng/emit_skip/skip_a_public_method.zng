@@ -1,0 +1,5 @@
+type crate::Api {
+    #layout(size = 0, align = 1);
+
+    safe fn kept(&self);
+}

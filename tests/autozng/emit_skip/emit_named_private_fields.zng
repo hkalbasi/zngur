@@ -1,0 +1,7 @@
+type crate::Selection {
+    #layout(size = 8, align = 4);
+
+    field first (offset = 6, type = u8);
+    field second (offset = 4, type = u16);
+    field third (offset = 0, type = u32);
+}
