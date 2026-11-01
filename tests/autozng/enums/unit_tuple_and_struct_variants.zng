@@ -1,0 +1,12 @@
+type crate::Shape {
+    #layout(size = 12, align = 4);
+    wellknown_traits(Copy, Debug);
+    variant Nothing {}
+    variant Circle {
+        field 0 (offset = auto, type = u32);
+    }
+    variant Rect {
+        field width (offset = auto, type = u32);
+        field height (offset = auto, type = u32);
+    }
+}

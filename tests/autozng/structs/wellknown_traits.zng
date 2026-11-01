@@ -1,0 +1,11 @@
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type crate::Flag {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+
+    field on (offset = 0, type = bool);
+}

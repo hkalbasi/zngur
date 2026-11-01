@@ -1,0 +1,15 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type crate::Payload {
+    #layout(size = 24, align = 8);
+    variant Text {
+        field 0 (offset = auto, type = ::std::string::String);
+    }
+    variant Number {
+        field value (offset = auto, type = i32);
+        field extra (offset = auto, type = i32);
+    }
+}

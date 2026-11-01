@@ -1,0 +1,6 @@
+type crate::Kind {
+    #layout(size = 1, align = 1);
+    non_exhaustive;
+    variant One {}
+    variant Two {}
+}
