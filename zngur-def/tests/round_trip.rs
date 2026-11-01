@@ -214,6 +214,21 @@ type crate::Way {
     );
 }
 #[test]
+fn reparse_heap_allocated() {
+    let _ = check_round_trip(
+        r#"
+type crate::Way {
+    #heap_allocated;
+}
+    "#,
+        expect![[r#"
+            type crate::Way {
+                #heap_allocated;
+            }
+        "#]],
+    );
+}
+#[test]
 fn reparse_cpp_ref() {
     let _ = check_round_trip(
         r#"

@@ -549,7 +549,7 @@ impl WriteIDL for crate::LayoutPolicy {
                     writeln!(p, "layout_conservative(size = {size}, align = {align});")?;
                 }
                 Self::HeapAllocated => {
-                    writeln!(p, "heap_allocate;")?;
+                    writeln!(p, "heap_allocated;")?;
                 }
                 Self::OnlyByRef => {
                     writeln!(p, "only_by_ref;")?;
