@@ -1,5 +1,5 @@
 type crate::Heaped {
-    #heap_allocate;
+    #heap_allocated;
 
     field a (offset = 0, type = i32);
 }
