@@ -1,11 +1,7 @@
-//! Integration tests for `autozng-driver`.
+//! Plumbing tests for `autozng-driver`.
 //!
-//! Each module snapshots the `.zng` the real driver produces for a small scratch crate that
-//! exercises one slice of `autozng`'s functionality. See [`harness`] for the machinery.
-//!
-//! Snapshots use `expect-test`: run with
-//! `UPDATE_EXPECT=1 cargo test -p autozng-driver --test integration` to regenerate them, then
-//! review the diff.
+//! The declarative driver cases live in `tests/autozng` and run through `cargo xtask test`.
+//! These tests exercise the handshake and wrapper-mode process behavior directly.
 
 mod harness;
 
