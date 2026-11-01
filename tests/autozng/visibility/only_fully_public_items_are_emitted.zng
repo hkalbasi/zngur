@@ -1,0 +1,3 @@
+type crate::Public {
+    #layout(size = 0, align = 1);
+}

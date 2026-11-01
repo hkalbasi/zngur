@@ -1,0 +1,5 @@
+warning: autozng: skipping field `hidden` of `scratch_crate::Public`: type `scratch_crate::inner::Hidden` is not visible from the crate root
+  --> src/lib.rs:10:5
+   |
+10 |     pub hidden: inner::Hidden,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^

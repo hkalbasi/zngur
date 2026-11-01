@@ -16,5 +16,4 @@ mod layout;
 mod policy;
 mod recursive_types;
 mod reexports;
-mod visibility;
 mod wrapper;
