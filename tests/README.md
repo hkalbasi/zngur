@@ -76,6 +76,12 @@ alongside it, and runs `nu main.nu` there, so the script may create files freely
 The script must exit `0`, or the status given by a `#@ run-status: <n>` directive
 at the top of `main.nu`.
 
+A Nushell test under `tests/autozng/` is an autozng test: it runs under
+`cargo xtask test --only-autozng` and in addition to the usual variables gets
+`AUTOZNG_DRIVER` and `AUTOZNG_FRONTEND` pointing at the built binaries. Use it
+when a test needs to build a generated bridge itself (for example, linking it
+into a C++ program).
+
 If you find yourself adding nushell tests with similar runner script,
 consider expanding the test runner and adding a new mode to it.
 Nushell tests are for tests which doesn't follow a predefined form and are unique in their own way.

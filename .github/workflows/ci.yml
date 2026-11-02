@@ -119,6 +119,8 @@ jobs:
       - name: Turn off autocrlf
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v3
+      - name: Install Nushell and the pinned tools
+        uses: jdx/mise-action@v3
       - name: Enter VS Developer shell
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1

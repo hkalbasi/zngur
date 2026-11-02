@@ -995,6 +995,8 @@ enum TestEntry {
     Example(PathBuf),
     /// A `tests/autozng/**/*.rs` fixture.
     Autozng(PathBuf),
+    /// A `tests/autozng/**/main.nu` free-form test that needs the autozng binaries.
+    AutozngNuDir(PathBuf),
     /// A `zngur-autozng/examples/*` crate with `//@ cargo_autozng`.
     CargoAutozng(PathBuf),
     /// The `zngur-autozng` cargo-test suite.
@@ -1010,6 +1012,7 @@ impl TestEntry {
             | TestEntry::NuDir(path)
             | TestEntry::Example(path)
             | TestEntry::Autozng(path)
+            | TestEntry::AutozngNuDir(path)
             | TestEntry::CargoAutozng(path)
             | TestEntry::CargoSuite(path) => path,
         }
@@ -1075,6 +1078,10 @@ fn collect_tests(
     for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let path = entry?.path();
         if path.is_dir() {
+            // `tests/autozng` is collected by `collect_autozng_tests`, including its Nushell tests.
+            if path == root.join("tests/autozng") {
+                continue;
+            }
             if path.join("main.nu").is_file() {
                 if path_matches(root, &path, filters) {
                     out.push(TestEntry::NuDir(path));
@@ -1112,6 +1119,13 @@ fn collect_autozng_tests(
         let path = entry?.path();
         if path.is_dir() {
             if path.join("main.nu").is_file() {
+                // Free-form autozng tests live under `tests/autozng`; regular Nushell tests
+                // elsewhere are collected by `collect_tests`.
+                if path.starts_with(root.join("tests/autozng"))
+                    && path_matches(root, &path, filters)
+                {
+                    out.push(TestEntry::AutozngNuDir(path));
+                }
                 continue;
             }
             collect_autozng_tests(root, &path, filters, out)?;
@@ -1523,7 +1537,7 @@ pub fn main_with(
                     cmd!(sh, "cargo build -q -p zngur-cli").quiet().run()?;
                     cli_built = true;
                 }
-                run_nu_dir(dir, &tests_dir, fix).map(|_| None)
+                run_nu_dir(dir, &tests_dir, fix, None).map(|_| None)
             }
             TestEntry::Example(dir) => run_example(sh, dir, fix).map(|_| None),
             TestEntry::Zng(zng_file) => {
@@ -1568,6 +1582,23 @@ pub fn main_with(
                                 source.display()
                             ),
                         }
+                    })()
+                }
+            }
+            TestEntry::AutozngNuDir(dir) => {
+                if let Some(reason) = &autozng_skip {
+                    Ok(Some(reason.clone()))
+                } else {
+                    (|| {
+                        let toolchain = toolchain
+                            .as_ref()
+                            .expect("autozng entries imply a toolchain");
+                        let binaries = ensure_binaries(sh, toolchain, &workspace, &mut binaries)?;
+                        if !cli_built {
+                            cmd!(sh, "cargo build -q -p zngur-cli").quiet().run()?;
+                            cli_built = true;
+                        }
+                        run_nu_dir(dir, &tests_dir, fix, Some(binaries)).map(|_| None)
                     })()
                 }
             }
@@ -1713,7 +1744,12 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
 /// `nu`) inside a scratch copy of the directory, so it may create files freely;
 /// its exit code must match the `#@ run-status` directive (default 0).
 /// `tests/snapshot-utils.nu` is copied alongside it for snapshot assertions.
-fn run_nu_dir(test_dir: &Path, tests_dir: &Path, fix: bool) -> Result<()> {
+fn run_nu_dir(
+    test_dir: &Path,
+    tests_dir: &Path,
+    fix: bool,
+    autozng_binaries: Option<&autozng::DriverBinaries>,
+) -> Result<()> {
     let name = test_dir.strip_prefix(tests_dir).unwrap_or(test_dir);
     let scratch = repo_root().join("target/nu-tests").join(name);
     if scratch.exists() {
@@ -1745,6 +1781,11 @@ fn run_nu_dir(test_dir: &Path, tests_dir: &Path, fix: bool) -> Result<()> {
         .env("ZNGUR_ROOT", repo_root())
         .env("ZNGUR_TEST_DIR", &scratch)
         .env("ZNGUR_TEST_SOURCE_DIR", test_dir);
+
+    if let Some(binaries) = autozng_binaries {
+        cmd.env("AUTOZNG_DRIVER", &binaries.driver)
+            .env("AUTOZNG_FRONTEND", &binaries.frontend);
+    }
 
     let mut paths = vec![bin_dir.to_owned()];
     paths.extend(std::env::split_paths(
