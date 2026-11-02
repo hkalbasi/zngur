@@ -34,7 +34,7 @@ use crate::{
     render,
     rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
-    walk::{VisitReason, WalkBudget, WalkContext, WalkPhase, WalkRequest},
+    walk::{VisitReason, WalkBudget, WalkContext, WalkPhase, WalkRequest, base_ty},
 };
 use zngur_def::ZngurSpec;
 
@@ -61,20 +61,22 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
         // implicitly creates its type's `TyRecord`, so walking children of a `skip`-ed type
         // would leak it into the output.
         if self.ctx.is_ty_recorded(&adt.ty()) {
-            let (max_walk_depth, max_external_depth, filter) = {
+            let (max_walk_depth, max_external_depth, max_self_ref_depth, filter) = {
                 let config = self.ctx.config();
                 (
                     config.max_walk_depth,
                     config.max_external_depth,
+                    config.max_self_ref_depth,
                     config.walk_filter.clone(),
                 )
             };
             let walk = WalkContext {
                 owner: adt.ty(),
                 phase: WalkPhase::CrateWalk,
-                budget: WalkBudget::root(max_walk_depth, max_external_depth),
+                budget: WalkBudget::root(max_walk_depth, max_external_depth, max_self_ref_depth),
                 filter,
                 span: span_of_def(adt.def_id()),
+                ancestors: smallvec::smallvec![base_ty(adt.ty())],
             };
             self.ctx
                 .with_walk(walk, || visit_adt_children(adt, self.ctx));
@@ -188,6 +190,7 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
         budget: request.budget,
         filter: request.filter.clone(),
         span: request.span,
+        ancestors: request.ancestors.clone(),
     };
     ctx.with_walk(walk, || {
         let Some(adt) = ty.adt_def() else {

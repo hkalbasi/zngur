@@ -22,6 +22,7 @@ bitflags = { workspace = true }
 convert_case = { workspace = true }
 rustc-hash = { workspace = true }
 scoped-tls = { workspace = true }
+smallvec = { workspace = true }
 const_format = "0.2.36"
 
 [package.metadata.rust-analyzer]

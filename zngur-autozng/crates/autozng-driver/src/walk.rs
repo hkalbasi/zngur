@@ -15,8 +15,12 @@
 //! the **last matching root wins**. When no root matches, the default is the inverse of the
 //! first root: `include` / `none` deny, `exclude` / `all` allow.
 
-use rustc_public::ty::Ty;
+use rustc_public::CrateDef;
+use rustc_public::ty::{GenericArgKind, RigidTy, Ty, TyKind};
 use rustc_span::Span;
+use smallvec::SmallVec;
+
+use crate::rustc_ext::RustcPublicTyExt;
 
 /// Whether a request walks a type's interface or only declares it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,25 +89,39 @@ pub enum RequestedAs {
 pub struct WalkBudget {
     pub remaining_depth: usize,
     pub remaining_external: usize,
+    /// The cap for a child whose unwrapped type is already in the walk's ancestor chain.
+    pub self_ref_limit: usize,
 }
 
 impl WalkBudget {
-    pub fn root(max_walk_depth: usize, max_external_depth: usize) -> Self {
+    pub fn root(
+        max_walk_depth: usize,
+        max_external_depth: usize,
+        max_self_ref_depth: usize,
+    ) -> Self {
         Self {
             remaining_depth: max_walk_depth,
             remaining_external: max_external_depth,
+            self_ref_limit: max_self_ref_depth,
         }
     }
 
     /// The budget for a child of the type this budget describes.
-    pub fn child(&self, is_external: bool) -> Self {
+    pub fn child(&self, is_external: bool, is_cyclic: bool) -> Self {
         Self {
-            remaining_depth: self.remaining_depth.saturating_sub(1),
+            remaining_depth: if is_cyclic {
+                self.remaining_depth
+                    .saturating_sub(1)
+                    .min(self.self_ref_limit)
+            } else {
+                self.remaining_depth.saturating_sub(1)
+            },
             remaining_external: if is_external {
                 self.remaining_external.saturating_sub(1)
             } else {
                 self.remaining_external
             },
+            self_ref_limit: self.self_ref_limit,
         }
     }
 
@@ -126,6 +144,8 @@ pub struct WalkRequest {
     pub span: Span,
     pub parent: Option<Ty>,
     pub filter: WalkFilter,
+    /// Unwrapped base keys from the root down to the parent, used to detect cycles.
+    pub ancestors: SmallVec<[Ty; 8]>,
 }
 
 /// The walk currently in progress, used to derive a child request.
@@ -137,6 +157,63 @@ pub struct WalkContext {
     pub budget: WalkBudget,
     pub filter: WalkFilter,
     pub span: Span,
+    /// Unwrapped base keys from the root down to this type.
+    pub ancestors: SmallVec<[Ty; 8]>,
+}
+
+/// The innermost non-wrapper type.
+///
+/// One-argument wrappers are stripped to a fixpoint, so `Option<&T>`, `Vec<T>`, and `T` compare
+/// equal when looking for a self-referential expansion. This is deliberately conservative: it
+/// also treats a `Vec<T>` field on `T` as self-referential, which is the intended cap for
+/// recursive data structures.
+pub fn base_ty(ty: Ty) -> Ty {
+    let mut current = ty.base_ty();
+    while let Some(inner) = unwrap_one(current) {
+        current = inner.base_ty();
+    }
+    current
+}
+
+fn unwrap_one(ty: Ty) -> Option<Ty> {
+    match ty.kind() {
+        TyKind::RigidTy(RigidTy::Ref(_, inner, _))
+        | TyKind::RigidTy(RigidTy::RawPtr(inner, _))
+        | TyKind::RigidTy(RigidTy::Slice(inner))
+        | TyKind::RigidTy(RigidTy::Array(inner, _)) => Some(inner),
+        TyKind::RigidTy(RigidTy::Adt(adt, args)) if args.0.len() == 1 => {
+            let name = adt.name();
+            let is_wrapper = matches!(
+                name.as_str(),
+                "std::boxed::Box"
+                    | "alloc::boxed::Box"
+                    | "std::rc::Rc"
+                    | "alloc::rc::Rc"
+                    | "std::sync::Arc"
+                    | "alloc::sync::Arc"
+                    | "std::vec::Vec"
+                    | "alloc::vec::Vec"
+                    | "std::option::Option"
+                    | "core::option::Option"
+                    | "std::pin::Pin"
+                    | "core::pin::Pin"
+                    | "std::cell::Cell"
+                    | "core::cell::Cell"
+                    | "std::cell::RefCell"
+                    | "core::cell::RefCell"
+                    | "std::mem::MaybeUninit"
+                    | "core::mem::MaybeUninit"
+                    | "std::num::Wrapping"
+                    | "core::num::Wrapping"
+            );
+            if is_wrapper && let GenericArgKind::Type(inner) = &args.0[0] {
+                Some(*inner)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 bitflags::bitflags! {

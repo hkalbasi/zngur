@@ -41,7 +41,7 @@ use crate::rustc_ext::{
 use crate::type_map::{is_type_block_less, map_rustc_public_ty_to_zngur};
 use crate::walk::{
     RequestedAs, VisitReason, WalkBudget, WalkContext, WalkIntent, WalkParts, WalkPhase,
-    WalkRequest, WalkState,
+    WalkRequest, WalkState, base_ty,
 };
 
 #[derive(Debug)]
@@ -563,21 +563,35 @@ impl AutozngContext {
             return;
         }
         let is_external = key.adt_def().is_some_and(|adt| !adt.krate().is_local);
+        let child_base = base_ty(key);
         let current = self.current_walk_context();
-        let (budget, phase, parent, filter) = match &current {
-            Some(walk) => (
-                walk.budget.child(is_external),
-                walk.phase,
-                Some(walk.owner),
-                walk.filter.clone(),
-            ),
+        let (budget, phase, parent, filter, ancestors) = match &current {
+            Some(walk) => {
+                let cyclic = walk.ancestors.contains(&child_base);
+                let mut ancestors = walk.ancestors.clone();
+                if !cyclic {
+                    ancestors.push(child_base);
+                }
+                (
+                    walk.budget.child(is_external, cyclic),
+                    walk.phase,
+                    Some(walk.owner),
+                    walk.filter.clone(),
+                    ancestors,
+                )
+            }
             None => {
                 let config = self.config();
                 (
-                    WalkBudget::root(config.max_walk_depth, config.max_external_depth),
+                    WalkBudget::root(
+                        config.max_walk_depth,
+                        config.max_external_depth,
+                        config.max_self_ref_depth,
+                    ),
                     WalkPhase::InterfaceDrain,
                     None,
                     config.walk_filter.clone(),
+                    smallvec::smallvec![child_base],
                 )
             }
         };
@@ -591,6 +605,7 @@ impl AutozngContext {
             span,
             parent,
             filter,
+            ancestors,
         };
 
         let mut states = self.data.walk_states.borrow_mut();
@@ -624,11 +639,12 @@ impl AutozngContext {
         phase: WalkPhase,
         span: Span,
     ) -> WalkRequest {
-        let (max_walk_depth, max_external_depth, filter) = {
+        let (max_walk_depth, max_external_depth, max_self_ref_depth, filter) = {
             let config = self.config();
             (
                 config.max_walk_depth,
                 config.max_external_depth,
+                config.max_self_ref_depth,
                 config.walk_filter.clone(),
             )
         };
@@ -638,11 +654,12 @@ impl AutozngContext {
             key: ty,
             reason,
             phase,
-            budget: WalkBudget::root(max_walk_depth, max_external_depth),
+            budget: WalkBudget::root(max_walk_depth, max_external_depth, max_self_ref_depth),
             requested_as: RequestedAs::Value,
             span,
             parent: None,
             filter,
+            ancestors: smallvec::smallvec![base_ty(ty)],
         }
     }
 
@@ -754,27 +771,38 @@ impl AutozngContext {
                 .unwrap_or_default()
         };
 
-        let (budget, filter) = match self.current_walk_context() {
-            Some(walk) => (walk.budget, walk.filter),
-            None => match self
-                .walk_state(&ty)
-                .filter(|state| state.best_remaining_depth > 0)
-            {
-                Some(state) => (
-                    WalkBudget {
-                        remaining_depth: state.best_remaining_depth,
-                        remaining_external: state.best_remaining_external,
-                    },
-                    state.filter,
-                ),
-                None => {
-                    let config = self.config();
-                    (
-                        WalkBudget::root(config.max_walk_depth, config.max_external_depth),
-                        config.walk_filter.clone(),
-                    )
-                }
-            },
+        let (budget, filter, ancestors) = match self.current_walk_context() {
+            Some(walk) => (walk.budget, walk.filter, walk.ancestors),
+            None => {
+                let (budget, filter) = match self
+                    .walk_state(&ty)
+                    .filter(|state| state.best_remaining_depth > 0)
+                {
+                    Some(state) => {
+                        let config = self.config();
+                        (
+                            WalkBudget {
+                                remaining_depth: state.best_remaining_depth,
+                                remaining_external: state.best_remaining_external,
+                                self_ref_limit: config.max_self_ref_depth,
+                            },
+                            state.filter,
+                        )
+                    }
+                    None => {
+                        let config = self.config();
+                        (
+                            WalkBudget::root(
+                                config.max_walk_depth,
+                                config.max_external_depth,
+                                config.max_self_ref_depth,
+                            ),
+                            config.walk_filter.clone(),
+                        )
+                    }
+                };
+                (budget, filter, smallvec::smallvec![base_ty(ty)])
+            }
         };
         let walk = WalkContext {
             owner: ty,
@@ -782,6 +810,7 @@ impl AutozngContext {
             budget,
             filter,
             span: span_of_def(adt.def_id()),
+            ancestors,
         };
         self.with_walk(walk, || {
             for (def, partial_args) in methods {

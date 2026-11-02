@@ -1,0 +1,25 @@
+type ::std::option::Option<&crate::Node> {
+    #layout(size = 8, align = 8);
+    wellknown_traits(Copy);
+    variant None {}
+    variant Some {
+        non_exhaustive;
+    }
+}
+
+type ::std::option::Option<::std::boxed::Box<crate::Node>> {
+    #layout(size = 8, align = 8);
+    variant None {}
+    variant Some {
+        non_exhaustive;
+    }
+}
+
+type crate::Node {
+    #layout(size = 8, align = 8);
+    constructor {next: ::std::option::Option<::std::boxed::Box<crate::Node>>};
+
+    field next (offset = 0, type = ::std::option::Option<::std::boxed::Box<crate::Node>>);
+
+    safe fn next_ref(&self) -> ::std::option::Option<&crate::Node>;
+}
