@@ -157,6 +157,8 @@ pub struct WalkContext {
     pub budget: WalkBudget,
     pub filter: WalkFilter,
     pub span: Span,
+    /// How the owner itself is used; a field of a by-reference owner is by reference.
+    pub requested_as: RequestedAs,
     /// Unwrapped base keys from the root down to this type.
     pub ancestors: SmallVec<[Ty; 8]>,
 }

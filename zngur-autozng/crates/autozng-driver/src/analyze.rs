@@ -34,7 +34,7 @@ use crate::{
     render,
     rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
-    walk::{VisitReason, WalkBudget, WalkContext, WalkPhase, WalkRequest, base_ty},
+    walk::{RequestedAs, VisitReason, WalkBudget, WalkContext, WalkPhase, WalkRequest, base_ty},
 };
 use zngur_def::ZngurSpec;
 
@@ -79,6 +79,7 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
                     filter
                 },
                 span: span_of_def(adt.def_id()),
+                requested_as: RequestedAs::Value,
                 ancestors: smallvec::smallvec![base_ty(adt.ty())],
             };
             self.ctx
@@ -193,6 +194,7 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
         budget: request.budget,
         filter: request.filter.clone(),
         span: request.span,
+        requested_as: request.requested_as,
         ancestors: request.ancestors.clone(),
     };
     ctx.with_walk(walk, || {

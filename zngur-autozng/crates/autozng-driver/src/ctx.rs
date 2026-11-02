@@ -726,6 +726,7 @@ impl AutozngContext {
         };
 
         let mut states = self.data.walk_states.borrow_mut();
+        let request_by_value = requested_as == RequestedAs::Value;
         let existing = states.get(&key).map(|state| {
             state.intent == WalkIntent::Declare
                 && (reason.precedence() > state.strongest_reason.precedence()
@@ -733,6 +734,9 @@ impl AutozngContext {
                     || request.budget.remaining_external > state.best_remaining_external)
         });
         if matches!(existing, Some(false)) {
+            if request_by_value && let Some(state) = states.get_mut(&key) {
+                state.seen_by_value = true;
+            }
             return;
         }
         if request.budget.exhausted() {
@@ -904,8 +908,8 @@ impl AutozngContext {
                 .unwrap_or_default()
         };
 
-        let (budget, filter, ancestors) = match self.current_walk_context() {
-            Some(walk) => (walk.budget, walk.filter, walk.ancestors),
+        let (budget, filter, requested_as, ancestors) = match self.current_walk_context() {
+            Some(walk) => (walk.budget, walk.filter, walk.requested_as, walk.ancestors),
             None => {
                 let (budget, filter) = match self
                     .walk_state(&ty)
@@ -934,7 +938,12 @@ impl AutozngContext {
                         )
                     }
                 };
-                (budget, filter, smallvec::smallvec![base_ty(ty)])
+                (
+                    budget,
+                    filter,
+                    RequestedAs::Value,
+                    smallvec::smallvec![base_ty(ty)],
+                )
             }
         };
         let walk = WalkContext {
@@ -943,6 +952,7 @@ impl AutozngContext {
             budget,
             filter,
             span: span_of_def(adt.def_id()),
+            requested_as,
             ancestors,
         };
         self.with_walk(walk, || {
@@ -1041,10 +1051,15 @@ impl AutozngContext {
         // A field's type is part of the type's interface: it must get its own `type` block.
         // A `walk_filter` on the field replaces the filter for the field type's subtree.
         let child_filter = self.walk_filter_for(&field).unwrap_or(filter);
+        // A field of a by-reference-only type is itself only reachable by reference.
+        let requested_as = match self.current_walk_context() {
+            Some(walk) if walk.requested_as != RequestedAs::Value => RequestedAs::Ref,
+            _ => RequestedAs::Value,
+        };
         self.request_ty_with_filter(
             field.ty(),
             VisitReason::Field,
-            RequestedAs::Value,
+            requested_as,
             span,
             child_filter,
         );

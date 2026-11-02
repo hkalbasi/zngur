@@ -1,0 +1,13 @@
+type crate::Holder {
+    #layout(size = 0, align = 1);
+
+    safe fn borrowed(&self) -> &crate::OnlyRef;
+}
+
+type crate::OnlyRef {
+    #layout(size = 4, align = 4);
+
+    field value (offset = 0, type = u32);
+
+    safe fn peek(&self);
+}

@@ -47,7 +47,7 @@ use crate::rustc_ext::{
     WellKnownTrait, WellKnownTraitsExt, fn_trait_name, visible_path,
 };
 use crate::type_map::{MapTypeError, is_type_block_less, map_rustc_public_ty_to_zngur};
-use crate::walk::{VisitReason, WalkIntent, WalkItem, WalkItemKind, WalkParts};
+use crate::walk::{ReceiverKind, VisitReason, WalkIntent, WalkItem, WalkItemKind, WalkParts};
 
 /// Build the [`ZngurSpec`] from everything the analysis pass recorded into `ctx`.
 ///
@@ -352,6 +352,7 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     let walk_variants = walked.contains(WalkParts::VARIANTS);
     let walk_methods = !declare_only
         && (walked.contains(WalkParts::INHERENT) || walked.contains(WalkParts::TRAIT));
+    let by_value = state.as_ref().map_or(true, |state| state.seen_by_value);
 
     let (fields, variants) = if walk_fields {
         match adt {
@@ -390,6 +391,7 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     // single active field, and `OnlyByRef` deletes the default constructor.
     let constructor = adt
         .filter(|_| walk_fields)
+        .filter(|_| by_value)
         .filter(|adt| adt.kind().is_struct())
         .filter(|adt| adt.is_exhaustive())
         .filter(|_| !matches!(&layout, Some(LayoutPolicy::OnlyByRef)))
@@ -756,6 +758,13 @@ fn build_method(
     instance_args: Option<&GenericArgs>,
 ) -> Option<ZngurMethodDetails> {
     let def = method.def;
+    if !ctx
+        .walk_state(&record.ty)
+        .map_or(true, |state| state.seen_by_value)
+        && receiver_kind(&def) == ReceiverKind::Value
+    {
+        return None;
+    }
     let assoc_item = def.associated_item()?;
     let AssocKind::Fn { name, has_self } = &assoc_item.kind else {
         return None;
@@ -992,6 +1001,13 @@ fn build_trait_method(
     trait_fn: &TraitFnRecord,
 ) -> Option<ZngurMethodDetails> {
     let def = trait_fn.def;
+    if !ctx
+        .walk_state(&record.ty)
+        .map_or(true, |state| state.seen_by_value)
+        && receiver_kind(&def) == ReceiverKind::Value
+    {
+        return None;
+    }
     let assoc_item = def.associated_item()?;
     let AssocKind::Fn { name, has_self } = &assoc_item.kind else {
         return None;
