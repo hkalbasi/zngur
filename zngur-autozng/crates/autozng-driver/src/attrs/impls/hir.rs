@@ -47,7 +47,7 @@ impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
                     continue;
                 }
             }
-            ctx.record_ty(&ty, span);
+            ctx.record_ty_with_reason(&ty, span, true);
         }
 
         // visit any let bindings inside the `const`'s block
@@ -129,7 +129,7 @@ impl EmitTarget for crate::rustc_ext::HirLetBindStmt {
         let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, generics)) =
             self.ty.kind()
         else {
-            ctx.record_ty(&self.ty, self.emit_span());
+            ctx.record_ty_with_reason(&self.ty, self.emit_span(), true);
             return true;
         };
 

@@ -332,6 +332,24 @@ pub enum VisibilityKind {
     Private,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkItemKind {
+    Field,
+    Variant,
+    InherentMethod,
+    TraitMethod,
+}
+
+/// The interface item being considered by a filter.
+#[derive(Debug, Clone, Copy)]
+pub struct WalkItem<'a> {
+    pub kind: WalkItemKind,
+    pub name: Option<&'a str>,
+    pub receiver: Option<ReceiverKind>,
+    pub visibility: Option<VisibilityKind>,
+    pub trait_path: Option<&'a str>,
+}
+
 impl Default for WalkFilter {
     fn default() -> Self {
         Self {
@@ -343,5 +361,132 @@ impl Default for WalkFilter {
 impl WalkFilter {
     pub fn new(roots: Vec<WalkFilterRoot>) -> Self {
         Self { roots }
+    }
+
+    /// Whether the walk may visit `item`.
+    ///
+    /// Roots are evaluated in source order. Each matching root sets the verdict (`all` /
+    /// `include` allow, `none` / `exclude` deny) and the last match wins. With no match, the
+    /// default is the inverse of the first root: `include` / `none` deny, `exclude` / `all`
+    /// allow.
+    pub fn allows(&self, item: &WalkItem<'_>) -> bool {
+        let mut verdict = match self.roots.first() {
+            Some(WalkFilterRoot::Include(_)) | Some(WalkFilterRoot::None) => false,
+            Some(WalkFilterRoot::Exclude(_)) | Some(WalkFilterRoot::All) => true,
+            None => true,
+        };
+        for root in &self.roots {
+            match root {
+                WalkFilterRoot::All => verdict = true,
+                WalkFilterRoot::None => verdict = false,
+                WalkFilterRoot::Include(rules) if rules.iter().any(|rule| rule.matches(item)) => {
+                    verdict = true;
+                }
+                WalkFilterRoot::Exclude(rules) if rules.iter().any(|rule| rule.matches(item)) => {
+                    verdict = false;
+                }
+                WalkFilterRoot::Include(_) | WalkFilterRoot::Exclude(_) => {}
+            }
+        }
+        verdict
+    }
+}
+
+impl WalkRule {
+    fn matches(&self, item: &WalkItem<'_>) -> bool {
+        match self {
+            WalkRule::Fields => item.kind == WalkItemKind::Field,
+            WalkRule::Variants => item.kind == WalkItemKind::Variant,
+            WalkRule::InherentMethods => item.kind == WalkItemKind::InherentMethod,
+            WalkRule::TraitMethods(path) => {
+                item.kind == WalkItemKind::TraitMethod
+                    && path
+                        .as_deref()
+                        .is_none_or(|path| item.trait_path == Some(path.trim_start_matches("::")))
+            }
+            WalkRule::Named(name) => item.name == Some(name.as_str()),
+            WalkRule::Receiver(receiver) => item.receiver == Some(*receiver),
+            WalkRule::Visibility(visibility) => item.visibility == Some(*visibility),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item<'a>(kind: WalkItemKind, name: Option<&'a str>) -> WalkItem<'a> {
+        WalkItem {
+            kind,
+            name,
+            receiver: None,
+            visibility: None,
+            trait_path: None,
+        }
+    }
+
+    #[test]
+    fn a_single_include_is_an_allow_list() {
+        let filter = WalkFilter::new(vec![WalkFilterRoot::Include(vec![WalkRule::Fields])]);
+        assert!(filter.allows(&item(WalkItemKind::Field, Some("a"))));
+        assert!(!filter.allows(&item(WalkItemKind::InherentMethod, Some("m"))));
+    }
+
+    #[test]
+    fn a_single_exclude_is_a_deny_list() {
+        let filter = WalkFilter::new(vec![WalkFilterRoot::Exclude(vec![WalkRule::Named(
+            "x".into(),
+        )])]);
+        assert!(!filter.allows(&item(WalkItemKind::Field, Some("x"))));
+        assert!(filter.allows(&item(WalkItemKind::Field, Some("y"))));
+    }
+
+    #[test]
+    fn the_last_matching_root_wins() {
+        let filter = WalkFilter::new(vec![
+            WalkFilterRoot::Include(vec![WalkRule::Fields]),
+            WalkFilterRoot::Exclude(vec![WalkRule::Named("x".into())]),
+        ]);
+        assert!(filter.allows(&item(WalkItemKind::Field, Some("a"))));
+        assert!(!filter.allows(&item(WalkItemKind::Field, Some("x"))));
+
+        let reversed = WalkFilter::new(vec![
+            WalkFilterRoot::Exclude(vec![WalkRule::Named("x".into())]),
+            WalkFilterRoot::Include(vec![WalkRule::Fields]),
+        ]);
+        assert!(reversed.allows(&item(WalkItemKind::Field, Some("x"))));
+    }
+
+    #[test]
+    fn receiver_visibility_and_trait_path_are_matched() {
+        let receiver = WalkFilter::new(vec![WalkFilterRoot::Include(vec![WalkRule::Receiver(
+            ReceiverKind::Value,
+        )])]);
+        let by_value = WalkItem {
+            receiver: Some(ReceiverKind::Value),
+            ..item(WalkItemKind::InherentMethod, Some("take"))
+        };
+        assert!(receiver.allows(&by_value));
+
+        let visibility =
+            WalkFilter::new(vec![WalkFilterRoot::Include(vec![WalkRule::Visibility(
+                VisibilityKind::Public,
+            )])]);
+        let public = WalkItem {
+            visibility: Some(VisibilityKind::Public),
+            ..item(WalkItemKind::Field, Some("a"))
+        };
+        assert!(visibility.allows(&public));
+
+        let trait_path =
+            WalkFilter::new(vec![WalkFilterRoot::Include(vec![WalkRule::TraitMethods(
+                Some("::core::fmt::Debug".into()),
+            )])]);
+        let debug = WalkItem {
+            kind: WalkItemKind::TraitMethod,
+            trait_path: Some("core::fmt::Debug"),
+            ..item(WalkItemKind::TraitMethod, Some("fmt"))
+        };
+        assert!(trait_path.allows(&debug));
     }
 }

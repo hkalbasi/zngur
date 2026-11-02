@@ -1,0 +1,10 @@
+type crate::Inner {
+    #layout(size = 4, align = 4);
+}
+
+type crate::Outer {
+    #layout(size = 4, align = 4);
+    constructor {inner: crate::Inner};
+
+    field inner (offset = 0, type = crate::Inner);
+}

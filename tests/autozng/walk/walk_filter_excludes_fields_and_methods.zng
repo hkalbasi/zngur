@@ -1,0 +1,5 @@
+type crate::Filtered {
+    #layout(size = 8, align = 4);
+
+    field visible (offset = 0, type = u32);
+}

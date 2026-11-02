@@ -1,7 +1,5 @@
 type crate::Holder {
     #layout(size = 8, align = 4);
-    constructor {value: u32, ignored: u32};
 
     field value (offset = 0, type = u32);
-    field ignored (offset = 4, type = u32);
 }

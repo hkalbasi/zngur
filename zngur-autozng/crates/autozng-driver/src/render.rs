@@ -37,17 +37,17 @@ use zngur_def::{
 
 use crate::ctx::{
     AutozngContext, ExportedTraitRecord, FnRecord, ImplRecord, TraitFnRecord, TyRecord,
-    combine_method_args,
+    combine_method_args, receiver_kind, visibility_kind,
 };
 use crate::driver::with_ctxt;
 use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_rustc_public_span};
 use crate::metadata::{ExportName, IntoMetadataKey, MetadataKey};
 use crate::rustc_ext::{
-    AdtDefExt, EmitForExt, FnDefExt, RustcPublicTyExt, VariantDefExt, WellKnownTrait,
-    WellKnownTraitsExt, fn_trait_name, visible_path,
+    AdtDefExt, EmitForExt, FnDefExt, RustcPublicTyExt, VariantDefExt, VisibilityExt,
+    WellKnownTrait, WellKnownTraitsExt, fn_trait_name, visible_path,
 };
 use crate::type_map::{MapTypeError, is_type_block_less, map_rustc_public_ty_to_zngur};
-use crate::walk::{VisitReason, WalkIntent, WalkParts};
+use crate::walk::{VisitReason, WalkIntent, WalkItem, WalkItemKind, WalkParts};
 
 /// Build the [`ZngurSpec`] from everything the analysis pass recorded into `ctx`.
 ///
@@ -919,6 +919,15 @@ fn build_emit_for_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurM
         .map(|trait_fn| trait_fn.def)
         .collect();
     let mut methods = Vec::new();
+    let type_filter = ctx
+        .walk_state(&record.ty)
+        .map(|state| state.filter)
+        .unwrap_or_else(|| {
+            record
+                .adt
+                .map(|adt| ctx.effective_filter_for_adt(&adt))
+                .unwrap_or_default()
+        });
 
     for emit_for in ctx.emit_for_records().iter() {
         let Some(trait_ref) =
@@ -928,8 +937,29 @@ fn build_emit_for_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurM
         else {
             continue;
         };
+        let filter = ctx
+            .walk_filter_for(&emit_for.trait_def)
+            .unwrap_or_else(|| type_filter.clone());
         for trait_fn in emit_for.fns.iter() {
             if !seen.insert(trait_fn.def) {
+                continue;
+            }
+            let Some(assoc_item) = trait_fn.def.associated_item() else {
+                continue;
+            };
+            let AssocKind::Fn { name, .. } = &assoc_item.kind else {
+                continue;
+            };
+            let name = name.to_string();
+            let trait_path = emit_for.trait_def.name();
+            let item = WalkItem {
+                kind: WalkItemKind::TraitMethod,
+                name: Some(&name),
+                receiver: Some(receiver_kind(&trait_fn.def)),
+                visibility: Some(visibility_kind(trait_fn.def.visibility())),
+                trait_path: Some(trait_path.trim_start_matches("::")),
+            };
+            if !filter.allows(&item) {
                 continue;
             }
             // Instantiate the trait function with the concrete `Self: Trait<..>` arguments, so

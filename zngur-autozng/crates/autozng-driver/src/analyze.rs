@@ -61,20 +61,23 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
         // implicitly creates its type's `TyRecord`, so walking children of a `skip`-ed type
         // would leak it into the output.
         if self.ctx.is_ty_recorded(&adt.ty()) {
-            let (max_walk_depth, max_external_depth, max_self_ref_depth, filter) = {
+            let (max_walk_depth, max_external_depth, max_self_ref_depth) = {
                 let config = self.ctx.config();
                 (
                     config.max_walk_depth,
                     config.max_external_depth,
                     config.max_self_ref_depth,
-                    config.walk_filter.clone(),
                 )
             };
             let walk = WalkContext {
                 owner: adt.ty(),
                 phase: WalkPhase::CrateWalk,
                 budget: WalkBudget::root(max_walk_depth, max_external_depth, max_self_ref_depth),
-                filter,
+                filter: {
+                    let filter = self.ctx.effective_filter_for_adt(adt);
+                    self.ctx.set_walk_filter(&adt.ty(), filter.clone());
+                    filter
+                },
                 span: span_of_def(adt.def_id()),
                 ancestors: smallvec::smallvec![base_ty(adt.ty())],
             };

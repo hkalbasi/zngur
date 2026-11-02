@@ -40,8 +40,8 @@ use crate::rustc_ext::{
 };
 use crate::type_map::{is_type_block_less, map_rustc_public_ty_to_zngur};
 use crate::walk::{
-    RequestedAs, VisitReason, WalkBudget, WalkContext, WalkIntent, WalkParts, WalkPhase,
-    WalkRequest, WalkState, base_ty,
+    ReceiverKind, RequestedAs, VisibilityKind, VisitReason, WalkBudget, WalkContext, WalkFilter,
+    WalkIntent, WalkItem, WalkItemKind, WalkParts, WalkPhase, WalkRequest, WalkState, base_ty,
 };
 
 #[derive(Debug)]
@@ -237,6 +237,9 @@ pub struct TyRecord {
     pub impls: IndexMap<DefId, ImplRecord>,
     /// Trait methods attached to this type (see [`TraitFnRecord`]).
     pub trait_fns: IndexSet<TraitFnRecord>,
+    /// Whether an explicit `emit` / `emit_items` selected this type. Explicit selection
+    /// overrides the walk filter for the type's subtree.
+    pub selected_explicitly: bool,
 }
 
 /// A field selected for emission, together with the span of the `emit` that selected it.
@@ -313,6 +316,7 @@ impl AutozngContextData {
                 fields: IndexMap::default(),
                 impls: IndexMap::default(),
                 trait_fns: IndexSet::default(),
+                selected_explicitly: false,
             })
         })
     }
@@ -333,6 +337,34 @@ fn can_have_type_block(ty: Ty) -> bool {
     match map_rustc_public_ty_to_zngur(ty) {
         Ok(rust_ty) => !is_type_block_less(&rust_ty),
         Err(_) => false,
+    }
+}
+
+/// The filter's view of an item's driver visibility.
+pub(crate) fn visibility_kind(visibility: Visibility) -> VisibilityKind {
+    match visibility {
+        Visibility::Public => VisibilityKind::Public,
+        Visibility::PublicInternal => VisibilityKind::PublicInternal,
+        Visibility::PrivateAPI => VisibilityKind::Private,
+    }
+}
+
+/// The receiver form of a function, for `Receiver(...)` filter rules.
+pub(crate) fn receiver_kind(fn_def: &FnDef) -> ReceiverKind {
+    let Some(item) = fn_def.associated_item() else {
+        return ReceiverKind::Static;
+    };
+    let rustc_public::ty::AssocKind::Fn { has_self, .. } = item.kind else {
+        return ReceiverKind::Static;
+    };
+    if !has_self {
+        return ReceiverKind::Static;
+    }
+    let signature = fn_def.fn_sig().skip_binder();
+    match signature.inputs().first().map(|ty| ty.kind()) {
+        Some(TyKind::RigidTy(RigidTy::Ref(_, _, Mutability::Not))) => ReceiverKind::Ref,
+        Some(TyKind::RigidTy(RigidTy::Ref(_, _, Mutability::Mut))) => ReceiverKind::RefMut,
+        _ => ReceiverKind::Value,
     }
 }
 
@@ -503,6 +535,48 @@ impl AutozngContext {
             .and_then(|record| record.layout.clone())
     }
 
+    /// The `#[autozng::walk_filter(...)]` recorded for `key`, if any.
+    ///
+    /// Inherited filters are materialised onto the item by `AutozngAttrsExt`, so this is a
+    /// plain metadata read.
+    pub fn walk_filter_for<T: IntoMetadataKey + ?Sized>(&self, key: &T) -> Option<WalkFilter> {
+        self.data
+            .metadata
+            .borrow()
+            .get(&key.to_metadata_key())
+            .and_then(|record| {
+                record
+                    .walk_filter
+                    .as_ref()
+                    .map(|record| record.filter.clone())
+            })
+    }
+
+    /// The effective filter for an ADT: its own filter, else `All` for an explicit
+    /// `emit`/`emit_items`, else the crate-wide filter.
+    pub fn effective_filter_for_adt(&self, adt: &AdtDef) -> WalkFilter {
+        self.walk_filter_for(adt).unwrap_or_else(|| {
+            let explicit = self
+                .data
+                .tys
+                .borrow()
+                .get(&adt.ty().base_ty())
+                .is_some_and(|record| record.selected_explicitly);
+            if explicit {
+                WalkFilter::default()
+            } else {
+                self.config().walk_filter.clone()
+            }
+        })
+    }
+
+    /// The filter of the walk in progress, or the crate-wide filter.
+    pub(crate) fn current_filter(&self) -> WalkFilter {
+        self.current_walk_context()
+            .map(|walk| walk.filter)
+            .unwrap_or_else(|| self.config().walk_filter.clone())
+    }
+
     pub fn with_metadata_mut<T: IntoMetadataKey + ?Sized, R>(
         &self,
         key: &T,
@@ -514,28 +588,46 @@ impl AutozngContext {
     /// Record a type as selected for emission, remembering the span of the item (or the
     /// `#[autozng::emit]` / `emit_items`) that selected it.
     pub fn record_ty(&self, ty: &Ty, span: Span) {
+        self.record_ty_with_reason(ty, span, false);
+    }
+
+    /// Like [`AutozngContext::record_ty`], but marks an explicit `emit` / `emit_items`
+    /// selection, which overrides the walk filter for the type's subtree.
+    pub fn record_ty_with_reason(&self, ty: &Ty, span: Span, explicit: bool) {
         let ty = ty.base_ty();
         if let Some(adt) = ty.adt_def()
             && adt.is_unstable()
         {
             return;
         }
-        if !self.data.have_ty(&ty) {
-            // insert a default record
-            let _ = self.data.ty_record_mut(ty, span);
-        };
+        if self.data.have_ty(&ty) {
+            if explicit {
+                if let Some(record) = self.data.tys.borrow_mut().get_mut(&ty) {
+                    record.selected_explicitly = true;
+                }
+            }
+            return;
+        }
+        let mut record = self.data.ty_record_mut(ty, span);
+        record.selected_explicitly = explicit;
     }
 
-    /// Record an ADT as selected for emission, remembering the span that selected it.
-    pub fn record_adt(&self, adt: &AdtDef, span: Span) {
+    /// Record an ADT as selected for emission, marking an explicit selection.
+    pub fn record_adt_with_reason(&self, adt: &AdtDef, span: Span, explicit: bool) {
         if adt.is_unstable() {
             return;
         }
         let ty = adt.ty().base_ty();
-        if !self.data.have_ty(&ty) {
-            // insert a default record
-            let _ = self.data.ty_record_mut(ty, span);
+        if self.data.have_ty(&ty) {
+            if explicit {
+                if let Some(record) = self.data.tys.borrow_mut().get_mut(&ty) {
+                    record.selected_explicitly = true;
+                }
+            }
+            return;
         }
+        let mut record = self.data.ty_record_mut(ty, span);
+        record.selected_explicitly = explicit;
     }
 
     /// Request that `ty` get its own IDL `type` block, attributed to `reason`.
@@ -550,6 +642,18 @@ impl AutozngContext {
     /// At an exhausted budget the type is recorded as an opaque block instead of being queued
     /// (struct/union: layout only; enum: variant names, no fields).
     pub fn request_ty(&self, ty: Ty, reason: VisitReason, requested_as: RequestedAs, span: Span) {
+        self.request_ty_with_filter(ty, reason, requested_as, span, self.current_filter());
+    }
+
+    /// Like [`AutozngContext::request_ty`], but with an explicit walk filter for the subtree.
+    pub fn request_ty_with_filter(
+        &self,
+        ty: Ty,
+        reason: VisitReason,
+        requested_as: RequestedAs,
+        span: Span,
+        filter: WalkFilter,
+    ) {
         let ty = ty.base_ty();
         if let Some(adt) = ty.adt_def()
             && (matches!(adt.visibility(), Visibility::PrivateAPI) || adt.is_unstable())
@@ -565,10 +669,6 @@ impl AutozngContext {
         // A trait generic argument only needs a layout stub: its interface is not part of the
         // trait's, and it must not trigger `emit_on_implementers`.
         if reason == VisitReason::AsGenericArg {
-            let filter = self
-                .current_walk_context()
-                .map(|walk| walk.filter)
-                .unwrap_or_else(|| self.config().walk_filter.clone());
             let mut states = self.data.walk_states.borrow_mut();
             if states.contains_key(&key) {
                 return;
@@ -584,7 +684,7 @@ impl AutozngContext {
         let is_external = key.adt_def().is_some_and(|adt| !adt.krate().is_local);
         let child_base = base_ty(key);
         let current = self.current_walk_context();
-        let (budget, phase, parent, filter, ancestors) = match &current {
+        let (budget, phase, parent, ancestors) = match &current {
             Some(walk) => {
                 let cyclic = walk.ancestors.contains(&child_base);
                 let mut ancestors = walk.ancestors.clone();
@@ -595,7 +695,6 @@ impl AutozngContext {
                     walk.budget.child(is_external, cyclic),
                     walk.phase,
                     Some(walk.owner),
-                    walk.filter.clone(),
                     ancestors,
                 )
             }
@@ -609,7 +708,6 @@ impl AutozngContext {
                     ),
                     WalkPhase::InterfaceDrain,
                     None,
-                    config.walk_filter.clone(),
                     smallvec::smallvec![child_base],
                 )
             }
@@ -705,6 +803,13 @@ impl AutozngContext {
         self.data.walk_states.borrow().get(&ty.base_ty()).cloned()
     }
 
+    /// Store the effective filter on an already-recorded type.
+    pub(crate) fn set_walk_filter(&self, ty: &Ty, filter: WalkFilter) {
+        if let Some(state) = self.data.walk_states.borrow_mut().get_mut(&ty.base_ty()) {
+            state.filter = filter;
+        }
+    }
+
     /// Pop the next request waiting for a third-pass visit, if any.
     ///
     /// The caller visits it as if it carried an explicit `emit` (see [`crate::analyze`]); that
@@ -735,6 +840,9 @@ impl AutozngContext {
         span: Span,
     ) {
         let signature = instantiate_signature(fn_def, args);
+        let filter = self
+            .walk_filter_for(&fn_def)
+            .unwrap_or_else(|| self.current_filter());
         // A method's receiver is its `self` type, which is already part of the interface (the
         // method hangs off it). Queueing `Box<Self>` / `Pin<&Self>` would add orphan types for a
         // receiver that is unsupported (and so skipped) anyway.
@@ -752,7 +860,7 @@ impl AutozngContext {
                 TyKind::RigidTy(RigidTy::Ref(_, _, Mutability::Mut)) => RequestedAs::RefMut,
                 _ => RequestedAs::Value,
             };
-            self.request_ty(ty, reason, requested_as, span);
+            self.request_ty_with_filter(ty, reason, requested_as, span, filter.clone());
         }
     }
 
@@ -876,6 +984,28 @@ impl AutozngContext {
         }
     }
 
+    /// Whether the walk filter allows this trait method.
+    fn trait_method_allowed(&self, trait_def: &TraitDef, fn_def: &FnDef) -> bool {
+        let filter = self
+            .walk_filter_for(trait_def)
+            .unwrap_or_else(|| self.current_filter());
+        let name = fn_def
+            .name()
+            .rsplit("::")
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let trait_path = trait_def.name();
+        let item = WalkItem {
+            kind: WalkItemKind::TraitMethod,
+            name: Some(&name),
+            receiver: Some(receiver_kind(fn_def)),
+            visibility: Some(visibility_kind(fn_def.visibility())),
+            trait_path: Some(trait_path.trim_start_matches("::")),
+        };
+        filter.allows(&item)
+    }
+
     /// The span that selected `field` on the ADT definition's [`TyRecord`].
     ///
     /// Fields are recorded on the definition (`Option<T>`), not on each concrete instance
@@ -896,8 +1026,28 @@ impl AutozngContext {
         if field.is_unstable() {
             return;
         }
+        let filter = self.current_filter();
+        let name = field.name.to_string();
+        let item = WalkItem {
+            kind: WalkItemKind::Field,
+            name: Some(&name),
+            receiver: None,
+            visibility: Some(visibility_kind(field.visibility())),
+            trait_path: None,
+        };
+        if !filter.allows(&item) {
+            return;
+        }
         // A field's type is part of the type's interface: it must get its own `type` block.
-        self.request_ty(field.ty(), VisitReason::Field, RequestedAs::Value, span);
+        // A `walk_filter` on the field replaces the filter for the field type's subtree.
+        let child_filter = self.walk_filter_for(&field).unwrap_or(filter);
+        self.request_ty_with_filter(
+            field.ty(),
+            VisitReason::Field,
+            RequestedAs::Value,
+            span,
+            child_filter,
+        );
         let mut record = self.data.ty_record_mut(ty, span);
         record
             .fields
@@ -953,6 +1103,23 @@ impl AutozngContext {
         if fn_def.is_unstable() {
             return;
         }
+        let filter = self.current_filter();
+        let name = fn_def
+            .name()
+            .rsplit("::")
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let item = WalkItem {
+            kind: WalkItemKind::InherentMethod,
+            name: Some(&name),
+            receiver: Some(receiver_kind(&fn_def)),
+            visibility: Some(visibility_kind(fn_def.visibility())),
+            trait_path: None,
+        };
+        if !filter.allows(&item) {
+            return;
+        }
         // Every type the method exposes is part of the interface: queue it for a third-pass visit.
         self.request_signature_types(
             fn_def,
@@ -989,6 +1156,9 @@ impl AutozngContext {
         generics: GenericArgs,
         span: Span,
     ) {
+        if !self.trait_method_allowed(&trait_ref.def_id, &def) {
+            return;
+        }
         // Every type the trait method exposes is part of the interface.
         self.request_trait_arg_types(&trait_ref, span);
         self.request_signature_types(def, Some(&generics), VisitReason::TraitMethod, span);
@@ -1338,6 +1508,9 @@ impl AutozngContext {
         span: Span,
     ) {
         if fn_def.is_unstable() {
+            return;
+        }
+        if !self.trait_method_allowed(&trait_def, &fn_def) {
             return;
         }
         if let Some(trait_ref) = &trait_ref {

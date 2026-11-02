@@ -1,10 +1,11 @@
 use std::{
     any::{Any, TypeId},
-    collections::HashMap,
     fmt::Display,
     ops::Deref,
     rc::Rc,
 };
+
+use indexmap::IndexMap;
 
 use crate::{
     attrs::{
@@ -44,13 +45,15 @@ const PATH_SEP: &str = "::";
 type DynAttrBuilder = dyn AttrBuilder + Sync;
 
 static ATTR_BUILDERS: &[&DynAttrBuilder] = &[
+    // The filter must be recorded before `emit` visits a field/method, because `record_field` /
+    // `record_impl_method` consult it to decide whether to record the item at all.
+    &ParserBuilder::<WalkFilterParser>::new(),
     &ParserBuilder::<EmitParser>::new(),
     &ParserBuilder::<EmitOnImplParser>::new(),
     &ParserBuilder::<EmitItemsParser>::new(),
     &ParserBuilder::<RenameParser>::new(),
     &ParserBuilder::<PolicyParser>::new(),
     &ParserBuilder::<LayoutParser>::new(),
-    &ParserBuilder::<WalkFilterParser>::new(),
 ];
 
 /// given a partially parsed attr select a builder by the attr's path
@@ -413,7 +416,7 @@ pub fn process_attrs(attrs: Vec<PartialParsedAttr>, item: &dyn AttrTarget) -> Ve
         .and_then(|item| item.implicit_emit_attr());
 
     // chain implicit emit attr with processed real attrs
-    let attrs = implicit_emit_item
+    let mut attrs = implicit_emit_item
         .into_iter()
         .chain(attrs.into_iter().filter_map(|attr| {
             let span = attr.span;
@@ -432,19 +435,22 @@ pub fn process_attrs(attrs: Vec<PartialParsedAttr>, item: &dyn AttrTarget) -> Ve
             }
         }))
         .collect::<Vec<_>>();
-    let mut unique: HashMap<AttrPath, Rc<dyn DynAttr>> = HashMap::new();
+    // `record_field` / `record_impl_method` run from `emit`'s visitor and consult the item's
+    // walk filter, so the filter must be visited first.
+    attrs.sort_by_key(|attr| !is_walk_filter_path(&attr.path()));
+    let mut unique: IndexMap<AttrPath, Rc<dyn DynAttr>> = IndexMap::new();
 
     // deduplicate and merge attrs
     for attr in attrs {
         let path = attr.path();
         match unique.entry(path) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
+            indexmap::map::Entry::Occupied(mut entry) => {
                 let a = entry.get_mut();
                 // merge attr with duplicate path into previous. default behavior just discards but is trait controlled.
                 // SAFETY: the arc has not been cloned at this point, it was just created above
                 Rc::get_mut(a).unwrap().merge(attr);
             }
-            std::collections::hash_map::Entry::Vacant(entry) => {
+            indexmap::map::Entry::Vacant(entry) => {
                 // first attr of this path
                 entry.insert(attr);
             }
@@ -452,9 +458,14 @@ pub fn process_attrs(attrs: Vec<PartialParsedAttr>, item: &dyn AttrTarget) -> Ve
     }
 
     // put unique attrs into results
-    results.extend(unique.into_values());
+    results.extend(unique.into_iter().map(|(_, attr)| attr));
 
     results
+}
+
+/// Whether `path` is the `autozng::walk_filter` attribute.
+fn is_walk_filter_path(path: &AttrPath) -> bool {
+    path.segments().eq([AUTOZNG_NAMESPACE, "walk_filter"])
 }
 
 // =======================================================

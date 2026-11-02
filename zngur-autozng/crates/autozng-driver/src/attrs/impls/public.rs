@@ -70,7 +70,7 @@ impl EmitTarget for rustc_public::ty::AdtDef {
         if !action.emit_for_visibility_or_warn(vis, ctx.config().default_emit_policy, span) {
             return false;
         }
-        ctx.record_adt(self, self.emit_span());
+        ctx.record_adt_with_reason(self, self.emit_span(), matches!(action, EmitAction::Emit));
         true
     }
 
