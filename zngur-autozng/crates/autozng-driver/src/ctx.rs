@@ -562,6 +562,25 @@ impl AutozngContext {
         if !can_have_type_block(key) {
             return;
         }
+        // A trait generic argument only needs a layout stub: its interface is not part of the
+        // trait's, and it must not trigger `emit_on_implementers`.
+        if reason == VisitReason::AsGenericArg {
+            let filter = self
+                .current_walk_context()
+                .map(|walk| walk.filter)
+                .unwrap_or_else(|| self.config().walk_filter.clone());
+            let mut states = self.data.walk_states.borrow_mut();
+            if states.contains_key(&key) {
+                return;
+            }
+            states.insert(
+                key,
+                WalkState::declare(key, reason, filter, WalkParts::empty()),
+            );
+            drop(states);
+            self.record_ty(&key, span);
+            return;
+        }
         let is_external = key.adt_def().is_some_and(|adt| !adt.krate().is_local);
         let child_base = base_ty(key);
         let current = self.current_walk_context();
@@ -609,7 +628,13 @@ impl AutozngContext {
         };
 
         let mut states = self.data.walk_states.borrow_mut();
-        if states.contains_key(&key) {
+        let existing = states.get(&key).map(|state| {
+            state.intent == WalkIntent::Declare
+                && (reason.precedence() > state.strongest_reason.precedence()
+                    || request.budget.remaining_depth > state.best_remaining_depth
+                    || request.budget.remaining_external > state.best_remaining_external)
+        });
+        if matches!(existing, Some(false)) {
             return;
         }
         if request.budget.exhausted() {
@@ -835,6 +860,22 @@ impl AutozngContext {
             .is_some_and(|state| state.intent == WalkIntent::Declare)
     }
 
+    /// Queue the concrete type arguments of a trait reference (skipping `Self`) as layout-only
+    /// blocks. The trait block names them, but their interface is not part of the trait's.
+    fn request_trait_arg_types(&self, trait_ref: &TraitRef, span: Span) {
+        let args = trait_ref.args();
+        for arg in args.0.iter().skip(1) {
+            if let GenericArgKind::Type(ty) = arg {
+                self.request_ty(
+                    *ty,
+                    VisitReason::AsGenericArg,
+                    RequestedAs::GenericArg,
+                    span,
+                );
+            }
+        }
+    }
+
     /// The span that selected `field` on the ADT definition's [`TyRecord`].
     ///
     /// Fields are recorded on the definition (`Option<T>`), not on each concrete instance
@@ -949,6 +990,7 @@ impl AutozngContext {
         span: Span,
     ) {
         // Every type the trait method exposes is part of the interface.
+        self.request_trait_arg_types(&trait_ref, span);
         self.request_signature_types(def, Some(&generics), VisitReason::TraitMethod, span);
         let ty = trait_ref.self_ty().base_ty();
         let mut record = self.data.ty_record_mut(ty, span);
@@ -1157,6 +1199,7 @@ impl AutozngContext {
         // functions are built directly rather than through `record_trait_method` so they land on
         // *this* instantiation's record and not on the first record for the same trait.
         let generics = trait_ref.args().clone();
+        self.request_trait_arg_types(&trait_ref, span);
         let mut fns = IndexSet::default();
         for assoc_item in def.associated_items() {
             if let Some((fn_def, _identity_generics)) = assoc_item.opt_fn_def() {
@@ -1233,6 +1276,7 @@ impl AutozngContext {
             return;
         }
         let trait_def = trait_ref.def_id;
+        self.request_trait_arg_types(&trait_ref, span);
         let fns = trait_fn_records(trait_def, span);
         self.request_trait_fn_records_types(&fns);
         self.data.emit_for.borrow_mut().push(EmitForRecord {
@@ -1295,6 +1339,9 @@ impl AutozngContext {
     ) {
         if fn_def.is_unstable() {
             return;
+        }
+        if let Some(trait_ref) = &trait_ref {
+            self.request_trait_arg_types(trait_ref, span);
         }
         // Every type the trait method exposes is part of the interface.
         self.request_signature_types(fn_def, Some(&generics), VisitReason::TraitMethod, span);

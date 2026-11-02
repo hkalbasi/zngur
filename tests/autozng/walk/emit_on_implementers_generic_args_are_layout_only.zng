@@ -1,0 +1,9 @@
+type ::std::vec::Vec<u8> {
+    #layout(size = 24, align = 8);
+}
+
+type crate::Foo {
+    #layout(size = 0, align = 1);
+
+    safe fn ping(&self) use crate::Marker;
+}
