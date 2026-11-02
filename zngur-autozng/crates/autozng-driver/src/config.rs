@@ -64,7 +64,7 @@ pub struct OutputConfig {
 ///
 /// `crate::run` builds this from the command line (output location); `#[autozng::policy]` adjusts
 /// it during analysis (see [`crate::attrs::attributes::policy`]).
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub default_emit_policy: DefaultEmitPolicy,
     pub use_doc_comment_tool_attrs: bool,
@@ -75,4 +75,31 @@ pub struct Config {
     /// `analyze::visit_emitted_ty`), so an external type reached through an interface exposes its
     /// own fields/methods rather than just its `type` block.
     pub implicitly_emit_external_interfaces: bool,
+    /// Maximum number of hops an ordinary interface walk may descend (local hops included).
+    pub max_walk_depth: usize,
+    /// Maximum number of non-local hops an interface walk may descend.
+    pub max_external_depth: usize,
+    /// Depth budget for an `emit_traits` walk (a trait C++ can implement).
+    pub max_trait_impl_depth: usize,
+    /// Depth budget for an `emit_on_implementers` walk (the trait interface attached to an
+    /// emitted type).
+    pub max_trait_interface_depth: usize,
+    /// Depth budget for a child whose unwrapped type is already in the walk's ancestor chain.
+    pub max_self_ref_depth: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            default_emit_policy: DefaultEmitPolicy::default(),
+            use_doc_comment_tool_attrs: false,
+            output: OutputConfig::default(),
+            implicitly_emit_external_interfaces: false,
+            max_walk_depth: 8,
+            max_external_depth: 4,
+            max_trait_impl_depth: 4,
+            max_trait_interface_depth: 2,
+            max_self_ref_depth: 2,
+        }
+    }
 }

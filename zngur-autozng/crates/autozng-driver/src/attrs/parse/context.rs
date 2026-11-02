@@ -1,6 +1,6 @@
 //! adapted out of rustc_attr_parsing as the interface is private
 
-use rustc_ast::MetaItemLit;
+use rustc_ast::{LitKind, MetaItemLit};
 use rustc_attr_parsing::AttributeTemplate;
 use rustc_errors::{DiagCtxtHandle, Diagnostic};
 use rustc_session::Session;
@@ -13,7 +13,7 @@ use crate::{
             diagnostics::{AttributeParseError, AttributeParseErrorReason},
             parser::{
                 ArgParser, ExpectBoolLiteral, ExpectNameValue, ExpectStringLiteral,
-                MetaItemListParser, MetaItemOrLitParser,
+                MetaItemListParser, MetaItemOrLitParser, NameValueParser,
             },
         },
     },
@@ -91,6 +91,21 @@ impl<'f, 'sess> AcceptContext<'f, 'sess> {
         }
 
         Some(())
+    }
+
+    /// Read a `usize` from a name-value pair's literal.
+    pub fn expect_usize_literal(&mut self, value: &NameValueParser) -> Option<usize> {
+        let lit = value.value_as_lit();
+        match lit.kind {
+            LitKind::Int(value, _) => usize::try_from(value.get()).ok().or_else(|| {
+                self.expected_integer_literal(lit.span);
+                None
+            }),
+            _ => {
+                self.expected_integer_literal(lit.span);
+                None
+            }
+        }
     }
 
     pub fn expect_string_literal<Arg>(&mut self, arg: &Arg) -> Option<Spanned<String>>
