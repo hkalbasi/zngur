@@ -43,6 +43,24 @@ pub enum VisitReason {
     AsGenericArg,
 }
 
+impl VisitReason {
+    /// Ordering used when several paths reach the same type: a stronger reason can upgrade a
+    /// declaration to a walk.
+    pub fn precedence(self) -> u8 {
+        match self {
+            VisitReason::ExplicitEmit | VisitReason::EmitItems => 4,
+            VisitReason::DefaultVisibility | VisitReason::Reexport => 3,
+            VisitReason::Field
+            | VisitReason::MethodSignature
+            | VisitReason::TraitMethod
+            | VisitReason::EmitTrait
+            | VisitReason::EmitOnImplementers
+            | VisitReason::ConcreteMethodSignature => 2,
+            VisitReason::AsGenericArg => 0,
+        }
+    }
+}
+
 /// Which analysis pass produced a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkPhase {
@@ -76,6 +94,23 @@ impl WalkBudget {
             remaining_external: max_external_depth,
         }
     }
+
+    /// The budget for a child of the type this budget describes.
+    pub fn child(&self, is_external: bool) -> Self {
+        Self {
+            remaining_depth: self.remaining_depth.saturating_sub(1),
+            remaining_external: if is_external {
+                self.remaining_external.saturating_sub(1)
+            } else {
+                self.remaining_external
+            },
+        }
+    }
+
+    /// Whether a type at this budget may walk its fields and methods.
+    pub fn exhausted(&self) -> bool {
+        self.remaining_depth == 0 || self.remaining_external == 0
+    }
 }
 
 /// One entry in the interface visit queue.
@@ -91,6 +126,17 @@ pub struct WalkRequest {
     pub span: Span,
     pub parent: Option<Ty>,
     pub filter: WalkFilter,
+}
+
+/// The walk currently in progress, used to derive a child request.
+#[derive(Debug, Clone)]
+pub struct WalkContext {
+    /// The type whose fields/methods are being walked.
+    pub owner: Ty,
+    pub phase: WalkPhase,
+    pub budget: WalkBudget,
+    pub filter: WalkFilter,
+    pub span: Span,
 }
 
 bitflags::bitflags! {
@@ -133,12 +179,12 @@ impl WalkState {
         }
     }
 
-    /// A declaration-only type, e.g. a lifetime-bearing signature type.
-    pub fn declare(ty: Ty, reason: VisitReason, filter: WalkFilter) -> Self {
+    /// A declaration-only type, e.g. a lifetime-bearing signature type or a truncated block.
+    pub fn declare(ty: Ty, reason: VisitReason, filter: WalkFilter, walked: WalkParts) -> Self {
         Self {
             ty,
             intent: WalkIntent::Declare,
-            walked: WalkParts::empty(),
+            walked,
             best_remaining_depth: 0,
             best_remaining_external: 0,
             strongest_reason: reason,

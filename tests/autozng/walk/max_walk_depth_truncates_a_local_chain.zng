@@ -1,0 +1,68 @@
+type crate::Child1 {
+    #layout(size = 8, align = 4);
+    constructor {child: crate::Child2};
+
+    field child (offset = 0, type = crate::Child2);
+}
+
+type crate::Child2 {
+    #layout(size = 8, align = 4);
+    constructor {child: crate::Child3};
+
+    field child (offset = 0, type = crate::Child3);
+}
+
+type crate::Child3 {
+    #layout(size = 8, align = 4);
+    constructor {child: crate::Child4};
+
+    field child (offset = 0, type = crate::Child4);
+}
+
+type crate::Child4 {
+    #layout(size = 8, align = 4);
+    constructor {child: crate::Child5};
+
+    field child (offset = 0, type = crate::Child5);
+}
+
+type crate::Child5 {
+    #layout(size = 8, align = 4);
+    constructor {child: crate::Child6};
+
+    field child (offset = 0, type = crate::Child6);
+}
+
+type crate::Child6 {
+    #layout(size = 8, align = 4);
+    constructor {child: crate::Child7};
+
+    field child (offset = 0, type = crate::Child7);
+}
+
+type crate::Child7 {
+    #layout(size = 8, align = 4);
+    constructor {child: crate::Child8};
+
+    field child (offset = 0, type = crate::Child8);
+}
+
+type crate::Child8 {
+    #layout(size = 8, align = 4);
+    variant Unit {
+        non_exhaustive;
+    }
+    variant Tuple {
+        non_exhaustive;
+    }
+    variant Struct {
+        non_exhaustive;
+    }
+}
+
+type crate::Root {
+    #layout(size = 8, align = 4);
+    constructor {child: crate::Child1};
+
+    field child (offset = 0, type = crate::Child1);
+}

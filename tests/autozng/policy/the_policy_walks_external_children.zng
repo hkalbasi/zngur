@@ -51,6 +51,38 @@ type ::std::net::Ipv6Addr {
     safe fn to_canonical(&self) -> ::std::net::IpAddr;
 }
 
+type ::std::option::Iter<::std::net::Ipv4Addr> {
+    #layout(size = 8, align = 8);
+    wellknown_traits(Debug);
+}
+
+type ::std::option::IterMut<::std::net::Ipv4Addr> {
+    #layout(size = 8, align = 8);
+    wellknown_traits(Debug);
+}
+
+type ::std::option::Option<&::std::net::Ipv4Addr> {
+    #layout(size = 8, align = 8);
+    wellknown_traits(Copy, Debug);
+    variant None {
+        non_exhaustive;
+    }
+    variant Some {
+        non_exhaustive;
+    }
+}
+
+type ::std::option::Option<&mut ::std::net::Ipv4Addr> {
+    #layout(size = 8, align = 8);
+    wellknown_traits(Debug);
+    variant None {
+        non_exhaustive;
+    }
+    variant Some {
+        non_exhaustive;
+    }
+}
+
 type ::std::option::Option<::std::net::Ipv4Addr> {
     #layout(size = 5, align = 1);
     wellknown_traits(Copy, Debug);
@@ -77,6 +109,32 @@ type ::std::option::Option<::std::net::Ipv4Addr> {
     safe fn get_or_insert(&mut self, ::std::net::Ipv4Addr) -> &mut ::std::net::Ipv4Addr;
     safe fn take(&mut self) -> ::std::option::Option<::std::net::Ipv4Addr>;
     safe fn replace(&mut self, ::std::net::Ipv4Addr) -> ::std::option::Option<::std::net::Ipv4Addr>;
+}
+
+type ::std::option::Option<::std::pin::Pin<&::std::net::Ipv4Addr>> {
+    #layout(size = 8, align = 8);
+    wellknown_traits(Copy, Debug);
+    variant None {
+        non_exhaustive;
+    }
+    variant Some {
+        non_exhaustive;
+    }
+}
+
+type ::std::option::Option<::std::pin::Pin<&mut ::std::net::Ipv4Addr>> {
+    #layout(size = 8, align = 8);
+    wellknown_traits(Debug);
+    variant None {
+        non_exhaustive;
+    }
+    variant Some {
+        non_exhaustive;
+    }
+}
+
+type [::std::net::Ipv4Addr] {
+    wellknown_traits(?Sized, Debug);
 }
 
 type bool {

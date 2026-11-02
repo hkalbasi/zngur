@@ -1,4 +1,4 @@
-//! Rendering of the analyzed crate to Zngur `.zng` IDL output.
+//! Rendering of the analyzed crate to Zngur IDL output.
 //!
 //! The pipeline is split in two because of a lifetime constraint:
 //!
@@ -37,6 +37,7 @@ use zngur_def::{
 
 use crate::ctx::{
     AutozngContext, ExportedTraitRecord, FnRecord, ImplRecord, TraitFnRecord, TyRecord,
+    combine_method_args,
 };
 use crate::driver::with_ctxt;
 use crate::error::{emit_warning_for_span, span_of_def, with_struct_warning_for_rustc_public_span};
@@ -46,6 +47,7 @@ use crate::rustc_ext::{
     WellKnownTraitsExt, fn_trait_name, visible_path,
 };
 use crate::type_map::{MapTypeError, is_type_block_less, map_rustc_public_ty_to_zngur};
+use crate::walk::{VisitReason, WalkIntent, WalkParts};
 
 /// Build the [`ZngurSpec`] from everything the analysis pass recorded into `ctx`.
 ///
@@ -91,7 +93,7 @@ pub fn build_spec(ctx: &AutozngContext) -> ZngurSpec {
 }
 
 /// Build one recorded trait into its `ZngurSpec::traits` entry: the [`RustTrait`] key plus the
-/// [`ZngurTrait`] block (its associated functions as `.zng` methods).
+/// [`ZngurTrait`] block (its associated functions as IDL methods).
 ///
 /// Returns `None` when the trait cannot be represented (e.g. a const generic parameter).
 fn build_trait(record: &ExportedTraitRecord) -> Option<(RustTrait, ZngurTrait)> {
@@ -124,7 +126,7 @@ fn rust_trait_for(record: &ExportedTraitRecord) -> Option<RustTrait> {
             let generics = match &record.concrete {
                 Some(trait_ref) => concrete_trait_generics(trait_ref)?,
                 // A declaration describes a concrete dyn compatible trait, so it has no type or
-                // const parameters; lifetimes do not contribute `.zng` generics.
+                // const parameters; lifetimes do not contribute IDL generics.
                 None => Vec::new(),
             };
             Some(RustTrait::Normal(RustPathAndGenerics {
@@ -139,13 +141,13 @@ fn rust_trait_for(record: &ExportedTraitRecord) -> Option<RustTrait> {
 /// The concrete type arguments of a trait instantiation (`dyn GenericTrait<u32>` -> `[u32]`),
 /// taken from the trait reference's arguments with the leading `Self` argument dropped.
 ///
-/// Returns `None` when an argument cannot be mapped to a concrete `.zng` type (the whole trait is
+/// Returns `None` when an argument cannot be mapped to a concrete IDL type (the whole trait is
 /// then dropped by [`rust_trait_for`]).
 fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec<RustType>> {
     let mut generics = Vec::new();
     for arg in trait_ref.args().0.iter().skip(1) {
         match arg {
-            // Lifetimes are dropped (rustc re-infers them); a const argument has no `.zng`
+            // Lifetimes are dropped (rustc re-infers them); a const argument has no IDL
             // spelling, so the whole trait is dropped.
             GenericArgKind::Lifetime(_) => {}
             GenericArgKind::Type(ty) => {
@@ -157,7 +159,7 @@ fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec
     Some(generics)
 }
 
-/// The trait's full path as `.zng` path segments: anything this crate can name from its root is
+/// The trait's full path as IDL path segments: anything this crate can name from its root is
 /// spelled `crate::...`, an external crate keeps its own name (the printer adds the leading `::`).
 fn trait_path(def: TraitDef) -> Vec<String> {
     visible_path(&def)
@@ -208,11 +210,11 @@ fn fn_trait_rust_trait(record: &ExportedTraitRecord, name: String) -> RustTrait 
     }
 }
 
-/// Build one of a trait declaration's associated functions into a `.zng` [`ZngurMethod`].
+/// Build one of a trait declaration's associated functions into an IDL [`ZngurMethod`].
 ///
 /// For a declaration (`concrete == false`) there is no concrete `Self`, so the method's identity
 /// signature is used: `Self` (and any other generic parameter) appears as itself, and a method
-/// whose signature mentions one is warn-and-skipped (the `.zng` IR has no type parameters). For a
+/// whose signature mentions one is warn-and-skipped (the IDL IR has no type parameters). For a
 /// concrete instantiation the method is instantiated with the trait reference's concrete
 /// arguments, so `T` becomes the concrete type.
 fn build_trait_decl_method(trait_fn: &TraitFnRecord, concrete: bool) -> Option<ZngurMethod> {
@@ -263,10 +265,10 @@ fn build_trait_decl_method(trait_fn: &TraitFnRecord, concrete: bool) -> Option<Z
     })
 }
 
-/// The type parameters a function declares itself, as `.zng` type variables (`fn foo<T>` -> `[T]`).
+/// The type parameters a function declares itself, as IDL type variables (`fn foo<T>` -> `[T]`).
 ///
 /// `Generics::params` holds only the function's own parameters (the enclosing trait/impl's are
-/// counted by `parent_count`), which is exactly what the `.zng` turbofish lists.
+/// counted by `parent_count`), which is exactly what the IDL turbofish lists.
 fn own_type_params(def: &FnDef) -> Vec<RustType> {
     def.generics_of()
         .params
@@ -284,12 +286,12 @@ fn own_type_params(def: &FnDef) -> Vec<RustType> {
 /// (with a warning emitted).
 ///
 /// ADTs and non-ADT types alike are emitted as `type` blocks: `str`, slices (`[T]`), tuples
-/// (`(A, B)`) and primitives are all valid `.zng` types. The only exception is the empty tuple
+/// (`(A, B)`) and primitives are all valid IDL types. The only exception is the empty tuple
 /// (`()`, unit), which zngur specialises and which must never be declared. Fields, variants and
 /// methods only exist for ADTs; everything else contributes just its layout and well-known
 /// traits.
 fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
-    // A generic template (e.g. `GenericExample<T>`) has no `.zng` representation of its own;
+    // A generic template (e.g. `GenericExample<T>`) has no IDL representation of its own;
     // only its concrete instantiations are emitted (typically enumerated by an `emit_items`
     // const). A type parameter is expected here, not an unsupported shape, so skip silently
     // rather than warn.
@@ -322,7 +324,7 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
         Err(MapTypeError::SkipSilently) => return None,
     };
 
-    // The empty tuple (unit) is `RustType::UNIT`, a distinguished value in the `.zng` IR (the
+    // The empty tuple (unit) is `RustType::UNIT`, a distinguished value in the IDL IR (the
     // implicit return type of a function); zngur specialises it and it is never a `type` block.
     // Numeric primitives are likewise translated to native C++ numeric types, so declaring them
     // as `type` blocks would generate broken C++; they are only usable in signatures.
@@ -335,18 +337,46 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     if let Some(adt) = adt {
         warn_unsupported_rename(ctx, &adt, adt.def_id(), &format!("type `{}`", adt.name()));
     }
-    let (fields, variants) = match adt {
-        // Enums carry their fields per variant; every other ADT is a single struct/union
-        // "variant".
-        Some(adt) if adt.kind().is_enum() => (Vec::new(), build_variants(ctx, record, &adt)),
-        Some(adt) => (build_fields(ctx, record, &adt), Vec::new()),
-        None => (Vec::new(), Vec::new()),
+
+    // A truncated type only names itself: the depth budget did not allow walking its interface.
+    // An enum still gets its variant names so C++ can match it; a struct/union gets neither
+    // fields nor methods.
+    let state = ctx.walk_state(&record.ty);
+    let walked = state
+        .as_ref()
+        .map_or(WalkParts::all(), |state| state.walked);
+    let declare_only = state
+        .as_ref()
+        .is_some_and(|state| state.intent == WalkIntent::Declare);
+    let walk_fields = walked.contains(WalkParts::FIELDS);
+    let walk_variants = walked.contains(WalkParts::VARIANTS);
+    let walk_methods = !declare_only
+        && (walked.contains(WalkParts::INHERENT) || walked.contains(WalkParts::TRAIT));
+
+    let (fields, variants) = if walk_fields {
+        match adt {
+            // Enums carry their fields per variant; every other ADT is a single struct/union
+            // "variant".
+            Some(adt) if adt.kind().is_enum() => (Vec::new(), build_variants(ctx, record, &adt)),
+            Some(adt) => (build_fields(ctx, record, &adt), Vec::new()),
+            None => (Vec::new(), Vec::new()),
+        }
+    } else if walk_variants && let Some(adt) = adt.filter(|adt| adt.kind().is_enum()) {
+        (Vec::new(), build_variant_names(&adt))
+    } else {
+        (Vec::new(), Vec::new())
     };
 
-    let mut methods = build_methods(ctx, record);
+    let mut methods = if walk_methods {
+        build_methods(ctx, record)
+    } else {
+        Vec::new()
+    };
     // `#[autozng::emit_on_implementers]` traits/impls contribute their functions to every type
     // they apply to, as if the functions had been enumerated in an `emit_items` const.
-    methods.extend(build_emit_for_methods(ctx, record));
+    if walk_methods {
+        methods.extend(build_emit_for_methods(ctx, record));
+    }
 
     // An explicit `#[autozng::layout(...)]` replaces the automatic `StackAllocated` policy
     // derived from the type's real size and alignment.
@@ -359,6 +389,7 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     // Rust type nor the layout policy forbids it. Enums construct per variant, unions have no
     // single active field, and `OnlyByRef` deletes the default constructor.
     let constructor = adt
+        .filter(|_| walk_fields)
         .filter(|adt| adt.kind().is_struct())
         .filter(|adt| adt.is_exhaustive())
         .filter(|_| !matches!(&layout, Some(LayoutPolicy::OnlyByRef)))
@@ -380,10 +411,21 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
             })
         });
 
+    // An `AsGenericArg` declaration is a pure layout stub: it does not search for well-known
+    // trait implementations either.
+    let mut wellknown = wellknown_traits(record.ty);
+    if declare_only
+        && state
+            .as_ref()
+            .is_some_and(|state| state.strongest_reason == VisitReason::AsGenericArg)
+    {
+        wellknown.clear();
+    }
+
     Some(ZngurType {
         ty: rust_ty,
         layout,
-        wellknown_traits: wellknown_traits(record.ty),
+        wellknown_traits: wellknown,
         // Only ADTs can be `#[non_exhaustive]`; every other type is exhaustive.
         exhaustive: adt.is_none_or(|adt| adt.is_exhaustive()),
         methods,
@@ -398,11 +440,27 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     })
 }
 
+/// The variant names of an enum truncated at the depth cap.
+///
+/// The fields and methods are not walked, so every variant is non-exhaustive: C++ can match it
+/// but cannot access or construct its fields.
+fn build_variant_names(adt: &AdtDef) -> Vec<ZngurVariant> {
+    adt.variants()
+        .into_iter()
+        .filter(|variant| !variant.is_unstable())
+        .map(|variant| ZngurVariant {
+            name: variant.name().to_string(),
+            exhaustive: false,
+            fields: Vec::new(),
+        })
+        .collect()
+}
+
 /// The field's type instantiated with the concrete arguments of `record.ty`.
 ///
 /// A generic ADT declares its fields in terms of its type parameters
 /// (`Option<T>::Some(T)`); the concrete instance (`Option<Ipv4Addr>`) needs the substitution
-/// before the field can be mapped to `.zng`.
+/// before the field can be mapped to the IDL.
 fn concrete_field_ty(record: &TyRecord, field: &FieldDef) -> Ty {
     let Some(args) = concrete_ty_args(record) else {
         return field.ty();
@@ -474,7 +532,7 @@ fn build_variants(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<
         .collect()
 }
 
-/// Map one selected field to the `.zng` IR, warning (and returning `None`) when its type cannot
+/// Map one selected field to the IDL IR, warning (and returning `None`) when its type cannot
 /// be represented so only that field is dropped.
 fn build_field(
     ctx: &AutozngContext,
@@ -554,7 +612,7 @@ fn wellknown_traits(ty: Ty) -> Vec<ZngurWellknownTrait> {
 
 /// Warn when a recorded `#[autozng::rename]` targets an item the IDL cannot rename.
 ///
-/// The `.zng` syntax only renames associated methods, through `ZngurMethodDetails::cpp_name`
+/// The IDL syntax only renames associated methods, through `ZngurMethodDetails::cpp_name`
 /// (`fn <rust_name>(...) -> ... as <cpp_name>`). A `rename`/`rename_all` on anything else
 /// (type, variant, field, trait, free function) is accepted but has no effect, so the rendered
 /// name is left untouched. The warning points at the item and adds a `renamed here` note at the
@@ -675,7 +733,7 @@ fn concrete_ty_args(record: &TyRecord) -> Option<GenericArgs> {
 /// Only the arguments the function *owns* are printed: the ones inherited from the enclosing
 /// impl block / trait are already named by the type the method hangs off (e.g. `Generic<u64>`),
 /// so the first `generics_of(fn_def).parent_count` arguments are skipped. Arguments with no
-/// `.zng` representation (a type parameter, a const generic, a projection) are dropped.
+/// IDL representation (a type parameter, a const generic, a projection) are dropped.
 fn own_generic_args(fn_def: FnDef, args: Option<&GenericArgs>) -> Vec<RustType> {
     let Some(args) = args else {
         return Vec::new();
@@ -688,43 +746,6 @@ fn own_generic_args(fn_def: FnDef, args: Option<&GenericArgs>) -> Vec<RustType> 
             _ => None,
         })
         .collect()
-}
-
-/// The concrete arguments to instantiate a method with.
-///
-/// `partial_args` are the method's own explicitly-enumerated args (from an `emit_items` const;
-/// `None` for the ordinary impl walk). Their leading `generics_of(def).parent_count` entries
-/// stand for the enclosing impl's parameters, so those are taken from `instance_args` (the
-/// concrete `Self`'s arguments) instead, making the result fully concrete. Returns `None` unless
-/// the result covers every generic parameter of `def`.
-fn combine_method_args(
-    def: &FnDef,
-    partial_args: Option<&GenericArgs>,
-    instance_args: Option<&GenericArgs>,
-) -> Option<GenericArgs> {
-    let parent_count = def.generics_of().parent_count;
-    let mut combined: Vec<GenericArgKind> = Vec::new();
-    match (partial_args, instance_args) {
-        (Some(partial), _) => {
-            // The impl's parameters come from the concrete instance; only the method's *own*
-            // args (past `parent_count`) are taken from `partial`.
-            if let Some(instance) = instance_args {
-                combined.extend(
-                    instance.0[..parent_count.min(instance.0.len())]
-                        .iter()
-                        .cloned(),
-                );
-            }
-            combined.extend(
-                partial.0[parent_count.min(partial.0.len())..]
-                    .iter()
-                    .cloned(),
-            );
-        }
-        (None, Some(instance)) => combined.extend(instance.0.iter().cloned()),
-        (None, None) => return None,
-    }
-    (combined.len() == def.generics_len()).then_some(GenericArgs(combined))
 }
 
 fn build_method(
@@ -802,7 +823,7 @@ fn build_method(
 /// The receiver, inputs and output of an instantiated method/function signature.
 ///
 /// Classifies the receiver from the first parameter; receivers like `Box<Self>`, `Rc<Self>`,
-/// `Pin<&Self>`, ... are not representable in the `.zng` IR yet, so those items are warned
+/// `Pin<&Self>`, ... are not representable in the IDL IR yet, so those items are warned
 /// about and skipped. Inputs are mapped with `has_self` skipped; a warning is emitted when the
 /// signature cannot be represented.
 fn method_signature_parts(
@@ -1064,7 +1085,7 @@ fn build_fn(ctx: &AutozngContext, record: &FnRecord) -> Option<ZngurFn> {
     })
 }
 
-/// Print `spec` as `.zng` IDL to `path`, creating parent directories as needed.
+/// Print `spec` as an IDL to `path`, creating parent directories as needed.
 pub fn print_to_file(spec: &ZngurSpec, path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()

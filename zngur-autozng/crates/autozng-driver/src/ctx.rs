@@ -15,9 +15,10 @@ use rustc_hash::FxHashMap;
 use rustc_public::CrateDef;
 use rustc_public::CrateDefType;
 use rustc_public::abi::Layout;
+use rustc_public::mir::Mutability;
 use rustc_public::ty::{
-    AdtDef, FieldDef, FnDef, FnSig, GenericArgs, GenericParamDefKind, ImplDef, TraitDecl, TraitDef,
-    TraitRef,
+    AdtDef, FieldDef, FnDef, FnSig, GenericArgKind, GenericArgs, GenericParamDefKind, ImplDef,
+    RigidTy, TraitDecl, TraitDef, TraitRef, TyKind,
 };
 use rustc_public::{DefId, ty::Ty};
 use rustc_span::Span;
@@ -39,7 +40,8 @@ use crate::rustc_ext::{
 };
 use crate::type_map::{is_type_block_less, map_rustc_public_ty_to_zngur};
 use crate::walk::{
-    RequestedAs, VisitReason, WalkBudget, WalkParts, WalkPhase, WalkRequest, WalkState,
+    RequestedAs, VisitReason, WalkBudget, WalkContext, WalkIntent, WalkParts, WalkPhase,
+    WalkRequest, WalkState,
 };
 
 #[derive(Debug)]
@@ -267,6 +269,9 @@ struct AutozngContextData {
     /// Guards [`AutozngContextData::visit_queue`]: a type is queued at most once, so a cyclic
     /// interface (or a type reached through several paths) is never visited twice.
     walk_states: RefCell<FxHashMap<Ty, WalkState>>,
+    /// The walk currently in progress, if any. Attribute visitors (`record_field`,
+    /// `record_impl_method`, ...) read it to derive the child request's budget and provenance.
+    current_walk: RefCell<Vec<WalkContext>>,
     /// Traits already rejected as not dyn compatible, so the error is emitted once per trait even
     /// when the crate walk and the re-export pass both reach it (see
     /// [`AutozngContext::ensure_trait_exportable`]).
@@ -319,25 +324,38 @@ pub struct AutozngContext {
     data: AutozngContextData,
 }
 
-/// Whether `ty` can be declared as its own `.zng` `type` block.
+/// Whether `ty` can be declared as its own IDL `type` block.
 ///
 /// A numeric primitive is translated by zngur to a native C++ numeric type and the unit tuple
-/// (`()`) is specialised, so neither is ever declared; a type with no `.zng` representation at
-/// all (an array, a fn pointer, a type parameter, ...) has no block either. A type with escaping
-/// bound vars (e.g. a late-bound lifetime lifted out of a method signature) cannot be named on
-/// its own at all. Such types remain usable in method / function signatures — they are simply not
-/// queued for a visit.
+/// (`()`) is specialised, so neither is ever declared; a type with no IDL representation at
+/// all (an array, a fn pointer, a type parameter, ...) has no block either.
 fn can_have_type_block(ty: Ty) -> bool {
-    with_ctxt(|driver| {
-        use rustc_middle::ty::TypeVisitableExt;
+    match map_rustc_public_ty_to_zngur(ty) {
+        Ok(rust_ty) => !is_type_block_less(&rust_ty),
+        Err(_) => false,
+    }
+}
 
-        if ty.internal(driver.tcx).has_escaping_bound_vars() {
-            return false;
-        }
-        match map_rustc_public_ty_to_zngur(ty) {
-            Ok(rust_ty) => !is_type_block_less(&rust_ty),
-            Err(_) => false,
-        }
+/// Replace every region with `'erased` so a signature type such as `Iter<'_, T>` has one
+/// canonical identity regardless of which bound lifetime it came from.
+struct EraseRegions<'tcx>(rustc_middle::ty::TyCtxt<'tcx>);
+
+impl<'tcx> rustc_middle::ty::TypeFolder<rustc_middle::ty::TyCtxt<'tcx>> for EraseRegions<'tcx> {
+    fn cx(&self) -> rustc_middle::ty::TyCtxt<'tcx> {
+        self.0
+    }
+
+    fn fold_region(&mut self, _: rustc_middle::ty::Region<'tcx>) -> rustc_middle::ty::Region<'tcx> {
+        self.0.lifetimes.re_erased
+    }
+}
+
+fn erase_regions(ty: Ty) -> Ty {
+    with_ctxt(|driver| {
+        use rustc_middle::ty::TypeFoldable;
+
+        let tcx = driver.tcx;
+        rustc_public::rustc_internal::stable(ty.internal(tcx).fold_with(&mut EraseRegions(tcx)))
     })
 }
 
@@ -362,6 +380,51 @@ fn fn_has_self(fn_def: &FnDef) -> bool {
         fn_def.associated_item().map(|item| item.kind),
         Some(rustc_public::ty::AssocKind::Fn { has_self: true, .. })
     )
+}
+
+/// The concrete generic arguments of `ty`, taken from its `RigidTy::Adt` variant.
+fn concrete_ty_args(ty: Ty) -> Option<GenericArgs> {
+    match ty.kind() {
+        TyKind::RigidTy(RigidTy::Adt(_, args)) if !args.0.is_empty() => Some(args),
+        _ => None,
+    }
+}
+
+/// The concrete arguments to instantiate a method with.
+///
+/// `partial_args` are the method's own explicitly-enumerated args (from an `emit_items` const;
+/// `None` for the ordinary impl walk). Their leading `generics_of(def).parent_count` entries
+/// stand for the enclosing impl's parameters, so those are taken from `instance_args` (the
+/// concrete `Self`'s arguments) instead, making the result fully concrete. Returns `None` unless
+/// the result covers every generic parameter of `def`.
+pub(crate) fn combine_method_args(
+    def: &FnDef,
+    partial_args: Option<&GenericArgs>,
+    instance_args: Option<&GenericArgs>,
+) -> Option<GenericArgs> {
+    let parent_count = def.generics_of().parent_count;
+    let mut combined: Vec<GenericArgKind> = Vec::new();
+    match (partial_args, instance_args) {
+        (Some(partial), _) => {
+            // The impl's parameters come from the concrete instance; only the method's *own*
+            // args (past `parent_count`) are taken from `partial`.
+            if let Some(instance) = instance_args {
+                combined.extend(
+                    instance.0[..parent_count.min(instance.0.len())]
+                        .iter()
+                        .cloned(),
+                );
+            }
+            combined.extend(
+                partial.0[parent_count.min(partial.0.len())..]
+                    .iter()
+                    .cloned(),
+            );
+        }
+        (None, Some(instance)) => combined.extend(instance.0.iter().cloned()),
+        (None, None) => return None,
+    }
+    (combined.len() == def.generics_len()).then_some(GenericArgs(combined))
 }
 
 impl AutozngContext {
@@ -475,43 +538,81 @@ impl AutozngContext {
         }
     }
 
-    /// Request that `ty` get its own `.zng` `type` block by queueing it for the third analysis
-    /// pass (see [`crate::analyze`]).
+    /// Request that `ty` get its own IDL `type` block, attributed to `reason`.
     ///
-    /// Called for every type an emitted interface exposes: a field's type, or the inputs and
-    /// output of a function / method signature. The type is treated as if it carried an explicit
-    /// `#[autozng::emit]` when it is visited, so a type reached only through an interface still
-    /// gets a `type` block.
+    /// The request inherits the current walk's phase/filter and a child budget; at the crate root
+    /// it starts from the configured budgets. A type is queued at most once (`walk_states`
+    /// covers both recorded types and already-requested ones). A local type that is not visible
+    /// from the crate root is **not** queued: the generated code cannot name it, so the field /
+    /// function that exposed it is skipped during rendering instead (see `render`). Numeric
+    /// primitives, the unit tuple, and types with no IDL representations are likewise never queued.
     ///
-    /// A type is queued at most once (`walk_states` covers both recorded types and
-    /// already-requested ones). A local type that is not visible from the crate root is **not**
-    /// queued: the generated code cannot name it, so the field / function that exposed it is
-    /// skipped during rendering instead (see `render`). Numeric primitives and the unit tuple
-    /// (translated / specialised by zngur) and types with no `.zng` spelling are likewise never
-    /// queued.
-    pub fn request_ty_visit(&self, ty: Ty) {
+    /// At an exhausted budget the type is recorded as an opaque block instead of being queued
+    /// (struct/union: layout only; enum: variant names, no fields).
+    pub fn request_ty(&self, ty: Ty, reason: VisitReason, requested_as: RequestedAs, span: Span) {
         let ty = ty.base_ty();
         if let Some(adt) = ty.adt_def()
             && (matches!(adt.visibility(), Visibility::PrivateAPI) || adt.is_unstable())
         {
             return;
         }
-        if !can_have_type_block(ty) {
+        // Signature types carry late-bound lifetimes (`Iter<'_, T>`); the IDL drops
+        // lifetimes, so use one region-erased identity for the block and for dedupe.
+        let key = erase_regions(ty).base_ty();
+        if !can_have_type_block(key) {
             return;
         }
-        let request = self.root_request(
-            ty,
-            VisitReason::MethodSignature,
-            WalkPhase::InterfaceDrain,
-            Span::default(),
-        );
-        {
-            let mut states = self.data.walk_states.borrow_mut();
-            if states.contains_key(&ty) {
-                return;
+        let is_external = key.adt_def().is_some_and(|adt| !adt.krate().is_local);
+        let current = self.current_walk_context();
+        let (budget, phase, parent, filter) = match &current {
+            Some(walk) => (
+                walk.budget.child(is_external),
+                walk.phase,
+                Some(walk.owner),
+                walk.filter.clone(),
+            ),
+            None => {
+                let config = self.config();
+                (
+                    WalkBudget::root(config.max_walk_depth, config.max_external_depth),
+                    WalkPhase::InterfaceDrain,
+                    None,
+                    config.walk_filter.clone(),
+                )
             }
-            states.insert(ty, WalkState::requested(ty, &request));
+        };
+        let request = WalkRequest {
+            ty: key,
+            key,
+            reason,
+            phase,
+            budget,
+            requested_as,
+            span,
+            parent,
+            filter,
+        };
+
+        let mut states = self.data.walk_states.borrow_mut();
+        if states.contains_key(&key) {
+            return;
         }
+        if request.budget.exhausted() {
+            let walked = if key.adt_def().is_some_and(|adt| adt.kind().is_enum()) {
+                WalkParts::VARIANTS
+            } else {
+                WalkParts::empty()
+            };
+            states.insert(
+                key,
+                WalkState::declare(key, reason, request.filter.clone(), walked),
+            );
+            drop(states);
+            self.record_ty(&key, span);
+            return;
+        }
+        states.insert(key, WalkState::requested(key, &request));
+        drop(states);
         self.data.visit_queue.borrow_mut().push_back(request);
     }
 
@@ -531,7 +632,7 @@ impl AutozngContext {
                 config.walk_filter.clone(),
             )
         };
-        let ty = ty.base_ty();
+        let ty = erase_regions(ty.base_ty()).base_ty();
         WalkRequest {
             ty,
             key: ty,
@@ -543,6 +644,23 @@ impl AutozngContext {
             parent: None,
             filter,
         }
+    }
+
+    /// Push `walk` as the current walk for the duration of `f`.
+    pub fn with_walk<R>(&self, walk: WalkContext, f: impl FnOnce() -> R) -> R {
+        self.data.current_walk.borrow_mut().push(walk);
+        let result = f();
+        self.data.current_walk.borrow_mut().pop();
+        result
+    }
+
+    fn current_walk_context(&self) -> Option<WalkContext> {
+        self.data.current_walk.borrow().last().cloned()
+    }
+
+    /// The walk state recorded for `ty`, if any.
+    pub fn walk_state(&self, ty: &Ty) -> Option<WalkState> {
+        self.data.walk_states.borrow().get(&ty.base_ty()).cloned()
     }
 
     /// Pop the next request waiting for a third-pass visit, if any.
@@ -567,7 +685,13 @@ impl AutozngContext {
     /// `args` are the function's explicitly-enumerated generic arguments, if any; when they cover
     /// every generic parameter the signature is instantiated first, so a monomorphization queues
     /// its concrete argument types rather than its type parameters.
-    fn request_signature_types(&self, fn_def: FnDef, args: Option<&GenericArgs>) {
+    fn request_signature_types(
+        &self,
+        fn_def: FnDef,
+        args: Option<&GenericArgs>,
+        reason: VisitReason,
+        span: Span,
+    ) {
         let signature = instantiate_signature(fn_def, args);
         // A method's receiver is its `self` type, which is already part of the interface (the
         // method hangs off it). Queueing `Box<Self>` / `Pin<&Self>` would add orphan types for a
@@ -581,7 +705,12 @@ impl AutozngContext {
             .copied()
             .chain(std::iter::once(output))
         {
-            self.request_ty_visit(ty);
+            let requested_as = match ty.kind() {
+                TyKind::RigidTy(RigidTy::Ref(_, _, Mutability::Not)) => RequestedAs::Ref,
+                TyKind::RigidTy(RigidTy::Ref(_, _, Mutability::Mut)) => RequestedAs::RefMut,
+                _ => RequestedAs::Value,
+            };
+            self.request_ty(ty, reason, requested_as, span);
         }
     }
 
@@ -592,8 +721,89 @@ impl AutozngContext {
     /// type like `String` is already queueable here).
     fn request_trait_fn_records_types(&self, fns: &IndexSet<TraitFnRecord>) {
         for trait_fn in fns {
-            self.request_signature_types(trait_fn.def, Some(&trait_fn.generics));
+            self.request_signature_types(
+                trait_fn.def,
+                Some(&trait_fn.generics),
+                VisitReason::EmitOnImplementers,
+                trait_fn.span,
+            );
         }
+    }
+
+    /// Queue the concrete signature types of the methods recorded on `adt`'s definition record.
+    ///
+    /// Methods are recorded on the definition (`Option<T>`), so their uninstantiated signatures
+    /// queue `Iter<T>`; the concrete `Iter<char>` used when rendering `Option<char>` must be
+    /// queued separately or the IDL references a type block that does not exist.
+    pub fn request_concrete_method_signature_types(&self, ty: Ty, adt: &AdtDef) {
+        let Some(instance_args) = concrete_ty_args(ty) else {
+            return;
+        };
+
+        let methods: Vec<(FnDef, Option<GenericArgs>)> = {
+            let tys = self.data.tys.borrow();
+            tys.get(&adt.ty().base_ty())
+                .map(|record| {
+                    record
+                        .impls
+                        .values()
+                        .flat_map(|impl_record| impl_record.methods.iter())
+                        .map(|method| (method.def, method.partial_args.clone()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        let (budget, filter) = match self.current_walk_context() {
+            Some(walk) => (walk.budget, walk.filter),
+            None => match self
+                .walk_state(&ty)
+                .filter(|state| state.best_remaining_depth > 0)
+            {
+                Some(state) => (
+                    WalkBudget {
+                        remaining_depth: state.best_remaining_depth,
+                        remaining_external: state.best_remaining_external,
+                    },
+                    state.filter,
+                ),
+                None => {
+                    let config = self.config();
+                    (
+                        WalkBudget::root(config.max_walk_depth, config.max_external_depth),
+                        config.walk_filter.clone(),
+                    )
+                }
+            },
+        };
+        let walk = WalkContext {
+            owner: ty,
+            phase: WalkPhase::ConcreteSignature,
+            budget,
+            filter,
+            span: span_of_def(adt.def_id()),
+        };
+        self.with_walk(walk, || {
+            for (def, partial_args) in methods {
+                let Some(args) =
+                    combine_method_args(&def, partial_args.as_ref(), Some(&instance_args))
+                else {
+                    continue;
+                };
+                self.request_signature_types(
+                    def,
+                    Some(&args),
+                    VisitReason::ConcreteMethodSignature,
+                    span_of_def(def.def_id()),
+                );
+            }
+        });
+    }
+
+    /// Whether `ty` was recorded as a declaration-only (truncated) block.
+    pub fn is_declared_ty(&self, ty: &Ty) -> bool {
+        self.walk_state(ty)
+            .is_some_and(|state| state.intent == WalkIntent::Declare)
     }
 
     /// The span that selected `field` on the ADT definition's [`TyRecord`].
@@ -617,7 +827,7 @@ impl AutozngContext {
             return;
         }
         // A field's type is part of the type's interface: it must get its own `type` block.
-        self.request_ty_visit(field.ty());
+        self.request_ty(field.ty(), VisitReason::Field, RequestedAs::Value, span);
         let mut record = self.data.ty_record_mut(ty, span);
         record
             .fields
@@ -631,7 +841,7 @@ impl AutozngContext {
         self.data.have_ty(&ty.base_ty())
     }
 
-    /// Record a free function for emission (as a `fn` entry in the `.zng` spec).
+    /// Record a free function for emission (as a `fn` entry in the IDL spec).
     ///
     /// `partial_args` are the function's own explicitly-enumerated generic args, if any (see
     /// [`FnRecord::partial_args`]); the ordinary crate walk passes `None`. `span` is the span of
@@ -642,7 +852,12 @@ impl AutozngContext {
         }
         // Every type the function exposes is part of the interface: queue it for a third-pass
         // visit so it gets its own `type` block.
-        self.request_signature_types(fn_def, partial_args.as_ref());
+        self.request_signature_types(
+            fn_def,
+            partial_args.as_ref(),
+            VisitReason::MethodSignature,
+            span,
+        );
         self.data.funcs.borrow_mut().insert(FnRecord {
             def: fn_def,
             clauses: fn_def.clauses_of(),
@@ -669,7 +884,12 @@ impl AutozngContext {
             return;
         }
         // Every type the method exposes is part of the interface: queue it for a third-pass visit.
-        self.request_signature_types(fn_def, partial_args.as_ref());
+        self.request_signature_types(
+            fn_def,
+            partial_args.as_ref(),
+            VisitReason::MethodSignature,
+            span,
+        );
         let mut record = self.data.ty_record_mut(ty, span);
         let impl_record = record
             .impls
@@ -700,7 +920,7 @@ impl AutozngContext {
         span: Span,
     ) {
         // Every type the trait method exposes is part of the interface.
-        self.request_signature_types(def, Some(&generics));
+        self.request_signature_types(def, Some(&generics), VisitReason::TraitMethod, span);
         let ty = trait_ref.self_ty().base_ty();
         let mut record = self.data.ty_record_mut(ty, span);
         record.trait_fns.insert(TraitFnRecord {
@@ -736,10 +956,10 @@ impl AutozngContext {
             .any(|record| record.decl.def_id == *trait_def && record.concrete.is_some())
     }
 
-    /// Reject a trait that cannot be exported as a `.zng` `trait` block.
+    /// Reject a trait that cannot be exported as an IDL `trait` block.
     ///
     /// A `trait` block exists so a C++ type can inherit the trait and be used through `dyn`
-    /// (see the `trait` IDL block docs), and that requires dyn compatibility: no generic methods,
+    /// (see the IDL `trait` block docs), and that requires dyn compatibility: no generic methods,
     /// no associated constants, and so on. A trait that is not dyn compatible cannot cross the
     /// ABI as a trait object, so selecting one is a hard error rather than a warn-and-skip. The
     /// `Fn`/`FnMut`/`FnOnce` call traits are likewise never a `trait` block: they are represented
@@ -826,7 +1046,7 @@ impl AutozngContext {
 
     /// Reject a generic trait selected by `#[autozng::emit]`.
     ///
-    /// A `.zng` `trait` block describes a concrete dyn compatible trait; it cannot define type or
+    /// An IDL `trait` block describes a concrete dyn compatible trait; it cannot define type or
     /// const parameters. A declaration has no concrete `Self: Trait<Args>` reference for the
     /// bridge, so only a concrete dyn compatible trait can be exported.
     /// `emit_items(emit_traits = true)` names those instantiations (see
@@ -893,7 +1113,7 @@ impl AutozngContext {
             return;
         }
 
-        // A `.zng` `trait` block is only usable through `dyn`, so the trait must be dyn compatible
+        // An IDL `trait` block is only usable through `dyn`, so the trait must be dyn compatible
         // (see `ensure_trait_exportable`). This is unreachable through `dyn` syntax — rustc
         // already rejects a `dyn` object of a non-dyn-compatible trait — but keeps the invariant
         // local to the recording entry point.
@@ -913,7 +1133,7 @@ impl AutozngContext {
             if let Some((fn_def, _identity_generics)) = assoc_item.opt_fn_def() {
                 // The instantiation's arguments are concrete, so the method's interface types are
                 // queued as concrete types.
-                self.request_signature_types(fn_def, Some(&generics));
+                self.request_signature_types(fn_def, Some(&generics), VisitReason::EmitTrait, span);
                 fns.insert(TraitFnRecord {
                     def: fn_def,
                     trait_def: def,
@@ -1004,7 +1224,7 @@ impl AutozngContext {
         if def.is_unstable() {
             return;
         }
-        // A `.zng` `trait` block is only usable through `dyn`; a non-dyn-compatible trait cannot
+        // An IDL `trait` block is only usable through `dyn`; a non-dyn-compatible trait cannot
         // be exported (see `ensure_trait_exportable`).
         if !self.ensure_trait_exportable(def, span) {
             return;
@@ -1012,7 +1232,7 @@ impl AutozngContext {
         // The public `TraitDecl` is the stable description of the trait (`stable_trait` bridges
         // the internal `rustc_middle` definition to it).
         let decl = with_ctxt(|ctx| stable_trait(def.internal(ctx.tcx)));
-        // A `.zng` `trait` block describes a concrete dyn compatible trait, so only a concrete
+        // An IDL `trait` block describes a concrete dyn compatible trait, so only a concrete
         // dyn compatible trait can be exported.
         if !self.ensure_trait_declaration_exportable(def, &decl, span) {
             return;
@@ -1048,7 +1268,7 @@ impl AutozngContext {
             return;
         }
         // Every type the trait method exposes is part of the interface.
-        self.request_signature_types(fn_def, Some(&generics));
+        self.request_signature_types(fn_def, Some(&generics), VisitReason::TraitMethod, span);
         let mut traits = self.data.traits.borrow_mut();
         let Some(record) = traits
             .iter_mut()

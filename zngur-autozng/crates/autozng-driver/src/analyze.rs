@@ -34,7 +34,7 @@ use crate::{
     render,
     rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
-    walk::{VisitReason, WalkPhase, WalkRequest},
+    walk::{VisitReason, WalkBudget, WalkContext, WalkPhase, WalkRequest},
 };
 use zngur_def::ZngurSpec;
 
@@ -61,7 +61,23 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
         // implicitly creates its type's `TyRecord`, so walking children of a `skip`-ed type
         // would leak it into the output.
         if self.ctx.is_ty_recorded(&adt.ty()) {
-            visit_adt_children(adt, self.ctx);
+            let (max_walk_depth, max_external_depth, filter) = {
+                let config = self.ctx.config();
+                (
+                    config.max_walk_depth,
+                    config.max_external_depth,
+                    config.walk_filter.clone(),
+                )
+            };
+            let walk = WalkContext {
+                owner: adt.ty(),
+                phase: WalkPhase::CrateWalk,
+                budget: WalkBudget::root(max_walk_depth, max_external_depth),
+                filter,
+                span: span_of_def(adt.def_id()),
+            };
+            self.ctx
+                .with_walk(walk, || visit_adt_children(adt, self.ctx));
         }
 
         adt.super_visit(self)
@@ -135,7 +151,7 @@ fn record_trait_methods(trait_def: &rustc_public::ty::TraitDef, ctx: &AutozngCon
 /// Shared by `CrateAnalysisVisitor::visit_adt` (an ADT the crate walk selected) and the third
 /// pass's [`visit_emitted_ty`] (a type an emitted interface exposed). Recording a field or a
 /// method queues the types it exposes for a third-pass visit (see
-/// [`AutozngContext::request_ty_visit`]).
+/// [`AutozngContext::request_ty`]).
 fn visit_adt_children(adt: &rustc_public::ty::AdtDef, ctx: &AutozngContext) {
     for variant in adt.variants() {
         if variant.is_unstable() {
@@ -154,7 +170,7 @@ fn visit_adt_children(adt: &rustc_public::ty::AdtDef, ctx: &AutozngContext) {
     }
 }
 
-/// Visit a type that an emitted interface exposed (see [`AutozngContext::request_ty_visit`]), as
+/// Visit a type that an emitted interface exposed (see [`AutozngContext::request_ty`]), as
 /// if it carried an explicit `#[autozng::emit]`.
 ///
 /// A type that already has a record was handled by the crate walk (or an earlier iteration), so
@@ -166,28 +182,39 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
         ctx.mark_walked(request.key);
         return;
     }
-    let Some(adt) = ty.adt_def() else {
-        // A non-ADT (`str`, a slice, a tuple, `bool`, a `dyn Trait`, ...) is just its own `type`
-        // block; it has no fields or methods to walk.
-        ctx.record_ty(&ty, Span::default());
-        ctx.mark_walked(request.key);
-        return;
+    let walk = WalkContext {
+        owner: ty,
+        phase: request.phase,
+        budget: request.budget,
+        filter: request.filter.clone(),
+        span: request.span,
     };
-    if adt.is_unstable() {
-        ctx.mark_walked(request.key);
-        return;
-    }
-    // Record the *concrete* type (`Vec<u32>`, not the `Vec<T, A>` definition `record_adt` would
-    // give), so it renders with its generic arguments.
-    ctx.record_ty(&ty, span_of_def(adt.def_id()));
-    // By default only the local crate's ADTs are walked: an external type (`Vec<u32>`, `String`,
-    // ...) contributes just its `type` block, not the internals of another crate. The
-    // `implicitly_emit_external_interfaces` policy turns that on (see
-    // `attrs::attributes::policy`).
-    let walk_children = adt.krate().is_local || ctx.config().implicitly_emit_external_interfaces;
-    if walk_children {
-        visit_adt_children(&adt, ctx);
-    }
+    ctx.with_walk(walk, || {
+        let Some(adt) = ty.adt_def() else {
+            // A non-ADT (`str`, a slice, a tuple, `bool`, a `dyn Trait`, ...) is just its own
+            // `type` block; it has no fields or methods to walk.
+            ctx.record_ty(&ty, Span::default());
+            return;
+        };
+        if adt.is_unstable() {
+            return;
+        }
+        // Record the *concrete* type (`Vec<u32>`, not the `Vec<T, A>` definition `record_adt`
+        // would give), so it renders with its generic arguments.
+        ctx.record_ty(&ty, span_of_def(adt.def_id()));
+        // By default only the local crate's ADTs are walked: an external type (`Vec<u32>`,
+        // `String`, ...) contributes just its `type` block, not the internals of another crate.
+        // The `implicitly_emit_external_interfaces` policy turns that on (see
+        // `attrs::attributes::policy`).
+        let walk_children =
+            adt.krate().is_local || ctx.config().implicitly_emit_external_interfaces;
+        if walk_children {
+            visit_adt_children(&adt, ctx);
+        }
+        // A concrete instance's method signatures are instantiated at render time; queue their
+        // types here so the IDL also declares e.g. `Option<char>::iter`'s `Option::Iter<char>`.
+        ctx.request_concrete_method_signature_types(ty, &adt);
+    });
     ctx.mark_walked(request.key);
 }
 
@@ -196,7 +223,7 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
 ///
 /// The crate walk only visits the local crate, so an external item a public `pub use` makes part
 /// of the public API would otherwise never be recorded — a crate whose entire API is re-exported
-/// would emit an empty `.zng`. A re-export is an explicit statement that the item is public API,
+/// would emit an empty IDL. A re-export is an explicit statement that the item is public API,
 /// so it is recorded like an `emit`: the type / function / trait is recorded, and a trait's
 /// associated functions with it (`CrateAnalysisVisitor::visit_trait` never sees an external
 /// trait). Recording is idempotent — `is_ty_recorded` / `seen_tys` / `is_trait_recorded` mean a
@@ -229,7 +256,7 @@ fn visit_reexported_items(ctx: &AutozngContext) {
             // would expose far too much surface, and an external trait cannot carry
             // `#[autozng::emit]`. Traits require an explicit local selection.
             DefKind::Trait => {}
-            // A module has no `.zng` spelling of its own, and every other kind (a const, a type
+            // A module has no IDL representation of its own, and every other kind (a const, a type
             // alias, a macro, ...) is not exported yet.
             _ => {}
         });
@@ -260,6 +287,29 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
     // interface type has been recorded.
     while let Some(request) = ctx.pop_ty_visit() {
         visit_emitted_ty(&ctx, request);
+    }
+
+    // Concrete instances recorded directly (an explicit `emit`, `emit_items`, or a field) did not
+    // queue their instantiated method signatures during the drain. Repeat the concrete-signature
+    // pass until no new type appears.
+    loop {
+        let concrete: Vec<(rustc_public::ty::Ty, rustc_public::ty::AdtDef)> = ctx
+            .ty_records()
+            .values()
+            .filter(|record| !ctx.is_declared_ty(&record.ty))
+            .filter_map(|record| Some((record.ty, record.adt?)))
+            .collect();
+        for (ty, adt) in concrete {
+            ctx.request_concrete_method_signature_types(ty, &adt);
+        }
+        let mut visited = 0;
+        while let Some(request) = ctx.pop_ty_visit() {
+            visit_emitted_ty(&ctx, request);
+            visited += 1;
+        }
+        if visited == 0 {
+            break;
+        }
     }
 
     // eprintln!("AFTER VISIT CTX: {ctx:#?}");
