@@ -212,6 +212,13 @@ fn check_pass(sh: &Shell, fix: bool, stem: &str, test_dir: &Path) -> Result<()> 
     std::fs::create_dir_all(runner.join("src"))?;
     std::fs::write(runner.join("Cargo.toml"), RUNNER_CARGO_TOML)?;
     std::fs::write(runner.join("build.rs"), RUNNER_BUILD_RS)?;
+    // The CLI only writes the C++ file when it has glue to emit, so a test whose
+    // `.zng` exports nothing would otherwise build the previous test's file.
+    let generated_cpp = runner.join("generated.cpp");
+    if generated_cpp.exists() {
+        std::fs::remove_file(&generated_cpp)
+            .with_context(|| format!("removing {}", generated_cpp.display()))?;
+    }
 
     {
         let _dir = sh.push_dir(test_dir);
