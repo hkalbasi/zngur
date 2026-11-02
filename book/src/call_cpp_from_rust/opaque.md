@@ -158,8 +158,8 @@ type crate::MyCppWrapper {
 ```
 
 Similarly to how we can define opaque C++ objects with `#cpp_ref` and `#cpp_heap_allocated`,
-`#cpp_stack_owned` only names the backing C++ type and instructs `zngur` that this type will be
-stored directly in the Rust stack. The memory layout is specified separately using `#layout`.
+`#cpp_stack_owned` names the backing C++ type and instructs `zngur` that this type will be
+stored directly in the Rust stack. The memory layout is specified using the `#layout` directive.
 
 > **NOTE**: The legacy syntax `#cpp_stack_owned "::CppType" (size = ..., align = ...);` where layout
 > parameters were embedded directly in the `#cpp_stack_owned` directive is no longer supported and
