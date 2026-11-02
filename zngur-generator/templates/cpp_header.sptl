@@ -232,10 +232,6 @@ namespace {{ self.namespace }} {
 
     {% if td.layout.is_only_by_ref() %}
         {{ name }}() = delete;
-
-          {% if !td.fields.is_empty() %}
-          union {
-          {% endif %}
     {% else if td.layout.is_stack_allocated() %}
         union alignas({{ td.layout.stack_align() }}) {
           alignas({{ td.layout.stack_align() }}) mutable ::std::array< ::uint8_t, {{ td.layout.stack_size() }}> __zngur_data;
