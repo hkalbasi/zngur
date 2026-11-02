@@ -50,6 +50,8 @@ mod driver;
 
 mod version;
 
+mod walk;
+
 // fn analyze_instance(instance: Instance) {
 //     eprintln!("--- Analyzing instance: {}", instance.name());
 //     eprintln!("  - Mangled name: {}", instance.mangled_name());

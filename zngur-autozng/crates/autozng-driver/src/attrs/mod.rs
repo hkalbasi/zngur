@@ -14,6 +14,7 @@ use crate::{
             layout::LayoutParser,
             policy::PolicyParser,
             rename::RenameParser,
+            walk_filter::WalkFilterParser,
         },
         parse::{PartialParsedAttr, parser::ParserBuilder},
     },
@@ -49,6 +50,7 @@ static ATTR_BUILDERS: &[&DynAttrBuilder] = &[
     &ParserBuilder::<RenameParser>::new(),
     &ParserBuilder::<PolicyParser>::new(),
     &ParserBuilder::<LayoutParser>::new(),
+    &ParserBuilder::<WalkFilterParser>::new(),
 ];
 
 /// given a partially parsed attr select a builder by the attr's path

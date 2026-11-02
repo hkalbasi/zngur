@@ -18,13 +18,16 @@ use crate::{
             layout::LayoutTarget,
             policy::PolicyTarget,
             rename::RenameTarget,
+            walk_filter::WalkFilterTarget,
         },
         macros::impl_attr_target,
     },
     ctx::AutozngContext,
     driver::with_ctxt,
     error::{span_of_def, warn_private_item_skipped},
+    metadata::WalkFilterRecord,
     rustc_ext::{FieldDefExt, ImplDefExt, RustcPublicTyExt, VisibilityExt},
+    walk::WalkFilter,
 };
 
 /// The simple (last path segment) name of a definition, used both for child `emit(name)`
@@ -35,7 +38,31 @@ fn simple_name(name: rustc_public::Symbol) -> String {
 
 impl PolicyTarget for rustc_public::Crate {}
 
-impl_attr_target!(rustc_public::Crate, PolicyTarget);
+impl WalkFilterTarget for rustc_public::Crate {
+    fn apply_walk_filter(&self, filter: WalkFilter, _span: Span, ctx: &AutozngContext) {
+        ctx.config_mut().walk_filter = filter;
+    }
+}
+
+impl_attr_target!(rustc_public::Crate, PolicyTarget, WalkFilterTarget);
+
+macro_rules! impl_walk_filter_target {
+    ($ty:ty) => {
+        impl WalkFilterTarget for $ty {
+            fn apply_walk_filter(&self, filter: WalkFilter, span: Span, ctx: &AutozngContext) {
+                ctx.with_metadata_mut(self, |mut metadata| {
+                    metadata.walk_filter = Some(WalkFilterRecord { filter, span });
+                });
+            }
+        }
+    };
+}
+
+impl_walk_filter_target!(rustc_public::ty::AdtDef);
+impl_walk_filter_target!(rustc_public::ty::AssocItem);
+impl_walk_filter_target!(rustc_public::ty::FieldDef);
+impl_walk_filter_target!(rustc_public::ty::FnDef);
+impl_walk_filter_target!(rustc_public::ty::TraitDef);
 
 impl EmitTarget for rustc_public::ty::AdtDef {
     fn emit(&self, action: EmitAction, span: Span, ctx: &AutozngContext) -> bool {
@@ -90,7 +117,8 @@ impl_attr_target!(
     rustc_public::ty::AdtDef,
     EmitTarget,
     RenameTarget,
-    LayoutTarget
+    LayoutTarget,
+    WalkFilterTarget
 );
 
 /// A free (non-associated) function in the crate, emitted as a `fn` entry in the `.zng` spec.
@@ -128,7 +156,12 @@ impl RenameTarget for rustc_public::ty::FnDef {
     }
 }
 
-impl_attr_target!(rustc_public::ty::FnDef, EmitTarget, RenameTarget);
+impl_attr_target!(
+    rustc_public::ty::FnDef,
+    EmitTarget,
+    RenameTarget,
+    WalkFilterTarget
+);
 
 /// An ADT inherent impl block: emitting it walks its associated functions, each of which is
 /// recorded (or skipped) according to its own attributes.
@@ -232,7 +265,12 @@ impl RenameTarget for rustc_public::ty::AssocItem {
     }
 }
 
-impl_attr_target!(rustc_public::ty::AssocItem, EmitTarget, RenameTarget);
+impl_attr_target!(
+    rustc_public::ty::AssocItem,
+    EmitTarget,
+    RenameTarget,
+    WalkFilterTarget
+);
 
 /// A field of an ADT (struct/union field, or enum variant field), recorded onto the owning
 /// type's [`TyRecord`].
@@ -288,7 +326,12 @@ impl RenameTarget for rustc_public::ty::FieldDef {
     }
 }
 
-impl_attr_target!(rustc_public::ty::FieldDef, EmitTarget, RenameTarget);
+impl_attr_target!(
+    rustc_public::ty::FieldDef,
+    EmitTarget,
+    RenameTarget,
+    WalkFilterTarget
+);
 
 /// A trait declaration: recorded only when explicitly tagged `emit` (a trait's implicit action
 /// is `None`, see [`EmitTarget::implicit_action`]) and only when it is `pub`/`pub(crate)`.
@@ -337,4 +380,9 @@ impl EmitOnImplTarget for rustc_public::ty::TraitDef {
     }
 }
 
-impl_attr_target!(rustc_public::ty::TraitDef, EmitTarget, EmitOnImplTarget);
+impl_attr_target!(
+    rustc_public::ty::TraitDef,
+    EmitTarget,
+    EmitOnImplTarget,
+    WalkFilterTarget
+);

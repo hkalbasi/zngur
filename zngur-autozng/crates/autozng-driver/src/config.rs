@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::walk::WalkFilter;
+
 /// Environment variable naming the directory the generated `.zng` files are written to.
 ///
 /// As a `RUSTC_WORKSPACE_WRAPPER` the driver is invoked by cargo with nothing but rustc
@@ -86,6 +88,8 @@ pub struct Config {
     pub max_trait_interface_depth: usize,
     /// Depth budget for a child whose unwrapped type is already in the walk's ancestor chain.
     pub max_self_ref_depth: usize,
+    /// `#![autozng::walk_filter(...)]`: the crate-wide interface filter.
+    pub walk_filter: WalkFilter,
 }
 
 impl Default for Config {
@@ -100,6 +104,7 @@ impl Default for Config {
             max_trait_impl_depth: 4,
             max_trait_interface_depth: 2,
             max_self_ref_depth: 2,
+            walk_filter: WalkFilter::default(),
         }
     }
 }

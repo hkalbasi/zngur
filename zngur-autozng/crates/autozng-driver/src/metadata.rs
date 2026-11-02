@@ -7,6 +7,7 @@ use rustc_span::Span;
 use zngur_def::LayoutPolicy;
 
 use crate::driver::with_ctxt;
+use crate::walk::WalkFilter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MetadataKey(u64);
@@ -138,11 +139,23 @@ pub struct LayoutOverride {
     pub span: Span,
 }
 
+/// A `#[autozng::walk_filter(...)]` recorded for an item.
+///
+/// The span is the attribute's, kept for diagnostics when a filter excludes an item the caller
+/// expected to see.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkFilterRecord {
+    pub filter: WalkFilter,
+    pub span: Span,
+}
+
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct MetadataRecord {
     pub export_name: Option<ExportName>,
     /// `#[autozng::layout(...)]` override, if the item is a type that carries one.
     pub layout: Option<LayoutOverride>,
+    /// `#[autozng::walk_filter(...)]`, inherited from an ancestor or set on the item.
+    pub walk_filter: Option<WalkFilterRecord>,
 }
 
 pub type MetadataMap = FxHashMap<MetadataKey, MetadataRecord>;
