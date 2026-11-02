@@ -130,5 +130,4 @@ jobs:
           rustup default stable
           rustup toolchain install nightly-2026-08-29 --profile minimal --component rustc-dev --component llvm-tools --component rustfmt
       - name: Run autozng tests
-        # Temporary: drop --allow-autozng-bridge-failures with the follow-up fixes in 6.1.
-        run: cargo xtask test --only-autozng --require-autozng --allow-autozng-bridge-failures
+        run: cargo xtask test --only-autozng --require-autozng
