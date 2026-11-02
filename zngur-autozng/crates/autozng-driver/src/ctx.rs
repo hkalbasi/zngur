@@ -11,7 +11,7 @@
 
 use indexmap::{IndexMap, IndexSet};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_public::CrateDef;
 use rustc_public::CrateDefType;
 use rustc_public::abi::Layout;
@@ -275,6 +275,10 @@ struct AutozngContextData {
     /// The walk currently in progress, if any. Attribute visitors (`record_field`,
     /// `record_impl_method`, ...) read it to derive the child request's budget and provenance.
     current_walk: RefCell<Vec<WalkContext>>,
+    /// Concrete instances whose instantiated method signatures still need queueing.
+    pending_concrete: RefCell<VecDeque<(Ty, AdtDef)>>,
+    /// Concrete instances already queued for the signature worklist.
+    seen_concrete: RefCell<FxHashSet<Ty>>,
     /// Traits already rejected as not dyn compatible, so the error is emitted once per trait even
     /// when the crate walk and the re-export pass both reach it (see
     /// [`AutozngContext::ensure_trait_exportable`]).
@@ -606,10 +610,12 @@ impl AutozngContext {
                     record.selected_explicitly = true;
                 }
             }
+            self.enqueue_concrete(ty);
             return;
         }
         let mut record = self.data.ty_record_mut(ty, span);
         record.selected_explicitly = explicit;
+        self.enqueue_concrete(ty);
     }
 
     /// Record an ADT as selected for emission, marking an explicit selection.
@@ -624,10 +630,12 @@ impl AutozngContext {
                     record.selected_explicitly = true;
                 }
             }
+            self.enqueue_concrete(ty);
             return;
         }
         let mut record = self.data.ty_record_mut(ty, span);
         record.selected_explicitly = explicit;
+        self.enqueue_concrete(ty);
     }
 
     /// Request that `ty` get its own IDL `type` block, attributed to `reason`.
@@ -882,6 +890,27 @@ impl AutozngContext {
                 trait_fn.span,
             );
         }
+    }
+
+    /// Queue `ty`'s instantiated method signatures for the concrete worklist.
+    ///
+    /// Called when a concrete instance is recorded; `pop_concrete` drains the worklist.
+    pub fn enqueue_concrete(&self, ty: Ty) {
+        let ty = ty.base_ty();
+        let Some(adt) = ty.adt_def() else {
+            return;
+        };
+        if !ty.is_concrete() || concrete_ty_args(ty).is_none() || self.is_declared_ty(&ty) {
+            return;
+        }
+        if self.data.seen_concrete.borrow_mut().insert(ty) {
+            self.data.pending_concrete.borrow_mut().push_back((ty, adt));
+        }
+    }
+
+    /// Pop the next concrete instance whose method signatures need queueing.
+    pub fn pop_concrete(&self) -> Option<(Ty, AdtDef)> {
+        self.data.pending_concrete.borrow_mut().pop_front()
     }
 
     /// Queue the concrete signature types of the methods recorded on `adt`'s definition record.

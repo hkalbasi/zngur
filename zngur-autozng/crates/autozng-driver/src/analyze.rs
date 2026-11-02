@@ -34,7 +34,10 @@ use crate::{
     render,
     rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
-    walk::{RequestedAs, VisitReason, WalkBudget, WalkContext, WalkPhase, WalkRequest, base_ty},
+    walk::{
+        RequestedAs, VisitReason, WalkBudget, WalkContext, WalkParts, WalkPhase, WalkRequest,
+        base_ty,
+    },
 };
 use zngur_def::ZngurSpec;
 
@@ -184,7 +187,13 @@ fn visit_adt_children(adt: &rustc_public::ty::AdtDef, ctx: &AutozngContext) {
 /// methods are walked, which may queue further types.
 fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
     let ty = request.ty;
-    if ctx.is_ty_recorded(&ty) {
+    let already_walked = ctx.walk_state(&ty).is_some_and(|state| {
+        state
+            .walked
+            .contains(WalkParts::FIELDS | WalkParts::INHERENT | WalkParts::TRAIT)
+    });
+    if ctx.is_ty_recorded(&ty) && already_walked {
+        ctx.enqueue_concrete(ty);
         ctx.mark_walked(request.key);
         return;
     }
@@ -201,15 +210,19 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
         let Some(adt) = ty.adt_def() else {
             // A non-ADT (`str`, a slice, a tuple, `bool`, a `dyn Trait`, ...) is just its own
             // `type` block; it has no fields or methods to walk.
-            ctx.record_ty(&ty, Span::default());
+            if !ctx.is_ty_recorded(&ty) {
+                ctx.record_ty(&ty, Span::default());
+            }
             return;
         };
         if adt.is_unstable() {
             return;
         }
-        // Record the *concrete* type (`Vec<u32>`, not the `Vec<T, A>` definition `record_adt`
-        // would give), so it renders with its generic arguments.
-        ctx.record_ty(&ty, span_of_def(adt.def_id()));
+        if !ctx.is_ty_recorded(&ty) {
+            // Record the *concrete* type (`Vec<u32>`, not the `Vec<T, A>` definition `record_adt`
+            // would give), so it renders with its generic arguments.
+            ctx.record_ty(&ty, span_of_def(adt.def_id()));
+        }
         // By default only the local crate's ADTs are walked: an external type (`Vec<u32>`,
         // `String`, ...) contributes just its `type` block, not the internals of another crate.
         // The `implicitly_emit_external_interfaces` policy turns that on (see
@@ -219,10 +232,8 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
         if walk_children {
             visit_adt_children(&adt, ctx);
         }
-        // A concrete instance's method signatures are instantiated at render time; queue their
-        // types here so the IDL also declares e.g. `Option<char>::iter`'s `Option::Iter<char>`.
-        ctx.request_concrete_method_signature_types(ty, &adt);
     });
+    ctx.enqueue_concrete(ty);
     ctx.mark_walked(request.key);
 }
 
@@ -291,31 +302,21 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
 
     // Third pass: every type an emitted interface exposed (a field's type, or a function / method
     // signature) gets its own `type` block, as if it carried an explicit `emit`. Visiting it may
-    // expose further types, so the queue is drained to a fixpoint; once it is empty, every
-    // interface type has been recorded.
-    while let Some(request) = ctx.pop_ty_visit() {
-        visit_emitted_ty(&ctx, request);
-    }
-
-    // Concrete instances recorded directly (an explicit `emit`, `emit_items`, or a field) did not
-    // queue their instantiated method signatures during the drain. Repeat the concrete-signature
-    // pass until no new type appears.
+    // expose further types, and every recorded concrete instance queues its instantiated method
+    // signatures. Drain both worklists to a fixpoint; once both are empty, the interface is
+    // complete.
     loop {
-        let concrete: Vec<(rustc_public::ty::Ty, rustc_public::ty::AdtDef)> = ctx
-            .ty_records()
-            .values()
-            .filter(|record| !ctx.is_declared_ty(&record.ty))
-            .filter_map(|record| Some((record.ty, record.adt?)))
-            .collect();
-        for (ty, adt) in concrete {
-            ctx.request_concrete_method_signature_types(ty, &adt);
-        }
         let mut visited = 0;
         while let Some(request) = ctx.pop_ty_visit() {
             visit_emitted_ty(&ctx, request);
             visited += 1;
         }
-        if visited == 0 {
+        let mut queued_signatures = false;
+        while let Some((ty, adt)) = ctx.pop_concrete() {
+            ctx.request_concrete_method_signature_types(ty, &adt);
+            queued_signatures = true;
+        }
+        if visited == 0 && !queued_signatures {
             break;
         }
     }

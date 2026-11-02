@@ -1,0 +1,33 @@
+type ::std::option::Option<char> {
+    #layout(size = 4, align = 4);
+    wellknown_traits(Copy, Debug);
+    variant None {}
+    variant Some {
+        non_exhaustive;
+    }
+}
+
+type crate::Holder {
+    #layout(size = 4, align = 4);
+    constructor {wrapped: crate::Wrapper<char>};
+
+    field wrapped (offset = 0, type = crate::Wrapper<char>);
+}
+
+type crate::Inner<char> {
+    #layout(size = 4, align = 4);
+    constructor {item: char};
+
+    field item (offset = 0, type = char);
+
+    safe fn maybe(self) -> ::std::option::Option<char>;
+}
+
+type crate::Wrapper<char> {
+    #layout(size = 4, align = 4);
+    constructor {value: char};
+
+    field value (offset = 0, type = char);
+
+    safe fn inner(&self) -> crate::Inner<char>;
+}
