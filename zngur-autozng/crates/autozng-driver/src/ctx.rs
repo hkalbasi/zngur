@@ -11,7 +11,7 @@
 
 use indexmap::{IndexMap, IndexSet};
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use rustc_public::CrateDef;
 use rustc_public::CrateDefType;
 use rustc_public::abi::Layout;
@@ -38,6 +38,9 @@ use crate::rustc_ext::{
     StabilityExt, Visibility, VisibilityExt, fn_trait_name, stable_trait, visible_path,
 };
 use crate::type_map::{is_type_block_less, map_rustc_public_ty_to_zngur};
+use crate::walk::{
+    RequestedAs, VisitReason, WalkBudget, WalkParts, WalkPhase, WalkRequest, WalkState,
+};
 
 #[derive(Debug)]
 pub struct FnRecord {
@@ -258,12 +261,12 @@ struct AutozngContextData {
     ///
     /// Drained by the third analysis pass (see [`crate::analyze`]); visiting a type may queue
     /// further types.
-    visit_queue: RefCell<VecDeque<Ty>>,
+    visit_queue: RefCell<VecDeque<WalkRequest>>,
     /// Every type already recorded, or already requested for a third-pass visit.
     ///
     /// Guards [`AutozngContextData::visit_queue`]: a type is queued at most once, so a cyclic
     /// interface (or a type reached through several paths) is never visited twice.
-    seen_tys: RefCell<FxHashSet<Ty>>,
+    walk_states: RefCell<FxHashMap<Ty, WalkState>>,
     /// Traits already rejected as not dyn compatible, so the error is emitted once per trait even
     /// when the crate walk and the re-export pass both reach it (see
     /// [`AutozngContext::ensure_trait_exportable`]).
@@ -283,7 +286,11 @@ impl AutozngContextData {
 
     /// Mark `ty` as seen, so it is never queued for a third-pass visit.
     fn mark_seen(&self, ty: Ty) {
-        self.seen_tys.borrow_mut().insert(ty.base_ty());
+        let ty = ty.base_ty();
+        self.walk_states
+            .borrow_mut()
+            .entry(ty)
+            .or_insert_with(|| WalkState::seen(ty));
     }
 
     fn ty_record_mut(&self, ty: Ty, span: Span) -> std::cell::RefMut<'_, TyRecord> {
@@ -476,11 +483,12 @@ impl AutozngContext {
     /// `#[autozng::emit]` when it is visited, so a type reached only through an interface still
     /// gets a `type` block.
     ///
-    /// A type is queued at most once (`seen_tys` covers both recorded types and already-requested
-    /// ones). A local type that is not visible from the crate root is **not** queued: the
-    /// generated code cannot name it, so the field / function that exposed it is skipped during
-    /// rendering instead (see `render`). Numeric primitives and the unit tuple (translated /
-    /// specialised by zngur) and types with no `.zng` spelling are likewise never queued.
+    /// A type is queued at most once (`walk_states` covers both recorded types and
+    /// already-requested ones). A local type that is not visible from the crate root is **not**
+    /// queued: the generated code cannot name it, so the field / function that exposed it is
+    /// skipped during rendering instead (see `render`). Numeric primitives and the unit tuple
+    /// (translated / specialised by zngur) and types with no `.zng` spelling are likewise never
+    /// queued.
     pub fn request_ty_visit(&self, ty: Ty) {
         let ty = ty.base_ty();
         if let Some(adt) = ty.adt_def()
@@ -491,19 +499,66 @@ impl AutozngContext {
         if !can_have_type_block(ty) {
             return;
         }
-        // `insert` returns `false` when the type was already recorded or requested.
-        if self.data.seen_tys.borrow_mut().insert(ty) {
-            self.data.visit_queue.borrow_mut().push_back(ty);
+        let request = self.root_request(
+            ty,
+            VisitReason::MethodSignature,
+            WalkPhase::InterfaceDrain,
+            Span::default(),
+        );
+        {
+            let mut states = self.data.walk_states.borrow_mut();
+            if states.contains_key(&ty) {
+                return;
+            }
+            states.insert(ty, WalkState::requested(ty, &request));
+        }
+        self.data.visit_queue.borrow_mut().push_back(request);
+    }
+
+    /// A request that starts a walk at `ty` with the configured root budgets.
+    pub fn root_request(
+        &self,
+        ty: Ty,
+        reason: VisitReason,
+        phase: WalkPhase,
+        span: Span,
+    ) -> WalkRequest {
+        let (max_walk_depth, max_external_depth, filter) = {
+            let config = self.config();
+            (
+                config.max_walk_depth,
+                config.max_external_depth,
+                config.walk_filter.clone(),
+            )
+        };
+        let ty = ty.base_ty();
+        WalkRequest {
+            ty,
+            key: ty,
+            reason,
+            phase,
+            budget: WalkBudget::root(max_walk_depth, max_external_depth),
+            requested_as: RequestedAs::Value,
+            span,
+            parent: None,
+            filter,
         }
     }
 
-    /// Pop the next type waiting for a third-pass visit, if any.
+    /// Pop the next request waiting for a third-pass visit, if any.
     ///
     /// The caller visits it as if it carried an explicit `emit` (see [`crate::analyze`]); that
     /// visit may queue further types. The queue is empty once every interface type has been
     /// recorded.
-    pub fn pop_ty_visit(&self) -> Option<Ty> {
+    pub fn pop_ty_visit(&self) -> Option<WalkRequest> {
         self.data.visit_queue.borrow_mut().pop_front()
+    }
+
+    /// Record that the interface of `key` has been visited.
+    pub fn mark_walked(&self, key: Ty) {
+        if let Some(state) = self.data.walk_states.borrow_mut().get_mut(&key) {
+            state.walked = WalkParts::all();
+        }
     }
 
     /// Queue every type exposed by `fn_def`'s signature (its inputs and its output) for a

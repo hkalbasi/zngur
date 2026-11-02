@@ -15,6 +15,153 @@
 //! the **last matching root wins**. When no root matches, the default is the inverse of the
 //! first root: `include` / `none` deny, `exclude` / `all` allow.
 
+use rustc_public::ty::Ty;
+use rustc_span::Span;
+
+/// Whether a request walks a type's interface or only declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkIntent {
+    /// Emit the interface item and walk its children.
+    Walk,
+    /// Emit an opaque block; never walk the children.
+    Declare,
+}
+
+/// Why a type was requested for the interface walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisitReason {
+    ExplicitEmit,
+    EmitItems,
+    DefaultVisibility,
+    Reexport,
+    Field,
+    MethodSignature,
+    TraitMethod,
+    EmitTrait,
+    EmitOnImplementers,
+    ConcreteMethodSignature,
+    AsGenericArg,
+}
+
+/// Which analysis pass produced a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkPhase {
+    CrateWalk,
+    Reexport,
+    InterfaceDrain,
+    ConcreteSignature,
+}
+
+/// How the requesting position uses the type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestedAs {
+    Value,
+    Ref,
+    RefMut,
+    Receiver,
+    GenericArg,
+}
+
+/// The depth budget copied into a walk. Never read from `Config` during the walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WalkBudget {
+    pub remaining_depth: usize,
+    pub remaining_external: usize,
+}
+
+impl WalkBudget {
+    pub fn root(max_walk_depth: usize, max_external_depth: usize) -> Self {
+        Self {
+            remaining_depth: max_walk_depth,
+            remaining_external: max_external_depth,
+        }
+    }
+}
+
+/// One entry in the interface visit queue.
+#[derive(Debug, Clone)]
+pub struct WalkRequest {
+    pub ty: Ty,
+    /// The region-erased identity used for dedupe and merge.
+    pub key: Ty,
+    pub reason: VisitReason,
+    pub phase: WalkPhase,
+    pub budget: WalkBudget,
+    pub requested_as: RequestedAs,
+    pub span: Span,
+    pub parent: Option<Ty>,
+    pub filter: WalkFilter,
+}
+
+bitflags::bitflags! {
+    /// Interface parts already visited for a type.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct WalkParts: u8 {
+        const VARIANTS = 0b0001;
+        const FIELDS = 0b0010;
+        const INHERENT = 0b0100;
+        const TRAIT = 0b1000;
+    }
+}
+
+/// What is known about a type reached during the walk.
+#[derive(Debug, Clone)]
+pub struct WalkState {
+    pub ty: Ty,
+    pub intent: WalkIntent,
+    pub walked: WalkParts,
+    pub best_remaining_depth: usize,
+    pub best_remaining_external: usize,
+    pub strongest_reason: VisitReason,
+    pub seen_by_value: bool,
+    pub filter: WalkFilter,
+}
+
+impl WalkState {
+    /// A type recorded directly by the crate walk: its interface is handled outside the
+    /// interface queue.
+    pub fn seen(ty: Ty) -> Self {
+        Self {
+            ty,
+            intent: WalkIntent::Walk,
+            walked: WalkParts::all(),
+            best_remaining_depth: 0,
+            best_remaining_external: 0,
+            strongest_reason: VisitReason::DefaultVisibility,
+            seen_by_value: true,
+            filter: WalkFilter::default(),
+        }
+    }
+
+    /// A declaration-only type, e.g. a lifetime-bearing signature type.
+    pub fn declare(ty: Ty, reason: VisitReason, filter: WalkFilter) -> Self {
+        Self {
+            ty,
+            intent: WalkIntent::Declare,
+            walked: WalkParts::empty(),
+            best_remaining_depth: 0,
+            best_remaining_external: 0,
+            strongest_reason: reason,
+            seen_by_value: false,
+            filter,
+        }
+    }
+
+    /// A type queued for a full interface walk.
+    pub fn requested(ty: Ty, request: &WalkRequest) -> Self {
+        Self {
+            ty,
+            intent: WalkIntent::Walk,
+            walked: WalkParts::empty(),
+            best_remaining_depth: request.budget.remaining_depth,
+            best_remaining_external: request.budget.remaining_external,
+            strongest_reason: request.reason,
+            seen_by_value: request.requested_as == RequestedAs::Value,
+            filter: request.filter.clone(),
+        }
+    }
+}
+
 /// An ordered list of filter roots. The default is `all`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalkFilter {

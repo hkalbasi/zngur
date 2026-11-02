@@ -22,7 +22,6 @@ use rustc_public::{
     CrateDef,
     mir::mono::StaticDef,
     rustc_internal::{internal, stable},
-    ty::Ty,
 };
 use rustc_span::Span;
 use rustc_trait_selection::infer::InferCtxtExt;
@@ -35,6 +34,7 @@ use crate::{
     render,
     rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
+    walk::{VisitReason, WalkPhase, WalkRequest},
 };
 use zngur_def::ZngurSpec;
 
@@ -160,18 +160,21 @@ fn visit_adt_children(adt: &rustc_public::ty::AdtDef, ctx: &AutozngContext) {
 /// A type that already has a record was handled by the crate walk (or an earlier iteration), so
 /// it is left alone. Otherwise it is recorded and — for a local ADT — its fields and inherent
 /// methods are walked, which may queue further types.
-fn visit_emitted_ty(ctx: &AutozngContext, ty: Ty) {
-    let ty = ty.base_ty();
+fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
+    let ty = request.ty;
     if ctx.is_ty_recorded(&ty) {
+        ctx.mark_walked(request.key);
         return;
     }
     let Some(adt) = ty.adt_def() else {
         // A non-ADT (`str`, a slice, a tuple, `bool`, a `dyn Trait`, ...) is just its own `type`
         // block; it has no fields or methods to walk.
         ctx.record_ty(&ty, Span::default());
+        ctx.mark_walked(request.key);
         return;
     };
     if adt.is_unstable() {
+        ctx.mark_walked(request.key);
         return;
     }
     // Record the *concrete* type (`Vec<u32>`, not the `Vec<T, A>` definition `record_adt` would
@@ -185,6 +188,7 @@ fn visit_emitted_ty(ctx: &AutozngContext, ty: Ty) {
     if walk_children {
         visit_adt_children(&adt, ctx);
     }
+    ctx.mark_walked(request.key);
 }
 
 /// Record the items this crate re-exports from *other* crates (`pub use png::*;`), as if each
@@ -209,7 +213,13 @@ fn visit_reexported_items(ctx: &AutozngContext) {
                 // path, and it already decides whether an *external* ADT's children are walked
                 // (the `implicitly_emit_external_interfaces` policy).
                 let adt = rustc_public::ty::AdtDef(stable(def_id));
-                visit_emitted_ty(ctx, adt.ty());
+                let request = ctx.root_request(
+                    adt.ty(),
+                    VisitReason::Reexport,
+                    WalkPhase::Reexport,
+                    span_of_def(adt.def_id()),
+                );
+                visit_emitted_ty(ctx, request);
             }
             DefKind::Fn => {
                 let fn_def = rustc_public::ty::FnDef(stable(def_id));
@@ -248,8 +258,8 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
     // signature) gets its own `type` block, as if it carried an explicit `emit`. Visiting it may
     // expose further types, so the queue is drained to a fixpoint; once it is empty, every
     // interface type has been recorded.
-    while let Some(ty) = ctx.pop_ty_visit() {
-        visit_emitted_ty(&ctx, ty);
+    while let Some(request) = ctx.pop_ty_visit() {
+        visit_emitted_ty(&ctx, request);
     }
 
     // eprintln!("AFTER VISIT CTX: {ctx:#?}");
