@@ -698,7 +698,7 @@ namespace {{ self.namespace }} {
       }
     {% endif %}
 
-    {{ td.render_make_box_ref(td.ty.path.name(), self.namespace, self.crate_name) }}
+    {{ td.render_ref_mut_dyn_ctor(self.namespace, self.crate_name) }}
 
     {% if let Some(cpp_heap_allocated) = td.cpp_heap_allocated %}
       inline {{ cpp_heap_allocated.cpp_type }}& cpp() {
@@ -922,7 +922,7 @@ namespace {{ self.namespace }} {
     {% endif %}
 
 
-    {{ td.render_make_box_ref_only(td.ty.path.name(), self.namespace, self.crate_name) }}
+    {{ td.render_ref_dyn_ctor(self.namespace, self.crate_name) }}
 
     {% if let Some(cpp_heap_allocated) = td.cpp_heap_allocated %}
       inline {{ cpp_heap_allocated.cpp_type }}& cpp() {
