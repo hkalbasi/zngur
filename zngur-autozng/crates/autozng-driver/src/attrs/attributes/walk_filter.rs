@@ -1,9 +1,15 @@
 //! `#[autozng::walk_filter(...)]` — select which interface items a recursive walk may visit.
 //!
 //! The attribute is accepted on the crate root (inner attribute, the default for every walk)
-//! and on emit-able items: ADTs, fields, associated items, traits, and free functions. A nested
-//! filter replaces the inherited filter for its whole subtree. An explicit `emit` /
-//! `emit_items` overrides the filter for the selected subtree (see the walk implementation).
+//! and on emit-able items: ADTs, fields, associated items, traits, free functions, and
+//! `emit_items` consts. A nested filter replaces the inherited filter for its whole subtree.
+//! An explicit `emit` / `emit_items` overrides the filter for the selected subtree (see the
+//! walk implementation).
+//!
+//! Slices and `str` additionally have a built-in method filter (`WalkFilter::
+//! default_for_inherent_methods`), because their full interfaces fan out into large amounts of
+//! iterator API. It applies while the effective filter is not explicit; a `walk_filter` on the
+//! selecting item replaces it.
 //!
 //! The attribute accepts an ordered list of roots:
 //!

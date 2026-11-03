@@ -1,10 +1,24 @@
 use rustc_public::{
-    ty::{RigidTy, TraitRef, Ty, TyConstKind, TyKind},
+    rustc_internal::{internal, stable},
+    ty::{GenericArgKind, GenericArgs, ImplDef, RigidTy, TraitRef, Ty, TyConstKind, TyKind},
     visitor::{Visitable, Visitor},
 };
 
+use crate::driver::with_ctxt;
+
 pub trait RustcPublicTyExt {
     fn base_ty(&self) -> rustc_public::ty::Ty;
+
+    /// The inherent impls of a **non-nominal** type (a slice, `str`, or a primitive).
+    ///
+    /// ADTs expose [`rustc_public::ty::AdtDef::inherent_impls`]; rustc keys every other type
+    /// through a `SimplifiedType` instead (this is what method resolution uses for primitives).
+    fn incoherent_impls(&self) -> Vec<ImplDef>;
+
+    /// The implicit generic args of a slice's inherent impl (`impl<T> [T]`) for this type's
+    /// element. `str`'s impl and non-slice types have none.
+    fn slice_element_args(&self) -> Option<GenericArgs>;
+
     #[allow(dead_code)] // collects a type's inner types; not consumed yet
     fn dependent_tys(&self) -> Vec<rustc_public::ty::Ty> {
         let mut tys = Vec::new();
@@ -41,6 +55,32 @@ impl RustcPublicTyExt for rustc_public::ty::Ty {
             ty = inner_ty
         }
         ty
+    }
+
+    fn incoherent_impls(&self) -> Vec<ImplDef> {
+        use rustc_middle::ty::fast_reject::{TreatParams, simplify_type};
+
+        with_ctxt(|ctx| {
+            let tcx = ctx.tcx;
+            let self_ty = internal(tcx, *self);
+            let Some(simplified) = simplify_type(tcx, self_ty, TreatParams::InstantiateWithInfer)
+            else {
+                return Vec::new();
+            };
+            tcx.incoherent_impls(simplified)
+                .iter()
+                .map(|&def_id| ImplDef(stable(def_id)))
+                .collect()
+        })
+    }
+
+    fn slice_element_args(&self) -> Option<GenericArgs> {
+        match self.base_ty().kind() {
+            TyKind::RigidTy(RigidTy::Slice(element)) => {
+                Some(GenericArgs(vec![GenericArgKind::Type(element)]))
+            }
+            _ => None,
+        }
     }
 
     fn dependent_tys_inner(&self, tys: &mut Vec<rustc_public::ty::Ty>) {

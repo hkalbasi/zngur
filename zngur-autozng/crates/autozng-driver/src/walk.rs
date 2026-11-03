@@ -340,6 +340,12 @@ impl WalkState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalkFilter {
     roots: Vec<WalkFilterRoot>,
+    /// Whether a `walk_filter` attribute created this filter.
+    ///
+    /// The built-in defaults — no attribute at all, and the `All` an explicit `emit` /
+    /// `emit_items` uses — leave this `false`, so the type-specific defaults for slices and
+    /// `str` still apply. A filter written by the user sets it and replaces those defaults.
+    explicit: bool,
 }
 
 /// One `all` / `none` / `include(...)` / `exclude(...)` entry.
@@ -405,13 +411,54 @@ impl Default for WalkFilter {
     fn default() -> Self {
         Self {
             roots: vec![WalkFilterRoot::All],
+            explicit: false,
         }
     }
 }
 
 impl WalkFilter {
     pub fn new(roots: Vec<WalkFilterRoot>) -> Self {
-        Self { roots }
+        Self {
+            roots,
+            explicit: true,
+        }
+    }
+
+    /// Whether a `walk_filter` attribute created this filter.
+    pub fn is_explicit(&self) -> bool {
+        self.explicit
+    }
+
+    /// The default inherent-method filter for a slice (`[T]`) or `str`.
+    ///
+    /// These interfaces are large and mostly iterator/closure API a `.zng` interface cannot use,
+    /// so only the essentials are walked by default. An explicit `walk_filter` on the selecting
+    /// item replaces this list; `emit` / `emit_items` on its own does not (it would otherwise
+    /// silently bring back the whole API).
+    pub fn default_for_inherent_methods(ty: Ty) -> Option<Self> {
+        let names: &[&str] = match ty.base_ty().kind() {
+            TyKind::RigidTy(RigidTy::Slice(_)) => &[
+                "len",
+                "is_empty",
+                "as_ptr",
+                "as_mut_ptr",
+                "contains",
+                "to_vec",
+            ],
+            TyKind::RigidTy(RigidTy::Str) => {
+                &["len", "is_empty", "from_utf8", "as_bytes", "as_bytes_mut"]
+            }
+            _ => return None,
+        };
+        Some(Self {
+            roots: vec![WalkFilterRoot::Include(
+                names
+                    .iter()
+                    .map(|name| WalkRule::Named((*name).to_owned()))
+                    .collect(),
+            )],
+            explicit: false,
+        })
     }
 
     /// Whether the walk may visit `item`.

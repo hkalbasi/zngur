@@ -58,7 +58,8 @@ pub struct FnRecord {
     /// unknown at that point, so the method cannot be instantiated until a fully concrete `Self`
     /// (say `Generic<REAL_TYPE>`) is being emitted, at which point `Generic<REAL_TYPE>::bar::<u32>`
     /// is what gets written. Either way the type is still validated against `clauses` on
-    /// emission. `None` for every item recorded by the ordinary impl / crate walk.
+    /// emission. `None` for every item recorded by the ordinary impl / crate walk. A slice's
+    /// inherent walk passes its element args, since `impl<T> [T]` is generic over them.
     pub partial_args: Option<GenericArgs>,
     /// Span of the `#[autozng::emit]` that selected this item (see [`TyRecord::span`]).
     pub span: Span,
@@ -242,6 +243,11 @@ pub struct TyRecord {
     /// Whether an explicit `emit` / `emit_items` selected this type. Explicit selection
     /// overrides the walk filter for the type's subtree.
     pub selected_explicitly: bool,
+    /// The filter an `emit_items` target gave this type (`None` for the other selection paths).
+    ///
+    /// Stored here because an enumerated type's children are walked by the later crate pass,
+    /// which no longer sees the `emit_items` attribute (`effective_filter_for_adt` reads this).
+    pub selected_walk_filter: Option<WalkFilter>,
 }
 
 /// A field selected for emission, together with the span of the `emit` that selected it.
@@ -330,6 +336,7 @@ impl AutozngContextData {
                 impls: IndexMap::default(),
                 trait_fns: IndexSet::default(),
                 selected_explicitly: false,
+                selected_walk_filter: None,
             })
         })
     }
@@ -614,22 +621,31 @@ impl AutozngContext {
             })
     }
 
-    /// The effective filter for an ADT: its own filter, else `All` for an explicit
-    /// `emit`/`emit_items`, else the crate-wide filter.
+    /// The effective filter for an ADT: its own filter, else the filter an `emit_items` target
+    /// gave it, else `All` for an explicit `emit`/`emit_items`, else the crate-wide filter.
     pub fn effective_filter_for_adt(&self, adt: &AdtDef) -> WalkFilter {
-        self.walk_filter_for(adt).unwrap_or_else(|| {
-            let explicit = self
-                .data
-                .tys
-                .borrow()
-                .get(&canonical_ty(adt.ty()))
-                .is_some_and(|record| record.selected_explicitly);
-            if explicit {
-                WalkFilter::default()
-            } else {
-                self.config().walk_filter.clone()
-            }
-        })
+        if let Some(filter) = self.walk_filter_for(adt) {
+            return filter;
+        }
+        let (explicit, selected_filter) = self
+            .data
+            .tys
+            .borrow()
+            .get(&canonical_ty(adt.ty()))
+            .map_or((false, None), |record| {
+                (
+                    record.selected_explicitly,
+                    record.selected_walk_filter.clone(),
+                )
+            });
+        if let Some(filter) = selected_filter {
+            return filter;
+        }
+        if explicit {
+            WalkFilter::default()
+        } else {
+            self.config().walk_filter.clone()
+        }
     }
 
     /// The filter of the walk in progress, or the crate-wide filter.
@@ -656,6 +672,19 @@ impl AutozngContext {
     /// Like [`AutozngContext::record_ty`], but marks an explicit `emit` / `emit_items`
     /// selection, which overrides the walk filter for the type's subtree.
     pub fn record_ty_with_reason(&self, ty: &Ty, span: Span, explicit: bool) {
+        self.record_ty_with_filter(ty, span, explicit, None);
+    }
+
+    /// Like [`AutozngContext::record_ty_with_reason`], but also stores the filter an
+    /// `emit_items` target applies to the type's subtree (see
+    /// [`TyRecord::selected_walk_filter`]).
+    pub fn record_ty_with_filter(
+        &self,
+        ty: &Ty,
+        span: Span,
+        explicit: bool,
+        filter: Option<WalkFilter>,
+    ) {
         let ty = canonical_ty(*ty);
         if let Some(adt) = ty.adt_def()
             && adt.is_unstable()
@@ -663,9 +692,10 @@ impl AutozngContext {
             return;
         }
         if self.data.have_ty(&ty) {
-            if explicit {
-                if let Some(record) = self.data.tys.borrow_mut().get_mut(&ty) {
-                    record.selected_explicitly = true;
+            if let Some(record) = self.data.tys.borrow_mut().get_mut(&ty) {
+                record.selected_explicitly |= explicit;
+                if filter.is_some() {
+                    record.selected_walk_filter = filter;
                 }
             }
             self.enqueue_concrete(ty);
@@ -673,6 +703,7 @@ impl AutozngContext {
         }
         let mut record = self.data.ty_record_mut(ty, span);
         record.selected_explicitly = explicit;
+        record.selected_walk_filter = filter;
         self.enqueue_concrete(ty);
     }
 
@@ -863,6 +894,41 @@ impl AutozngContext {
         let result = f();
         self.data.current_walk.borrow_mut().pop();
         result
+    }
+
+    /// Run `f` with `filter` as the walk filter for the subtree.
+    ///
+    /// Replaces the current walk's filter, or starts a root walk when there is none (the
+    /// `emit_items` pass runs before the crate walk). Used by an `emit_items` const whose
+    /// `walk_filter` applies to every enumerated item.
+    pub(crate) fn with_filter<R>(
+        &self,
+        owner: Ty,
+        filter: WalkFilter,
+        span: Span,
+        f: impl FnOnce() -> R,
+    ) -> R {
+        if let Some(mut walk) = self.current_walk_context() {
+            walk.filter = filter;
+            return self.with_walk(walk, f);
+        }
+        let config = self.config();
+        self.with_walk(
+            WalkContext {
+                owner,
+                phase: WalkPhase::CrateWalk,
+                budget: WalkBudget::root(
+                    config.max_walk_depth,
+                    config.max_external_depth,
+                    config.max_self_ref_depth,
+                ),
+                filter,
+                span,
+                requested_as: RequestedAs::Value,
+                ancestors: smallvec::smallvec![base_ty(owner)],
+            },
+            f,
+        )
     }
 
     fn current_walk_context(&self) -> Option<WalkContext> {
@@ -1213,13 +1279,39 @@ impl AutozngContext {
     /// Called while walking an ADT's inherent impl blocks (`analyze.rs`); the `clauses` on the
     /// inserted [`ImplRecord`] are the impl's clauses. `partial_args` is the method's own
     /// explicitly-enumerated generic args, if any (see [`FnRecord::partial_args`]); the plain
-    /// impl walk passes `None`. `span` is the span of the item that selected the method.
+    /// impl walk passes `None`, while a slice's `impl<T> [T]` passes its element args.
+    /// `span` is the span of the item that selected the method.
     pub fn record_impl_method(
         &self,
         ty: Ty,
         impl_def: ImplDef,
         fn_def: FnDef,
         partial_args: Option<GenericArgs>,
+        span: Span,
+    ) {
+        self.record_impl_method_with_selection_filter(
+            ty,
+            impl_def,
+            fn_def,
+            partial_args,
+            None,
+            span,
+        );
+    }
+
+    /// Like [`AutozngContext::record_impl_method`], but `selection_filter` additionally gates
+    /// *this method only*.
+    ///
+    /// The built-in slice / `str` defaults use this: their method names mean nothing to the
+    /// types those methods mention, so the default must not propagate to the signature types
+    /// (the enclosing walk filter still does).
+    pub fn record_impl_method_with_selection_filter(
+        &self,
+        ty: Ty,
+        impl_def: ImplDef,
+        fn_def: FnDef,
+        partial_args: Option<GenericArgs>,
+        selection_filter: Option<&WalkFilter>,
         span: Span,
     ) {
         if fn_def.is_unstable() {
@@ -1239,7 +1331,7 @@ impl AutozngContext {
             visibility: Some(visibility_kind(fn_def.visibility())),
             trait_path: None,
         };
-        if !filter.allows(&item) {
+        if !filter.allows(&item) || selection_filter.is_some_and(|filter| !filter.allows(&item)) {
             return;
         }
         // Every type the method exposes is part of the interface: queue it for a third-pass visit.

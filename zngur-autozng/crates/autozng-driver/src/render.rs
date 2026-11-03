@@ -23,8 +23,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_public::abi::FieldsShape;
 use rustc_public::rustc_internal::{internal, stable};
 use rustc_public::ty::{
-    AdtDef, AssocKind, FieldDef, FnDef, GenericArgKind, GenericArgs, GenericParamDefKind, RigidTy,
-    TraitDef, TraitRef, Ty, TyKind,
+    AdtDef, AssocKind, FieldDef, FnDef, GenericArgKind, GenericArgs, GenericParamDefKind, ImplDef,
+    RigidTy, TraitDef, TraitRef, Ty, TyKind,
 };
 use rustc_public::{CrateDef, CrateDefType, DefId};
 use rustc_span::Span;
@@ -927,7 +927,22 @@ fn build_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<RenderedMethod>
             selected.extend(records.first().copied());
         }
         for (impl_record, method) in selected {
-            if let Some(details) = build_method(ctx, record, impl_record, method, args.as_ref()) {
+            // A non-ADT's inherent impl may be generic (`impl<T> [T]`) or specialized
+            // (`impl [u8]`). The generic one is instantiated with the rendered element type; the
+            // specialized one takes no arguments (passing the element would hand a type argument
+            // to a const parameter on methods like `split_array_ref<const N>`).
+            let method_args = args.clone().or_else(|| {
+                if record.adt.is_none()
+                    && !ImplDef(impl_record.def_id).generics_of().params.is_empty()
+                {
+                    record.ty.slice_element_args()
+                } else {
+                    None
+                }
+            });
+            if let Some(details) =
+                build_method(ctx, record, impl_record, method, method_args.as_ref())
+            {
                 methods.push(RenderedMethod {
                     details,
                     def_id: method.def.def_id(),

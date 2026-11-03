@@ -290,6 +290,43 @@ pub struct Big {
 A `stack` or `conservative` value that is wrong is a compile error,
 so Autozng checks the numbers for you.
 
+## `walk_filter`
+
+Selects which of a type's fields, variants and methods the recursive interface walk exports.
+
+The attribute is accepted on the crate root (the default for every walk) and on emit-able items
+(types, fields, methods, traits, free functions and `emit_items` consts).
+A nested filter replaces the inherited one for its whole subtree.
+It takes an ordered list of roots:
+
+```rust
+#![autozng::walk_filter(exclude(TraitMethods))]
+#[autozng::walk_filter(include(Fields, InherentMethods))]
+#[autozng::walk_filter(include(Named("value"), Named("get")))]
+```
+
+Each matching root sets the verdict (`all` / `include` allow, `none` / `exclude` deny), and the
+last matching root wins. The rules are `Fields`, `Variants`, `InherentMethods`,
+`TraitMethods`, `Named("...")`, `Receiver(Value | Ref | RefMut | Static)` and
+`Visibility(Public | PublicInternal | Private)`.
+
+Slices and `str` have a default filter, because their full interfaces pull in large amounts of
+iterator API that a C++ caller rarely needs:
+
+- `[T]` — `len`, `is_empty`, `as_ptr`, `as_mut_ptr`, `contains`, `to_vec`.
+- `str` — `len`, `is_empty`, `from_utf8`, `as_bytes`, `as_bytes_mut`.
+
+An explicit `walk_filter` replaces that list, while a bare `emit` or `emit_items` keeps it.
+This applies to types enumerated by `emit_items` too:
+
+```rust
+#[autozng::emit_items]
+#[autozng::walk_filter(include(Named("chunks")))]
+const _: [&[u8]; 0] = [];
+```
+
+The slice above exports only `chunks` instead of the six defaults.
+
 ## `policy`
 
 Sets a policy for the whole crate. It is a crate-level attribute:

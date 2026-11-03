@@ -22,21 +22,22 @@ use rustc_public::{
     CrateDef,
     mir::mono::StaticDef,
     rustc_internal::{internal, stable},
+    ty::{AssocKind, RigidTy, TyKind},
 };
 use rustc_span::Span;
 use rustc_trait_selection::infer::InferCtxtExt;
 
 use crate::{
-    attrs::{AttrCollectionExt, AutozngAttrsExt},
+    attrs::{AttrCollectionExt, AutozngAttrsExt, attributes::emit::EmitAction},
     ctx::AutozngContext,
     driver::{AnalyzeReport, with_ctxt},
     error::span_of_def,
     render,
-    rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt},
+    rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt, VisibilityExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
     walk::{
-        RequestedAs, VisitReason, WalkBudget, WalkContext, WalkParts, WalkPhase, WalkRequest,
-        base_ty,
+        RequestedAs, VisitReason, WalkBudget, WalkContext, WalkFilter, WalkParts, WalkPhase,
+        WalkRequest, base_ty,
     },
 };
 use zngur_def::ZngurSpec;
@@ -179,6 +180,62 @@ fn visit_adt_children(adt: &rustc_public::ty::AdtDef, ctx: &AutozngContext) {
     }
 }
 
+/// Record the inherent methods of a non-ADT type (`[T]`, `str`).
+///
+/// `AdtDef::inherent_impls` cannot see these; rustc keys them by `SimplifiedType` (see
+/// [`RustcPublicTyExt::incoherent_impls`]). Every method is recorded onto the *rendered* type
+/// (`[u8]`, not the impl's `[T]`). Without an explicit `walk_filter`, only the built-in
+/// essentials are selected (see [`WalkFilter::default_for_inherent_methods`]); the walk budget
+/// still caps the signature types, and unsupported methods are warn-and-skipped.
+fn visit_incoherent_children(ty: &rustc_public::ty::Ty, ctx: &AutozngContext) {
+    if !matches!(
+        ty.base_ty().kind(),
+        TyKind::RigidTy(RigidTy::Slice(_) | RigidTy::Str)
+    ) {
+        return;
+    }
+    // These interfaces are large and mostly irrelevant to a C++ caller. Unless the user wrote a
+    // `walk_filter` for this subtree, walk only the built-in essentials; the filter gates the
+    // methods themselves, not the types their signatures mention.
+    let selection_filter = (!ctx.current_filter().is_explicit())
+        .then(|| WalkFilter::default_for_inherent_methods(*ty))
+        .flatten();
+    for impl_def in ty.incoherent_impls() {
+        // `impl<T> [T]` is generic over the element; `impl [u8]`/`impl str` are not. Passing the
+        // element args lets `record_impl_method` queue the *instantiated* signature types (the
+        // identity signature's `T` would otherwise be silently skipped).
+        let impl_args = if impl_def.generics_of().params.is_empty() {
+            None
+        } else {
+            ty.slice_element_args()
+        };
+        for assoc_item in impl_def.associated_items() {
+            let AssocKind::Fn { .. } = &assoc_item.kind else {
+                continue;
+            };
+            let def_id = assoc_item.def_id.def_id();
+            let span = span_of_def(def_id);
+            // A private inherent method (e.g. `str`'s internal helpers) is not reachable from the
+            // generated code; the normal impl walk would skip it silently.
+            if !EmitAction::Default.emit_for_visibility_or_warn(
+                assoc_item.visibility(),
+                ctx.config().default_emit_policy,
+                span,
+            ) {
+                continue;
+            }
+            ctx.record_impl_method_with_selection_filter(
+                *ty,
+                impl_def,
+                rustc_public::ty::FnDef(def_id),
+                impl_args.clone(),
+                selection_filter.as_ref(),
+                span,
+            );
+        }
+    }
+}
+
 /// Visit a type that an emitted interface exposed (see [`AutozngContext::request_ty`]), as
 /// if it carried an explicit `#[autozng::emit]`.
 ///
@@ -209,10 +266,12 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
     ctx.with_walk(walk, || {
         let Some(adt) = ty.adt_def() else {
             // A non-ADT (`str`, a slice, a tuple, `bool`, a `dyn Trait`, ...) is just its own
-            // `type` block; it has no fields or methods to walk.
+            // `type` block. A slice or `str` also exposes its inherent methods (which rustc
+            // keys by `SimplifiedType`, not by an `AdtDef`).
             if !ctx.is_ty_recorded(&ty) {
                 ctx.record_ty(&ty, Span::default());
             }
+            visit_incoherent_children(&ty, ctx);
             return;
         };
         if adt.is_unstable() {

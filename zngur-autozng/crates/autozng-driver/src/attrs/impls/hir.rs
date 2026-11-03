@@ -7,6 +7,7 @@
 
 use rustc_public::CrateDef;
 use rustc_public::rustc_internal::stable;
+use rustc_public::ty::{RigidTy, TyKind};
 use rustc_span::Span;
 
 use rustc_middle::ty::TypeVisitableExt;
@@ -18,13 +19,16 @@ use crate::{
             emit::{EmitAction, EmitTarget},
             emit_items::EmitItemsTarget,
             rename::RenameTarget,
+            walk_filter::WalkFilterTarget,
         },
         macros::impl_attr_target,
     },
     ctx::AutozngContext,
     driver::with_ctxt,
     error::{emit_warning_for_span, warn_private_item_skipped},
+    metadata::WalkFilterRecord,
     rustc_ext::{FnDefExt, RustcInternalEx, RustcPublicTyExt, Visibility, VisibilityExt},
+    walk::{RequestedAs, VisitReason, WalkFilter},
 };
 
 impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
@@ -32,41 +36,77 @@ impl EmitItemsTarget for crate::rustc_ext::HirConstItem {
         // The recorded span is the `const` item itself (the item tagged by `emit_items`): the
         // enumerated types have no source span of their own.
         let span = self.span();
-        // record any relevant inner type in the `const`
-        for ty in self.inner_emit_types() {
-            // With `emit_traits = true` the enumerated items are concrete trait instantiations
-            // rather than types: a generic trait is only representable in `.zng` once all of its
-            // type parameters are known, so every trait object in an item names its principal
-            // trait. The `dyn` object itself is not then recorded as a type.
-            if emit_traits {
-                let traits = ty.trait_objects();
-                if !traits.is_empty() {
-                    for trait_ref in traits {
-                        record_trait_instantiation(trait_ref, span, ctx);
+        // A `walk_filter` on the const applies to every enumerated item. It is stored on the
+        // `emit_items` item (attributes are visited before `emit_items`, see
+        // `attrs::process_attrs`), and selected here so the item's children inherit it.
+        let filter = ctx.walk_filter_for(self);
+        let emit = |filter: Option<WalkFilter>| {
+            // record any relevant inner type in the `const`
+            for ty in self.inner_emit_types() {
+                // With `emit_traits = true` the enumerated items are concrete trait
+                // instantiations rather than types: a generic trait is only representable in
+                // `.zng` once all of its type parameters are known, so every trait object in an
+                // item names its principal trait. The `dyn` object itself is not then recorded as
+                // a type.
+                if emit_traits {
+                    let traits = ty.trait_objects();
+                    if !traits.is_empty() {
+                        for trait_ref in traits {
+                            record_trait_instantiation(trait_ref, span, ctx);
+                        }
+                        continue;
                     }
-                    continue;
+                }
+                // A slice / `str` has no ADT to walk, so nothing else would record its methods.
+                // Queue it explicitly; the walk then applies the default (or the user's) filter.
+                // Queue before recording: recording marks the type as already seen, which would
+                // otherwise drop the request.
+                if ty.adt_def().is_none()
+                    && matches!(
+                        ty.base_ty().kind(),
+                        TyKind::RigidTy(RigidTy::Slice(_) | RigidTy::Str)
+                    )
+                {
+                    ctx.request_ty(ty, VisitReason::EmitItems, RequestedAs::Value, span);
+                }
+                ctx.record_ty_with_filter(&ty, span, true, filter.clone());
+            }
+
+            // visit any let bindings inside the `const`'s block
+            for stmt in self.body_let_bind_stmts(emit_traits, filter.clone()) {
+                // A `let` binding has no `DefId` of its own, so its attribute key resolves to the
+                // enclosing `const`: `autozng_attrs` therefore returns the *const's* attributes
+                // (forwarding any child-targeted ones onto the binding). The binding's own
+                // implicit `Emit`/`Skip` action is applied separately, since the `DefId`-keyed
+                // cache never computes it for a `let`.
+                let attrs = stmt.autozng_attrs();
+                attrs.visit(&stmt, ctx);
+                if let Some(implicit) = stmt.implicit_emit_attr() {
+                    implicit.visit(&stmt, ctx);
                 }
             }
-            ctx.record_ty_with_reason(&ty, span, true);
-        }
-
-        // visit any let bindings inside the `const`'s block
-        for stmt in self.body_let_bind_stmts(emit_traits) {
-            // A `let` binding has no `DefId` of its own, so its attribute key resolves to the
-            // enclosing `const`: `autozng_attrs` therefore returns the *const's* attributes
-            // (forwarding any child-targeted ones onto the binding). The binding's own implicit
-            // `Emit`/`Skip` action is applied separately, since the `DefId`-keyed cache never
-            // computes it for a `let`.
-            let attrs = stmt.autozng_attrs();
-            attrs.visit(&stmt, ctx);
-            if let Some(implicit) = stmt.implicit_emit_attr() {
-                implicit.visit(&stmt, ctx);
-            }
+        };
+        if let Some(filter) = filter {
+            ctx.with_filter(self.ty, filter.clone(), span, || emit(Some(filter)));
+        } else {
+            emit(None);
         }
     }
 }
 
-impl_attr_target!(crate::rustc_ext::HirConstItem, EmitItemsTarget);
+impl WalkFilterTarget for crate::rustc_ext::HirConstItem {
+    fn apply_walk_filter(&self, filter: WalkFilter, span: Span, ctx: &AutozngContext) {
+        ctx.with_metadata_mut(self, |mut metadata| {
+            metadata.walk_filter = Some(WalkFilterRecord { filter, span });
+        });
+    }
+}
+
+impl_attr_target!(
+    crate::rustc_ext::HirConstItem,
+    EmitItemsTarget,
+    WalkFilterTarget
+);
 
 /// Record one trait object's principal trait as a concrete export target.
 ///
@@ -129,7 +169,18 @@ impl EmitTarget for crate::rustc_ext::HirLetBindStmt {
         let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, generics)) =
             self.ty.kind()
         else {
-            ctx.record_ty_with_reason(&self.ty, self.emit_span(), true);
+            // A slice / `str` has no ADT to walk, so queue its interface explicitly (see
+            // `EmitItemsTarget::emit`). Queue before recording: recording marks the type as
+            // already seen, which would otherwise drop the request.
+            if self.ty.adt_def().is_none()
+                && matches!(
+                    self.ty.base_ty().kind(),
+                    TyKind::RigidTy(RigidTy::Slice(_) | RigidTy::Str)
+                )
+            {
+                ctx.request_ty(self.ty, VisitReason::EmitItems, RequestedAs::Value, span);
+            }
+            ctx.record_ty_with_filter(&self.ty, span, true, self.walk_filter.clone());
             return true;
         };
 

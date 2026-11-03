@@ -1,0 +1,16 @@
+type ::std::slice::Chunks<u8> {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type [u8] {
+    wellknown_traits(?Sized, Debug);
+
+    safe fn chunks(&self, usize) -> ::std::slice::Chunks<u8>;
+}
+
+type crate::Widget {
+    #layout(size = 0, align = 1);
+
+    safe fn bytes(&self) -> &[u8];
+}

@@ -38,6 +38,12 @@ pub struct HirLetBindStmt {
     /// `#[autozng::emit_items]` const carries `emit_traits = true` (see
     /// [`crate::attrs::attributes::emit_items::EmitItemsTarget`]).
     pub emit_traits: bool,
+    /// The enclosing `emit_items` const's `walk_filter`, if any.
+    ///
+    /// The binding inherits the const's attributes, but its own metadata key is the named
+    /// function's `DefId` (so `rename` reaches it); storing the filter on the binding keeps the
+    /// enumerated type's later walk under the const's filter.
+    pub walk_filter: Option<crate::walk::WalkFilter>,
 }
 
 impl IntoMetadataKey for HirLetBindStmt {
@@ -99,7 +105,11 @@ impl HirConstItem {
         with_ctxt(|ctx| ctx.tcx.def_span(self.owner_id.def_id))
     }
 
-    pub fn body_let_bind_stmts(&self, emit_traits: bool) -> Vec<HirLetBindStmt> {
+    pub fn body_let_bind_stmts(
+        &self,
+        emit_traits: bool,
+        walk_filter: Option<crate::walk::WalkFilter>,
+    ) -> Vec<HirLetBindStmt> {
         with_ctxt(|ctx| {
             let tcx = ctx.tcx;
             if let Some(rustc_hir::Expr {
@@ -143,6 +153,7 @@ impl HirConstItem {
                                     hir_id: stmt.hir_id,
                                     ty,
                                     emit_traits,
+                                    walk_filter: walk_filter.clone(),
                                 }
                             })
                     } else {
