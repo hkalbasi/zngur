@@ -78,7 +78,7 @@ pub fn build_spec(ctx: &AutozngContext) -> ZngurSpec {
 
     // One `trait ... { .. }` block per recorded trait, keyed by its `RustTrait` representation
     // (the `Fn*` family is collapsed; see `rust_trait_for`). Discovery order is deterministic,
-    // but sort by the key's spelling for stable output like `types`/`funcs`.
+    // but sort by the key's string form for stable output like `types`/`funcs`.
     let mut traits: Vec<(RustTrait, ZngurTrait)> =
         ctx.trait_records().iter().filter_map(build_trait).collect();
     traits.sort_by_cached_key(|(key, _)| key.to_string());
@@ -148,7 +148,7 @@ fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec
     for arg in trait_ref.args().0.iter().skip(1) {
         match arg {
             // Lifetimes are dropped (rustc re-infers them); a const argument has no IDL
-            // spelling, so the whole trait is dropped.
+            // representation, so the whole trait is dropped.
             GenericArgKind::Lifetime(_) => {}
             GenericArgKind::Type(ty) => {
                 generics.push(map_rustc_public_ty_to_zngur(*ty).ok()?);
@@ -159,8 +159,8 @@ fn concrete_trait_generics(trait_ref: &rustc_public::ty::TraitRef) -> Option<Vec
     Some(generics)
 }
 
-/// The trait's full path as IDL path segments: anything this crate can name from its root is
-/// spelled `crate::...`, an external crate keeps its own name (the printer adds the leading `::`).
+/// The trait's full path as IDL path segments: anything this crate can name from its root uses
+/// the `crate::...` prefix, an external crate keeps its own name (the printer adds the leading `::`).
 fn trait_path(def: TraitDef) -> Vec<String> {
     visible_path(&def)
 }
@@ -393,7 +393,14 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
         .filter(|_| walk_fields)
         .filter(|_| by_value)
         .filter(|adt| adt.kind().is_struct())
-        .filter(|adt| adt.is_exhaustive())
+        // A struct's `#[non_exhaustive]` is on its field list, not on a variant list; the struct's
+        // sole variant records it.
+        .filter(|adt| {
+            adt.variants()
+                .into_iter()
+                .next()
+                .is_none_or(|variant| variant.is_exhaustive())
+        })
         .filter(|_| !matches!(&layout, Some(LayoutPolicy::OnlyByRef)))
         .and_then(|adt| {
             let all_fields = adt

@@ -2,8 +2,8 @@
 //!
 //! The `.zng` names a type by the path the generated code uses, which is the path it is
 //! *reachable* by, not where it happens to be defined. A crate that keeps its modules private and
-//! re-exports its API (`mod common; pub use common::*;`) must be spelled the way the re-export
-//! exposes it (`crate::ColorType`), not by its definition path (`crate::common::ColorType`).
+//! re-exports its API (`mod common; pub use common::*;`) must use the path the re-export defines
+//! (`crate::ColorType`), not its definition path (`crate::common::ColorType`).
 //!
 //! Only public `pub use` re-exports are considered; when several expose the same definition, the
 //! shortest path wins.
@@ -16,6 +16,7 @@ use rustc_hir::{Item, ItemKind, UseKind};
 use rustc_middle::ty::TyCtxt;
 use rustc_public::CrateDef;
 use rustc_span::def_id::LocalModId;
+use rustc_span::symbol::kw;
 
 use crate::driver::with_ctxt;
 
@@ -103,7 +104,7 @@ pub(crate) fn compute(tcx: TyCtxt<'_>) -> VisiblePaths {
 /// The `.zng` path segments for `def`.
 ///
 /// A definition the analysed crate can name from its own root — a local one, or an external one a
-/// public `pub use` re-exports — is spelled `crate::...`: Zngur's generated code is compiled
+/// public `pub use` re-exports — is prefixed with `crate::`: Zngur's generated code is compiled
 /// inside the crate (`mod generated;`), so that is the path it uses. A definition the crate
 /// cannot name keeps its own crate's path, which the printer renders with a leading `::`.
 pub(crate) fn visible_path(def: &impl CrateDef) -> Vec<String> {
@@ -121,6 +122,77 @@ pub(crate) fn visible_path(def: &impl CrateDef) -> Vec<String> {
         path[0] = "crate".to_string();
     }
     path
+}
+
+/// The path the generated code uses for `def`, or `None` when it has no publicly reachable path.
+///
+/// Local definitions and definitions this crate re-exports use the `crate::...` prefix. Another
+/// crate's definition uses its public path in that crate (`::std::string::String`).
+/// External crates commonly keep their modules private and re-export their API
+/// (`mod decoder; pub use decoder::Reader;`); [`external_public_path`] follows those re-exports.
+pub(crate) fn resolvable_path(def: &impl CrateDef) -> Option<Vec<String>> {
+    let visible = with_ctxt(|ctx| {
+        ctx.visible_path(rustc_public::rustc_internal::internal(
+            ctx.tcx,
+            def.def_id(),
+        ))
+    });
+    if let Some(mut path) = visible {
+        if !path.is_empty() {
+            path[0] = "crate".to_string();
+        }
+        return Some(path);
+    }
+    if def.krate().is_local {
+        let mut path: Vec<String> = def.name().split("::").map(Into::into).collect();
+        if !path.is_empty() {
+            path[0] = "crate".to_string();
+        }
+        return Some(path);
+    }
+    external_public_path(def)
+}
+
+/// The publicly reachable path of an external definition, as `.zng` segments.
+///
+/// Derived from rustc's `visible_parent_map`: the same breadth-first walk the compiler uses to
+/// print a path that can actually be imported. It starts at the crates in this crate's extern
+/// prelude and only descends into public items, so:
+///
+/// - a type defined in a private module but re-exported publicly keeps the public path;
+/// - a type in a private module with no re-export has no entry (it cannot be named);
+/// - a type from a transitive-only dependency has no entry (the generated code cannot name it).
+///
+/// The name under each visible parent is read from that module's public children, so a renamed
+/// re-export keeps the exported name.
+fn external_public_path(def: &impl CrateDef) -> Option<Vec<String>> {
+    with_ctxt(|ctx| {
+        let tcx = ctx.tcx;
+        let def_id = rustc_public::rustc_internal::internal(tcx, def.def_id());
+        let visible_parents = tcx.visible_parent_map(());
+        let mut segments = Vec::new();
+        let mut current = def_id;
+        loop {
+            if matches!(
+                tcx.def_key(current).disambiguated_data.data,
+                rustc_hir::definitions::DefPathData::CrateRoot
+            ) {
+                segments.push(tcx.crate_name(current.krate).to_string());
+                break;
+            }
+            let parent = *visible_parents.get(&current)?;
+            let name = tcx
+                .module_children(parent)
+                .iter()
+                .filter(|child| child.res.opt_def_id() == Some(current))
+                .find(|child| child.vis.is_public() && child.ident.name != kw::Underscore)
+                .map(|child| child.ident.name.to_string())?;
+            segments.push(name);
+            current = parent;
+        }
+        segments.reverse();
+        Some(segments)
+    })
 }
 
 /// The definitions in `paths` that live in *another* crate, in a deterministic order.

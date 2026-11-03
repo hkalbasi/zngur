@@ -23,7 +23,7 @@ use rustc_public::{
 use zngur_def::{PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType};
 
 use crate::driver::with_ctxt;
-use crate::rustc_ext::{Visibility, VisibilityExt, visible_path};
+use crate::rustc_ext::{Visibility, VisibilityExt, resolvable_path};
 
 const PATH_SEP: &str = "::";
 
@@ -90,8 +90,8 @@ pub(crate) fn map_rustc_public_ty_to_zngur_uncached(
 ) -> Result<RustType, MapTypeError> {
     match ty.kind() {
         // An unresolved associated-type projection or a higher-ranked variable has no `.zng`
-        // spelling; drop the item silently (the concrete instantiation already happened where
-        // possible, see `render::build_method`).
+        // representation; drop the item silently (the concrete instantiation already happened
+        // where possible, see `render::build_method`).
         TyKind::Alias(..) | TyKind::Bound(..) => Err(MapTypeError::SkipSilently),
         TyKind::RigidTy(rty) => match rty {
             RigidTy::Bool => Ok(RustType::Primitive(PrimitiveRustType::Bool)),
@@ -151,9 +151,15 @@ pub(crate) fn map_rustc_public_ty_to_zngur_uncached(
                     ))
                 } else {
                     // The path the type is *visible* by (a `pub use` re-export path when the crate
-                    // exposes it that way), not its definition path; `visible_path` spells a path
-                    // the crate root can name as `crate::...`.
-                    let path = visible_path(&adt_def);
+                    // exposes it that way), not its definition path; `resolvable_path` returns a
+                    // path the crate root can name with a `crate::` prefix, and follows an
+                    // external crate's own re-exports for its `::crate::...` form.
+                    let path = resolvable_path(&adt_def).ok_or_else(|| {
+                        MapTypeError::unsupported(format!(
+                            "type `{}` has no publicly reachable path",
+                            adt_def.name()
+                        ))
+                    })?;
 
                     let rustc_generic_args =
                         rustc_public::rustc_internal::internal(tcx, &generics_args);
@@ -220,7 +226,12 @@ pub(crate) fn map_rustc_public_ty_to_zngur_uncached(
                     let mut named_generics: Vec<(String, RustType)> = Vec::new();
                     let mut auto_traits = Vec::new();
 
-                    let path = visible_path(&trait_ref.def_id);
+                    let path = resolvable_path(&trait_ref.def_id).ok_or_else(|| {
+                        MapTypeError::unsupported(format!(
+                            "trait `{}` has no publicly reachable path",
+                            trait_ref.def_id.name()
+                        ))
+                    })?;
                     // The trait's own generic arguments. `ExistentialTraitRef::generic_args`
                     // excludes `Self` (the object type), which is not a `.zng` argument.
                     let generics = trait_ref

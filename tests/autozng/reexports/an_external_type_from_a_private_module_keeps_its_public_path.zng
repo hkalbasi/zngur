@@ -1,0 +1,6 @@
+type ::std::io::Error {
+    #layout(size = 8, align = 8);
+    wellknown_traits(Debug);
+}
+
+safe fn crate::fail() -> ::std::io::Error;

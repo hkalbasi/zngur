@@ -14,7 +14,9 @@ pub(crate) use convert::{RustcInternalEx, stable_trait};
 pub(crate) use funcs::{FnDefExt, GetAssocInfoExt};
 pub(crate) use generics::{ClausesOfExt, GenericClauses};
 pub(crate) use hir::{HirConstBodyExt, HirConstItem, HirItemExt, HirLetBindStmt, HirTyAlias};
-pub(crate) use reexports::{VisiblePaths, compute, external_reexports, visible_path};
+pub(crate) use reexports::{
+    VisiblePaths, compute, external_reexports, resolvable_path, visible_path,
+};
 pub(crate) use stability::StabilityExt;
 pub(crate) use traits::{
     EmitForExt, ImplDefExt, WellKnownTrait, WellKnownTraitsExt, fn_trait_name,

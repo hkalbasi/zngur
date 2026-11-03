@@ -1,0 +1,8 @@
+type crate::Info {
+    #layout(size = 8, align = 4);
+
+    field width (offset = 0, type = u32);
+    field height (offset = 4, type = u32);
+
+    safe fn new(u32, u32) -> crate::Info;
+}
