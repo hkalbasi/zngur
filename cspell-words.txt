@@ -34,6 +34,7 @@ ctxt
 Ctxt
 CXXFLAGS
 decltype
+dedupe
 delem
 deinit
 depfile
@@ -66,6 +67,7 @@ LIBPATH
 librustc
 libyourcrate
 lwasi
+materialised
 mdformat
 memcpy
 millis
@@ -81,6 +83,7 @@ noexcept
 normalisation
 normalise
 nmake
+nologo
 ntdll
 nullopt
 nullptr
@@ -97,6 +100,7 @@ recognise
 recognised
 refmut
 relpath
+Renameable
 repr
 respan
 respanned
@@ -120,6 +124,7 @@ serde
 Sess
 sess
 SIGSEGV
+smallvec
 specialised
 specialises
 sptl
@@ -129,6 +134,7 @@ staticlib
 strs
 strvec
 stmnt
+testdata
 thiserror
 tokenstream
 turbofish
@@ -151,6 +157,9 @@ wasi
 WASIFLAGS
 wasip
 wasmtime
+Werror
+worklist
+worklists
 xshell
 xtask
 Zeroable
