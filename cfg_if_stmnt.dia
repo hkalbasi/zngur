@@ -1,0 +1,13 @@
+{
+  [ 
+    "cfg!("
+    [ 'key' ["." 'value']?]#`The Scrutinee`
+    [ "=" 'pattern-expr'#`Pattern` ]? 
+    ")"
+  ]#`cfg-expr`
+}
+{
+ ["#if" 'cfg-expr' ["{" 'item'? * `repeat` "}"]#`Item Block`],
+ ["#else if" 'cfg-expr' ["{" 'item'? * `repeat` "}"]#`Item Block` ]? * `repeat`,
+ ["#else" ["{" 'item'? * `repeat` "}"]#`Item Block` ]?  
+}

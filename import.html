@@ -1,0 +1,358 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Import - Zngur</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Zngur</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/hkalbasi/zngur" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="merging-originally-called-import"><a class="header" href="#merging-originally-called-import">Merging (originally called Import)</a></h1>
+<p>The <code>merge</code> directive allows you to include type definitions and other declarations
+from other <code>.zng</code> files into your main specification.
+Types, traits, and modules can appear multiple times across the transitive set of imported files,
+and their content is merged together.</p>
+<h2 id="syntax"><a class="header" href="#syntax">Syntax</a></h2>
+<pre><code class="language-zng">merge "./path/to/file.zng";
+</code></pre>
+<h2 id="path-resolution"><a class="header" href="#path-resolution">Path Resolution</a></h2>
+<p>Merge paths are resolved relative to the directory containing the current <code>.zng</code> file:</p>
+<ul>
+<li><code>merge "./types.zng";</code></li>
+</ul>
+<p>At this time, absolute paths are not supported.
+Importing paths without a leading specifier (e.g. <code>import "foo/bar.zng";</code>)
+is reserved for a possible future extension.</p>
+<p>Above, "the current .zng file" refers to the <code>.zng</code> file being parsed,
+which is not necessarily the top-level <code>.zng</code> file passed to <code>zngur</code> on the command line.</p>
+<h2 id="behavior"><a class="header" href="#behavior">Behavior</a></h2>
+<p>When a merge statement is processed:</p>
+<ol>
+<li>The parser reads and parses the imported file</li>
+<li>All declarations from the imported file are <em>merged</em> into the current specification</li>
+<li>Imported content becomes available as if it were defined in the importing file</li>
+<li>Merge processing happens recursively - imported files can themselves contain merge statements</li>
+</ol>
+<h2 id="merging-algorithm"><a class="header" href="#merging-algorithm">Merging Algorithm</a></h2>
+<p>Zngur's merge algorithm attempts to compute the union of each set of declarations
+which share an identity (e.g. every <code>type crate::Inventory { ... }</code> across all imported files).
+Duplicates are ignored, but contradictions will raise a compiler error.
+For example, if two different <code>type crate::Inventory { ... }</code> declarations
+both specify <code>wellknown_traits(Debug);</code>, parsing will succeed.
+However, if they specify different layouts, an error will be reported.</p>
+<h2 id="convert_panic_to_exception-constraints"><a class="header" href="#convert_panic_to_exception-constraints"><code>#convert_panic_to_exception</code> constraints</a></h2>
+<p><code>#convert_panic_to_exception</code> may only appear in a top-level <code>.zng</code> file.
+This is an application-level decision that should not be determined by dependent libraries.</p>
+<h2 id="example"><a class="header" href="#example">Example</a></h2>
+<p><strong>main.zng:</strong></p>
+<pre><code class="language-zng">merge "./core_types.zng";
+merge "./iterators.zng";
+
+// May only appear in the top-level file.
+#convert_panic_to_exception
+
+type MyApp {
+    #layout(size = 8, align = 8);
+
+    fn run(&amp;self) -&gt; i32;
+}
+</code></pre>
+<p><strong>core_types.zng:</strong></p>
+<pre><code class="language-zng">mod ::std {
+    type option::Option&lt;i32&gt; {
+        #layout(size = 8, align = 4);
+        wellknown_traits(Copy);
+
+        variant None { }
+        variant Some {
+            field 0 (offset = auto, type = i32);
+        }
+
+        fn unwrap(self) -&gt; i32;
+    }
+
+    mod vec {
+        type Vec&lt;i32&gt; {
+            #layout(size = 24, align = 8);
+            fn new() -&gt; Vec&lt;i32&gt;;
+            fn push(&amp;mut self, i32);
+        }
+    }
+}
+</code></pre>
+<p><strong>iterators.zng:</strong></p>
+<pre><code class="language-zng">mod ::std {
+    mod vec {
+        type Vec&lt;i32&gt; {
+            fn into_iter(self) -&gt; ::std::vec::IntoIter&lt;i32&gt;;
+        }
+    }
+}
+</code></pre>
+<p>In this example, <code>main.zng</code> imports type definitions from two separate files,
+allowing for better organization of the zngur specification.</p>
+<p>Notice that <code>iterators.zng</code> is able to "reopen" the <code>::std::vec::Vec&lt;i32&gt;</code> specification
+and extend it with a single function, <code>into_iter</code>.
+It does not need to respecify the <code>#layout</code> because that is already declared in <code>core_types.zng</code>.</p>
+<h1 id="import"><a class="header" href="#import">Import</a></h1>
+<p>On top of <code>zngur</code>s <code>merge</code> syntax which enables better file organization,
+there's a different flavour of imports that enables zngur bridges to be split
+across multiple compilation units (i.e. Rust crate and C++ static libraries).</p>
+<h2 id="syntax-1"><a class="header" href="#syntax-1">Syntax</a></h2>
+<pre><code class="language-zng">import "./path/to/module.zng";
+</code></pre>
+<h2 id="path-resolution-1"><a class="header" href="#path-resolution-1">Path Resolution</a></h2>
+<p>Path resolution is identical to regular <code>merge</code>s.</p>
+<h2 id="behavior-1"><a class="header" href="#behavior-1">Behavior</a></h2>
+<p>The direct implication of an <code>import</code> is that the generated <code>.h</code> will add
+an <code>#include "./path/to/module.zng.h"</code> (A follow up feature may allow this path
+to be user-defined). This enables you to use the generated types from the
+external module without regenerating them in this zngur module.</p>
+<h2 id="example-1"><a class="header" href="#example-1">Example</a></h2>
+<p><strong>main.zng:</strong></p>
+<pre><code class="language-zng">import "./my_types.zng";
+
+// May only appear in the top-level file per module. Both these files are top level modules.
+#convert_panic_to_exception
+
+type MyApp {
+    #layout(size = 8, align = 8);
+
+    // Note how I have to assume the crate name of `my_types.zng` is my_types.
+    fn run(&amp;self) -&gt; ::my_types::MyOption&lt;i32&gt;;
+}
+</code></pre>
+<p><strong>my_types.zng:</strong></p>
+<pre><code class="language-zng">// May only appear in the top-level file per module. Both these files are top level modules.
+#convert_panic_to_exception
+
+mod ::crate {
+    type MyOption&lt;i32&gt; {
+        #layout(size = 8, align = 4);
+        wellknown_traits(Copy);
+
+        variant None { }
+        variant Some {
+            field 0 (offset = auto, type = i32);
+        }
+
+        fn unwrap(self) -&gt; i32;
+    }
+}
+</code></pre>
+<h2 id="note-build-system-integration"><a class="header" href="#note-build-system-integration">Note: Build System Integration</a></h2>
+<p>This feature requires significantly more involvement with the build system
+but it's necessary to scale to larger projects that span multiple crates, C++
+compilation units, and binaries. To use this feature, your build system should
+be able to manage the dependencies between the two modules and guarantee that
+it will generate the files required in the right place.</p>
+<p>In particular</p>
+<ul>
+<li>Each module should generate its header file in the same directory as the top
+level <code>.zng</code> and with the exact same name as the <code>.zng</code> with a <code>.h</code> extension
+added (e.g. <code>a/b/c.zng</code> -&gt; <code>a/b/c.zng.h</code>)</li>
+<li>Exactly one Rust static library must be generated and linked to the final
+binary and it should contain all the symbols needed by all the transitive zngur
+bridges</li>
+<li>Every generated header and <code>zngur.h</code> header must use the same top level namespace.
+can leave the default "rust" namespace or set your own</li>
+<li>When you import a module to your zngur definition, you have to refer to the types exported
+from that module using their fully qualified name, which means you must know the
+crate name that is utilized in the generated module and this should be constant throughout
+your project (i.e. no aliasing!).</li>
+</ul>
+<p>Some build systems may be able to automate this more easily than others but any specific
+build system integration is outside the scope of this chapter.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="call_cpp_from_rust/trait_object.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="conditional_compilation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="call_cpp_from_rust/trait_object.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="conditional_compilation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

@@ -1,0 +1,324 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Conditional Compilation - Zngur</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Zngur</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/hkalbasi/zngur" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="conditional-compilation"><a class="header" href="#conditional-compilation">Conditional Compilation</a></h1>
+<p>Zngur provides <code>#if {} #else if {} #else {}</code> and <code>#match</code> statements to control
+which items in you <code>.zng</code> file are emitted into the final IDL specification.
+These statements are both powered by pattern matching.</p>
+<p><strong>Note:</strong> These statements are an unstable feature, the syntax may change. You need <code>#unstable(cfg_if)</code> and <code>#unstable(cfg_match)</code> to enable them.</p>
+<h2 id="the-scrutinee"><a class="header" href="#the-scrutinee">The Scrutinee</a></h2>
+<p>The only scrutinee type currently available is <code>cfg!(key&lt;.item&gt;)</code>
+which can pull single items or groups of items from a Rust/Cargo configuration key.
+See <a href="https://doc.rust-lang.org/reference/conditional-compilation.html">Rust's documentation on conditional compilation</a>
+for details on what keys exist and what their values are.
+<code>cfg!()</code> is analogous to Rust's own <code>#[cfg()]</code> attribute.</p>
+<p>If item names contain charters not allowed in a identifier the item can be quoted (i.e. <code>cfg!(feature."float-values")</code>).</p>
+<h3 id="value-sets"><a class="header" href="#value-sets">Value Sets</a></h3>
+<p>To match patterns with value sets use <code>cfg!(key_name)</code>. For example <code>cfg!(target_feature)</code> will resolve to a
+set of features enabled i.e. <code>("avx", "avx2" "sse")</code>. If only a single value exists for the key the result will be a single item set
+i.e. <code>cfg!(target_os)</code> might be <code>("linux")</code> or <code>("windows")</code>.</p>
+<h3 id="single-items"><a class="header" href="#single-items">Single Items</a></h3>
+<p>To test the presence of a single item in a key you can use dot notation. <code>cfg!(target_os.linux)</code> will resolve to a <code>Some</code> or <code>None</code> value.</p>
+<h2 id="patterns"><a class="header" href="#patterns">Patterns</a></h2>
+<p>The pattern syntax available to match configuration values is diagrammed below.</p>
+<p>To summarize:</p>
+<ul>
+<li>Use literals <code>Some</code> or <code>None</code>, to match the presence of a key.value like <code>cfg!(target_arch.32 = Some)</code>.</li>
+<li>Use literals <code>"string"</code> (i.e. <code>"avx"</code> or <code>"32"</code>) or <code>usize</code> (i.e. <code>32</code> or <code>64</code>) to test if the value is present in the set of values returned from a key like <code>cfg!(target_arch)</code>.</li>
+<li>Use <code>!</code> to negate an expression.</li>
+<li>Use <code>&amp;</code> to combine expressions with a logical And.</li>
+<li>Use <code>|</code> to combine expressions with a logical Or,</li>
+<li>Use <code>()</code> to delimit sub expressions.</li>
+</ul>
+<!-- rendered from ./cfg_match_pattern.dia with https://github.com/lukaslueg/railroad_dsl -->
+<!-- railroad --theme=dark  cfg_match_pattern.dia -->
+<p><img src="./cfg_match_pattern.svg" alt="Cfg!() match pattern syntax diagram" /></p>
+<h2 id="if-statements"><a class="header" href="#if-statements">If Statements</a></h2>
+<p><img src="./cfg_if_stmnt.svg" alt="If statements" /></p>
+<h3 id="example"><a class="header" href="#example">Example</a></h3>
+<pre><code class="language-zng">#unstable(cfg_if)
+
+// test if "foo" is in the `feature` set
+#if cfg!(feature."foo") {
+    type crate::Foo {
+        #layout(size = 1, align = 1);
+    }
+} #else {
+    type crate::Bar {
+        #layout(size = 1, align = 1);
+    }
+}
+</code></pre>
+<p>As a special case, leaving out the <code>= pattern</code> section of an
+<code>#if</code> or <code>#else if</code> statement is equivalent to writing <code>= Some</code>.
+The following are equivalent:</p>
+<pre><code class="language-zng">#if cfg!(feature."float-values" = Some) {
+  // ...
+}
+
+#if cfg!(feature."float-values") {
+  // ...
+}
+</code></pre>
+<p>Yow can combine conditions just like in rust</p>
+<pre><code class="language-zng">#if cfg!(feature.foo) &amp;&amp; cfg!(target_pointer_width = 32) {
+    type crate::Foo32 {
+        #layout(size = 1, align = 1);
+    }
+} #else if cfg!(feature.foo = None) &amp;&amp; cfg!(target_pointer_width = 64) {
+    type crate::NoFoo64 {
+        #layout(size = 1, align = 1);
+    }
+} #else if (cfg!(feature.foo = Some) &amp;&amp; cfg!(target_pointer_width = 64)) || cfg!(feature.baz) {
+    type crate::Foo64_OrBaz {
+        #layout(size = 1, align = 1);
+    }
+} #else {
+    type crate::SpecialFoo {
+        #layout(size = 1, align = 1);
+    }
+}
+</code></pre>
+<h2 id="match-statements"><a class="header" href="#match-statements">Match Statements</a></h2>
+<p><img src="./cfg_match_stmnt.svg" alt="Match statements" /></p>
+<h3 id="example-1"><a class="header" href="#example-1">Example</a></h3>
+<pre><code class="language-zng">#unstable(cfg_match)
+
+#match cfg!(feature) {
+    "bar" | "zigza" =&gt; type crate::BarZigZa {
+        #layout(size = 1, align = 1);
+    }
+    // match two values from a cfg value as a set 
+    "foo" &amp; "baz" =&gt; type crate::FooBaz {
+        #layout(size = 1, align = 1);
+    }
+    // negative matching (no feature baz)
+    "foo" &amp; !"baz" =&gt; type crate::FooNoBaz {
+        #layout(size = 1, align = 1);
+    }
+    _ =&gt; {
+        type crate::Zoop {
+            #layout(size = 1, align = 1);
+        }
+    }
+}
+</code></pre>
+<h3 id="matching-multiple-values"><a class="header" href="#matching-multiple-values">Matching Multiple Values</a></h3>
+<p>Tuples can be used to test multiple conditions at once.
+i.e.</p>
+<pre><code>(cfg!(target_pointer_width), cfg!(target_os)) = (64 | 32, "linux")
+</code></pre>
+<pre><code class="language-zng">// match two cfg keys as a set
+#match (cfg!(feature.foo), cfg!(target_pointer_width)) {
+    (Some, "32") =&gt; type crate::Foo32 {
+        #layout(size = 1, align = 1);
+    }
+    (None, 64) =&gt; type crate::NoFoo64 {
+        #layout(size = 1, align = 1);
+    }
+    _ =&gt; {
+        type crate::SpecialFoo {
+            #layout(size = 1, align = 1);
+        }
+    }
+}
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="import.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="safety.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="import.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="safety.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

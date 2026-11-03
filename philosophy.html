@@ -1,0 +1,273 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Design decisions - Zngur</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Zngur</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/hkalbasi/zngur" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="design-decisions"><a class="header" href="#design-decisions">Design decisions</a></h1>
+<h2 id="keep-rust-code-normal-and-idiomatic-all-glue-code-should-live-on-the-c-side"><a class="header" href="#keep-rust-code-normal-and-idiomatic-all-glue-code-should-live-on-the-c-side">Keep Rust code normal and idiomatic. All glue code should live on the C++ side.</a></h2>
+<p>One of the most important uses of a C++/Rust interop tool like Zngur is in Rust rewrite projects.
+In those projects, most people are C++ experts but have little to no Rust experience.
+Writing glue code in Rust and using <code>UniquePtr</code>, <code>Pin</code> and similar constructs make Rust code weirder
+and harder than what Rust actually is, creating a not really great first Rust experience for them.</p>
+<p>Writing glue code in C++ also makes things considerably easier,
+since C++ semantics are a superset of Rust semantics (See <a href="./zngur.html#idea">idea</a>)
+and Rust can't express all C++ things easily.</p>
+<h3 id="keep-mainzng-in-a-separate-file"><a class="header" href="#keep-mainzng-in-a-separate-file">Keep <code>main.zng</code> in a separate file</a></h3>
+<p>CXX-style embedding of the IDL in a Rust proc macro confuses Rust newcomers, so Zngur avoids it.</p>
+<h2 id="be-a-zero-cost-abstraction"><a class="header" href="#be-a-zero-cost-abstraction">Be a zero cost abstraction</a></h2>
+<p>When Rust and C++ are used in a project, it means that performance is a requirement. So, unlike interoperability
+tools between Rust and higher level languages, Zngur is not allowed to do deep copies or invisible allocations.</p>
+<h2 id="be-build-system-agnostic"><a class="header" href="#be-build-system-agnostic">Be build system agnostic</a></h2>
+<p>C/C++ build systems are complex, each in a different way.
+To support all of them, Zngur doesn't integrate with any of them.
+Any build system that can do the following process is able to build a Zngur project:</p>
+<ul>
+<li>Running <code>zngur g main.zng</code></li>
+<li>Building the Rust project (e.g. by running the <code>cargo build</code>)</li>
+<li>Build the C++ <code>generated.cpp</code> together with the rest of codes</li>
+<li>Link all together</li>
+</ul>
+<h2 id="keep-rust-things-rusty"><a class="header" href="#keep-rust-things-rusty">Keep Rust things Rusty</a></h2>
+<ul>
+<li>To minimize surprise.</li>
+<li>Rust decisions are usually superior to C++ ones.</li>
+</ul>
+<h3 id="resultt-e-is-not-automatically-converted-to-exception"><a class="header" href="#resultt-e-is-not-automatically-converted-to-exception"><code>Result&lt;T, E&gt;</code> is not automatically converted to exception</a></h3>
+<p><code>Result&lt;T, E&gt;</code> has some benefits over exception-based error handling.
+For example, the unhappy case cannot be forgotten and must be handled.
+Due to these benefits, a similar <code>std::expected&lt;T, E&gt;</code> was added to C++23.
+In order to not lose this Rust benefit, <code>Result&lt;T, E&gt;</code> is not converted to a C++ exception.</p>
+<p>Panics, which are implemented by stack unwinding similar to C++ exceptions,
+are converted to a C++ exception with the <a href="./call_rust_from_cpp/panic_and_exceptions.html"><code>#convert_panic_to_exception</code></a> flag.
+So if you quickly want an exception out of a <code>Result&lt;T, E&gt;</code>, you can use <code>.unwrap()</code>.</p>
+<h3 id="copy-constructors-are-deleted-manual-clone-should-be-used"><a class="header" href="#copy-constructors-are-deleted-manual-clone-should-be-used">Copy constructors are deleted, manual <code>.clone()</code> should be used</a></h3>
+<p>Implicit copy constructors are a source of accidental performance cost,
+and complicate the control flow of program.
+Rust doesn't support them and uses explicit <code>.clone()</code> calls for that purpose, and Zngur follows Rust.</p>
+<p>Note that for <code>Copy</code> types, where the move operation is not destructive,
+Zngur doesn't delete the copy constructor.</p>
+<h3 id="rusttype-r-has-the-same-semantics-as-let-r-rusttype"><a class="header" href="#rusttype-r-has-the-same-semantics-as-let-r-rusttype"><code>RustType r;</code> has the same semantics as <code>let r: RustType;</code></a></h3>
+<p>Normally in C++ the default constructor creates a basic initialized object,
+and you can use it immediately after that.
+For example, this code is valid:</p>
+<pre><code class="language-C++">std::vector&lt;int32_t&gt; v;
+v.push_back(2);
+</code></pre>
+<p>But in Zngur, default constructor always exists and creates an uninitialized object, so this code is invalid:</p>
+<pre><code class="language-C++">rust::std::vec::Vec&lt;int32_t&gt; v;
+v.push(2);
+</code></pre>
+<p>An alternative would be running <code>Default::default()</code> in the default constructor.
+This behavior is selected over that,
+because it can enable somethings that are not possible without it with the same performance,
+such as conditional initialization:</p>
+<pre><code class="language-C++">Vec&lt;int32_t&gt; v;
+if (reserve_capacity) {
+    v = Vec&lt;int32_t&gt;::with_capacity(1000);
+} else {
+    v = Vec&lt;int32_t&gt;::new_();
+}
+</code></pre>
+<p>If <code>Vec&lt;int32_t&gt; v</code> used the default constructor,
+it would be a waste call to itself and a wasted call to the drop code executed immediately after that.
+Rust also support this, but checks the initialization before usage,
+which Zngur can't check in the compile time, but will check in the run time by default.</p>
+<h3 id="rust-functions-returning--return-rustunit-in-c-instead-of-void"><a class="header" href="#rust-functions-returning--return-rustunit-in-c-instead-of-void">Rust functions returning <code>()</code> return <code>rust::Unit</code> in C++ instead of <code>void</code></a></h3>
+<p>This one has very little practical benefits, and might be revisited in future.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="how_it_compares.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="how_it_works.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="how_it_compares.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="how_it_works.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

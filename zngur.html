@@ -1,0 +1,330 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Zngur - Zngur</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Zngur</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/hkalbasi/zngur" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="zngur"><a class="header" href="#zngur">Zngur</a></h1>
+<p>Zngur (/zængɑr/) is a C++/Rust interop tool.
+It tries to expose arbitrary Rust types, methods, and functions
+while preserving their semantics and ergonomics as much as possible.
+Using Zngur, you can use arbitrary Rust crates in your C++ code as easily as using them in normal Rust code,
+and you can write idiomatic Rusty APIs for your C++ library inside C++.</p>
+<h2 id="idea"><a class="header" href="#idea">Idea</a></h2>
+<p>Rust and C++ are similar languages but with some important differences.
+Particularly:</p>
+<ul>
+<li>Rust is a memory-safe language with a strong boundary between <code>safe</code> and <code>unsafe</code> code
+declared using the <code>unsafe</code> keyword,
+while C++ is an unsafe language with no such distinction or keyword.</li>
+<li>C++ has macro-like templates, which support variadic parameters,
+specialization and are checked at instantiation time.
+Rust generics, on the other hand, are type-checked at definition time using trait bounds.</li>
+<li>Rust move is a <code>memcpy</code> with compiler support for not destructing the moved-out-of variable,
+but C++ move can execute arbitrary code.</li>
+</ul>
+<p>In all of these differences, C++ has more freedom relative to Rust:</p>
+<ul>
+<li>Rust treats C++ functions as unsafe,
+but C++ will happily call Rust code (even unsafe code)
+as there is no difference between it and normal C++ code.</li>
+<li>Every generic Rust component is a valid C++ template, but not vice versa.</li>
+<li>C++ can simulate Rust moves very easily
+(by doing an actual <code>memcpy</code> of data and tracking the state of destruction in a boolean flag)
+but Rust has difficulty with C++ moves.
+Specifically, since Rust assumes that every type is Rust-moveable,
+it can never store C++ objects by value, only through some indirection and <code>Pin</code>.</li>
+</ul>
+<p>So, Zngur allows you to use arbitrary Rust types in C++,
+store them by value on the C++ stack,
+and call arbitrary Rust methods and functions on them.
+But it doesn't bridge any C++ types into Rust,
+since it is not possible with the same ergonomics.
+Instead, Zngur allows you to write a rusty wrapper for your C++ library.
+It allows you to implement Rust traits for C++ types and cast them to <code>Box&lt;dyn Trait&gt;</code>,
+implement inherent methods on Rust types,
+implement Rust traits for Rust types,
+and expose bare functions from C++ that operate on Rust types.</p>
+<h2 id="demo"><a class="header" href="#demo">Demo</a></h2>
+<pre><code class="language-C++">#include &lt;iostream&gt;
+#include &lt;vector&gt;
+
+#include "./generated.h"
+
+// Rust values are available in the `::rust` namespace from their absolute path
+// in Rust
+template &lt;typename T&gt; using Vec = rust::std::vec::Vec&lt;T&gt;;
+template &lt;typename T&gt; using Option = rust::std::option::Option&lt;T&gt;;
+template &lt;typename T&gt; using BoxDyn = rust::Box&lt;rust::Dyn&lt;T&gt;&gt;;
+
+// You can implement Rust traits for your classes
+template &lt;typename T&gt;
+class VectorIterator : public rust::std::iter::Iterator&lt;T&gt; {
+  std::vector&lt;T&gt; vec;
+  size_t pos;
+
+public:
+  VectorIterator(std::vector&lt;T&gt; &amp;&amp;v) : vec(v), pos(0) {}
+  ~VectorIterator() {
+    std::cout &lt;&lt; "vector iterator has been destructed" &lt;&lt; std::endl;
+  }
+
+  Option&lt;T&gt; next() override {
+    if (pos &gt;= vec.size()) {
+      return Option&lt;T&gt;::None();
+    }
+    T value = vec[pos++];
+    // You can construct Rust enum with fields in C++
+    return Option&lt;T&gt;::Some(value);
+  }
+};
+
+int main() {
+  // You can call Rust functions that return things by value, and store that
+  // value in your stack.
+  auto s = Vec&lt;int32_t&gt;::new_();
+  s.push(2);
+  Vec&lt;int32_t&gt;::push(s, 5);
+  s.push(7);
+  Vec&lt;int32_t&gt;::push(s, 3);
+  // You can call Rust functions just like normal Rust.
+  std::cout &lt;&lt; s.clone().into_iter().sum() &lt;&lt; std::endl;
+  // You can catch Rust panics as C++ exceptions
+  try {
+    std::cout &lt;&lt; "s[2] = " &lt;&lt; *s.get(2).unwrap() &lt;&lt; std::endl;
+    std::cout &lt;&lt; "s[4] = " &lt;&lt; *s.get(4).unwrap() &lt;&lt; std::endl;
+  } catch (rust::Panic e) {
+    std::cout &lt;&lt; "Rust panic happened" &lt;&lt; std::endl;
+  }
+  int state = 0;
+  // You can convert a C++ lambda into a `Box&lt;dyn Fn&gt;` and friends.
+  auto f = BoxDyn&lt;rust::Fn&lt;int32_t, int32_t&gt;&gt;::make_box([&amp;](int32_t x) {
+    state += x;
+    std::cout &lt;&lt; "hello " &lt;&lt; x &lt;&lt; " " &lt;&lt; state &lt;&lt; "\n";
+    return x * 2;
+  });
+  // And pass it to Rust functions that accept closures.
+  auto x = s.into_iter().map(std::move(f)).sum();
+  std::cout &lt;&lt; x &lt;&lt; " " &lt;&lt; state &lt;&lt; "\n";
+  std::vector&lt;int32_t&gt; vec{10, 20, 60};
+  // You can convert a C++ type that implements `Trait` to a `Box&lt;dyn Trait&gt;`.
+  // `make_box` is similar to the `make_unique`, it takes constructor arguments
+  // and construct it inside the `Box` (instead of `unique_ptr`).
+  auto vec_as_iter = BoxDyn&lt;rust::std::iter::Iterator&lt;int32_t&gt;&gt;::make_box&lt;
+      VectorIterator&lt;int32_t&gt;&gt;(std::move(vec));
+  // Then use it like a normal Rust value.
+  auto t = vec_as_iter.collect();
+  // Some utilities are also provided. For example, `zngur_dbg` is the
+  // equivalent of `dbg!` macro.
+  zngur_dbg(t);
+}
+</code></pre>
+<p>Output:</p>
+<pre><code>17
+s[2] = 7
+thread '&lt;unnamed&gt;' panicked at 'called `Option::unwrap()` on a `None` value', examples/simple/src/generated.rs:186:39
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+s[4] = Rust panic happened
+hello 2 2
+hello 5 7
+hello 7 14
+hello 3 17
+34 17
+vector iterator has been destructed
+[main.cpp:71] t = [
+    10,
+    20,
+    60,
+]
+</code></pre>
+<p>See the <a href="https://github.com/HKalbasi/zngur/blob/main/examples/simple"><code>examples/simple</code></a> if you want to build and run it.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+                            <a rel="next prefetch" href="tutorial.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+                    <a rel="next prefetch" href="tutorial.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

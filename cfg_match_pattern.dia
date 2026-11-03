@@ -1,0 +1,13 @@
+{[`pattern-expr` <
+  [< 
+    "\"string_value\"",
+    "usize",
+    "Some",
+    "None",
+    ["(" 'pattern-expr' ")"]
+  >#`atoms`],
+  ["!" 'pattern-expr']#`Not`,
+  ['pattern-expr' "&" 'pattern-expr' ]#`And`,
+  ['pattern-expr' "|" 'pattern-expr' ]#`Or`
+  >
+]}
