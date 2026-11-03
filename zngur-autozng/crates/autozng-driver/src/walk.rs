@@ -84,6 +84,43 @@ pub enum RequestedAs {
     GenericArg,
 }
 
+/// The crate that defines a type the walk may descend into.
+///
+/// Every non-local crate costs one external hop, except the standard library: the first
+/// `std`/`core`/`alloc` type on a branch is free. That keeps a re-exported crate's API together
+/// with the standard-library types its signatures name (`Option`, `Result`, `Vec`, ...) even at
+/// `max_external_depth = 1`, without also paying for the generic wrapper chains those types
+/// expose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkTarget {
+    /// Not an ADT (`str`, a slice, a tuple, a `dyn Trait`, a function pointer, ...): never
+    /// charges a hop.
+    NonAdt,
+    /// Defined by the analyzed crate.
+    Local,
+    /// Defined by `std`, `core`, or `alloc`.
+    Std,
+    /// Defined by another crate.
+    External,
+}
+
+impl WalkTarget {
+    /// Classify `ty` by the crate that defines its ADT.
+    pub fn of(ty: Ty) -> Self {
+        let Some(adt) = ty.adt_def() else {
+            return WalkTarget::NonAdt;
+        };
+        let krate = adt.krate();
+        if krate.is_local {
+            WalkTarget::Local
+        } else if matches!(krate.name.as_str(), "std" | "core" | "alloc") {
+            WalkTarget::Std
+        } else {
+            WalkTarget::External
+        }
+    }
+}
+
 /// The depth budget copied into a walk. Never read from `Config` during the walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WalkBudget {
@@ -91,6 +128,8 @@ pub struct WalkBudget {
     pub remaining_external: usize,
     /// The cap for a child whose unwrapped type is already in the walk's ancestor chain.
     pub self_ref_limit: usize,
+    /// Whether the one free `std`/`core`/`alloc` hop on this branch has been spent.
+    pub std_hop_used: bool,
 }
 
 impl WalkBudget {
@@ -103,11 +142,19 @@ impl WalkBudget {
             remaining_depth: max_walk_depth,
             remaining_external: max_external_depth,
             self_ref_limit: max_self_ref_depth,
+            std_hop_used: false,
         }
     }
 
     /// The budget for a child of the type this budget describes.
-    pub fn child(&self, is_external: bool, is_cyclic: bool) -> Self {
+    pub fn child(&self, target: WalkTarget, is_cyclic: bool) -> Self {
+        // The first entry into the standard library on this branch is free; every later hop,
+        // including `std` -> `std`, is charged like any other external crate.
+        let (charged, std_hop_used) = match target {
+            WalkTarget::Std if !self.std_hop_used => (0, true),
+            WalkTarget::Std | WalkTarget::External => (1, self.std_hop_used),
+            WalkTarget::Local | WalkTarget::NonAdt => (0, self.std_hop_used),
+        };
         Self {
             remaining_depth: if is_cyclic {
                 self.remaining_depth
@@ -116,12 +163,9 @@ impl WalkBudget {
             } else {
                 self.remaining_depth.saturating_sub(1)
             },
-            remaining_external: if is_external {
-                self.remaining_external.saturating_sub(1)
-            } else {
-                self.remaining_external
-            },
+            remaining_external: self.remaining_external.saturating_sub(charged),
             self_ref_limit: self.self_ref_limit,
+            std_hop_used,
         }
     }
 
@@ -237,6 +281,8 @@ pub struct WalkState {
     pub walked: WalkParts,
     pub best_remaining_depth: usize,
     pub best_remaining_external: usize,
+    /// Whether the strongest budget had already spent its free `std`/`core`/`alloc` hop.
+    pub best_std_hop_used: bool,
     pub strongest_reason: VisitReason,
     pub seen_by_value: bool,
     pub filter: WalkFilter,
@@ -252,6 +298,7 @@ impl WalkState {
             walked: WalkParts::all(),
             best_remaining_depth: 0,
             best_remaining_external: 0,
+            best_std_hop_used: true,
             strongest_reason: VisitReason::DefaultVisibility,
             seen_by_value: true,
             filter: WalkFilter::default(),
@@ -266,6 +313,7 @@ impl WalkState {
             walked,
             best_remaining_depth: 0,
             best_remaining_external: 0,
+            best_std_hop_used: true,
             strongest_reason: reason,
             seen_by_value: false,
             filter,
@@ -280,6 +328,7 @@ impl WalkState {
             walked: WalkParts::empty(),
             best_remaining_depth: request.budget.remaining_depth,
             best_remaining_external: request.budget.remaining_external,
+            best_std_hop_used: request.budget.std_hop_used,
             strongest_reason: request.reason,
             seen_by_value: request.requested_as == RequestedAs::Value,
             filter: request.filter.clone(),

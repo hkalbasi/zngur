@@ -80,6 +80,10 @@ pub struct Config {
     /// Maximum number of hops an ordinary interface walk may descend (local hops included).
     pub max_walk_depth: usize,
     /// Maximum number of non-local hops an interface walk may descend.
+    ///
+    /// The first `std`/`core`/`alloc` type on a branch is free (see
+    /// [`crate::walk::WalkTarget`]), so an external crate's API and the standard-library types
+    /// its signatures name are exposed together.
     pub max_external_depth: usize,
     /// Depth budget for an `emit_traits` walk (a trait C++ can implement).
     pub max_trait_impl_depth: usize,
@@ -99,11 +103,11 @@ impl Default for Config {
             use_doc_comment_tool_attrs: false,
             output: OutputConfig::default(),
             implicitly_emit_external_interfaces: false,
-            max_walk_depth: 8,
-            max_external_depth: 4,
+            max_walk_depth: 6,
+            max_external_depth: 1,
             max_trait_impl_depth: 4,
             max_trait_interface_depth: 2,
-            max_self_ref_depth: 2,
+            max_self_ref_depth: 1,
             walk_filter: WalkFilter::default(),
         }
     }

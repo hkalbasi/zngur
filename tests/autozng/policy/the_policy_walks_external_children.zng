@@ -19,122 +19,11 @@ type ::std::net::IpAddr {
 type ::std::net::Ipv4Addr {
     #layout(size = 4, align = 1);
     wellknown_traits(Copy, Debug);
-
-    safe fn new(u8, u8, u8, u8) -> ::std::net::Ipv4Addr;
-    safe fn to_bits(self) -> u32;
-    safe fn from_bits(u32) -> ::std::net::Ipv4Addr;
-    safe fn is_unspecified(&self) -> bool;
-    safe fn is_loopback(&self) -> bool;
-    safe fn is_private(&self) -> bool;
-    safe fn is_link_local(&self) -> bool;
-    safe fn is_multicast(&self) -> bool;
-    safe fn is_broadcast(&self) -> bool;
-    safe fn is_documentation(&self) -> bool;
-    safe fn to_ipv6_compatible(&self) -> ::std::net::Ipv6Addr;
-    safe fn to_ipv6_mapped(&self) -> ::std::net::Ipv6Addr;
 }
 
 type ::std::net::Ipv6Addr {
     #layout(size = 16, align = 1);
     wellknown_traits(Copy, Debug);
-
-    safe fn new(u16, u16, u16, u16, u16, u16, u16, u16) -> ::std::net::Ipv6Addr;
-    safe fn to_bits(self) -> u128;
-    safe fn from_bits(u128) -> ::std::net::Ipv6Addr;
-    safe fn is_unspecified(&self) -> bool;
-    safe fn is_loopback(&self) -> bool;
-    safe fn is_unique_local(&self) -> bool;
-    safe fn is_unicast_link_local(&self) -> bool;
-    safe fn is_multicast(&self) -> bool;
-    safe fn to_ipv4_mapped(&self) -> ::std::option::Option<::std::net::Ipv4Addr>;
-    safe fn to_ipv4(&self) -> ::std::option::Option<::std::net::Ipv4Addr>;
-    safe fn to_canonical(&self) -> ::std::net::IpAddr;
-}
-
-type ::std::option::Iter<::std::net::Ipv4Addr> {
-    #layout(size = 8, align = 8);
-    wellknown_traits(Debug);
-}
-
-type ::std::option::IterMut<::std::net::Ipv4Addr> {
-    #layout(size = 8, align = 8);
-    wellknown_traits(Debug);
-}
-
-type ::std::option::Option<&::std::net::Ipv4Addr> {
-    #layout(size = 8, align = 8);
-    wellknown_traits(Copy, Debug);
-    variant None {
-        non_exhaustive;
-    }
-    variant Some {
-        non_exhaustive;
-    }
-}
-
-type ::std::option::Option<&mut ::std::net::Ipv4Addr> {
-    #layout(size = 8, align = 8);
-    wellknown_traits(Debug);
-    variant None {
-        non_exhaustive;
-    }
-    variant Some {
-        non_exhaustive;
-    }
-}
-
-type ::std::option::Option<::std::net::Ipv4Addr> {
-    #layout(size = 5, align = 1);
-    wellknown_traits(Copy, Debug);
-    variant None {}
-    variant Some {
-        field 0 (offset = auto, type = ::std::net::Ipv4Addr);
-    }
-
-    safe fn is_some(&self) -> bool;
-    safe fn is_none(&self) -> bool;
-    safe fn as_ref(&self) -> ::std::option::Option<&::std::net::Ipv4Addr>;
-    safe fn as_mut(&mut self) -> ::std::option::Option<&mut ::std::net::Ipv4Addr>;
-    safe fn as_slice(&self) -> &[::std::net::Ipv4Addr];
-    safe fn as_mut_slice(&mut self) -> &mut [::std::net::Ipv4Addr];
-    safe fn expect(self, &str) -> ::std::net::Ipv4Addr;
-    safe fn unwrap(self) -> ::std::net::Ipv4Addr;
-    safe fn unwrap_or(self, ::std::net::Ipv4Addr) -> ::std::net::Ipv4Addr;
-    unsafe fn unwrap_unchecked(self) -> ::std::net::Ipv4Addr;
-    safe fn iter(&self) -> ::std::option::Iter<::std::net::Ipv4Addr>;
-    safe fn iter_mut(&mut self) -> ::std::option::IterMut<::std::net::Ipv4Addr>;
-    safe fn or(self, ::std::option::Option<::std::net::Ipv4Addr>) -> ::std::option::Option<::std::net::Ipv4Addr>;
-    safe fn xor(self, ::std::option::Option<::std::net::Ipv4Addr>) -> ::std::option::Option<::std::net::Ipv4Addr>;
-    safe fn insert(&mut self, ::std::net::Ipv4Addr) -> &mut ::std::net::Ipv4Addr;
-    safe fn get_or_insert(&mut self, ::std::net::Ipv4Addr) -> &mut ::std::net::Ipv4Addr;
-    safe fn take(&mut self) -> ::std::option::Option<::std::net::Ipv4Addr>;
-    safe fn replace(&mut self, ::std::net::Ipv4Addr) -> ::std::option::Option<::std::net::Ipv4Addr>;
-}
-
-type ::std::option::Option<::std::pin::Pin<&::std::net::Ipv4Addr>> {
-    #layout(size = 8, align = 8);
-    wellknown_traits(Copy, Debug);
-    variant None {
-        non_exhaustive;
-    }
-    variant Some {
-        non_exhaustive;
-    }
-}
-
-type ::std::option::Option<::std::pin::Pin<&mut ::std::net::Ipv4Addr>> {
-    #layout(size = 8, align = 8);
-    wellknown_traits(Debug);
-    variant None {
-        non_exhaustive;
-    }
-    variant Some {
-        non_exhaustive;
-    }
-}
-
-type [::std::net::Ipv4Addr] {
-    wellknown_traits(?Sized, Debug);
 }
 
 type bool {
@@ -147,8 +36,4 @@ type crate::Holder {
     constructor {addr: ::std::net::IpAddr};
 
     field addr (offset = 0, type = ::std::net::IpAddr);
-}
-
-type str {
-    wellknown_traits(?Sized, Debug);
 }

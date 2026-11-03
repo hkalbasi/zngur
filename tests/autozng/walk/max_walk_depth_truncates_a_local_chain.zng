@@ -35,29 +35,6 @@ type crate::Child5 {
 
 type crate::Child6 {
     #layout(size = 8, align = 4);
-    constructor {child: crate::Child7};
-
-    field child (offset = 0, type = crate::Child7);
-}
-
-type crate::Child7 {
-    #layout(size = 8, align = 4);
-    constructor {child: crate::Child8};
-
-    field child (offset = 0, type = crate::Child8);
-}
-
-type crate::Child8 {
-    #layout(size = 8, align = 4);
-    variant Unit {
-        non_exhaustive;
-    }
-    variant Tuple {
-        non_exhaustive;
-    }
-    variant Struct {
-        non_exhaustive;
-    }
 }
 
 type crate::Root {

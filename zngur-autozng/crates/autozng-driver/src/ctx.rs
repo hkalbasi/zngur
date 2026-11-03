@@ -41,7 +41,8 @@ use crate::rustc_ext::{
 use crate::type_map::{is_type_block_less, map_rustc_public_ty_to_zngur};
 use crate::walk::{
     ReceiverKind, RequestedAs, VisibilityKind, VisitReason, WalkBudget, WalkContext, WalkFilter,
-    WalkIntent, WalkItem, WalkItemKind, WalkParts, WalkPhase, WalkRequest, WalkState, base_ty,
+    WalkIntent, WalkItem, WalkItemKind, WalkParts, WalkPhase, WalkRequest, WalkState, WalkTarget,
+    base_ty,
 };
 
 #[derive(Debug)]
@@ -698,7 +699,7 @@ impl AutozngContext {
             self.record_ty(&key, span);
             return;
         }
-        let is_external = key.adt_def().is_some_and(|adt| !adt.krate().is_local);
+        let target = WalkTarget::of(key);
         let child_base = base_ty(key);
         let current = self.current_walk_context();
         let (budget, phase, parent, ancestors) = match &current {
@@ -709,7 +710,7 @@ impl AutozngContext {
                     ancestors.push(child_base);
                 }
                 (
-                    walk.budget.child(is_external, cyclic),
+                    walk.budget.child(target, cyclic),
                     walk.phase,
                     Some(walk.owner),
                     ancestors,
@@ -748,7 +749,8 @@ impl AutozngContext {
             state.intent == WalkIntent::Declare
                 && (reason.precedence() > state.strongest_reason.precedence()
                     || request.budget.remaining_depth > state.best_remaining_depth
-                    || request.budget.remaining_external > state.best_remaining_external)
+                    || request.budget.remaining_external > state.best_remaining_external
+                    || (!request.budget.std_hop_used && state.best_std_hop_used))
         });
         if matches!(existing, Some(false)) {
             if request_by_value && let Some(state) = states.get_mut(&key) {
@@ -978,6 +980,7 @@ impl AutozngContext {
                                 remaining_depth: state.best_remaining_depth,
                                 remaining_external: state.best_remaining_external,
                                 self_ref_limit: config.max_self_ref_depth,
+                                std_hop_used: state.best_std_hop_used,
                             },
                             state.filter,
                         )
