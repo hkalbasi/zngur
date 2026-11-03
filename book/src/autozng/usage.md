@@ -59,3 +59,8 @@ The driver turns on its own attributes for the compilation,
 analyses the crate, and writes the interface for the crate it just saw.
 Run this way it must also be able to find its compiler's libraries;
 the frontend sets that up for you, which is why `cargo autozng` is the recommended way to use Autozng.
+
+An item the interface cannot represent is skipped with a warning.
+For an item from another crate those warnings are silent by default,
+because you cannot change a `std` or dependency method that the interface does not support.
+Pass `-v` (or `--verbose`) to the driver to see them too.

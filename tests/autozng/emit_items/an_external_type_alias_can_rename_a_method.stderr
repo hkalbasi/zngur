@@ -1,7 +1,0 @@
-warning: autozng: skipping method `then_with`: type parameters are not supported in a zngur interface
-   --> <sysroot>/lib/rustlib/src/rust/library/core/src/cmp.rs:668:5
-    |
-668 | /     pub const fn then_with<F>(self, f: F) -> Ordering
-669 | |     where
-670 | |         F: [const] FnOnce() -> Ordering + [const] Destruct,
-    | |___________________________________________________________^

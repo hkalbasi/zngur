@@ -94,6 +94,12 @@ pub struct Config {
     pub max_self_ref_depth: usize,
     /// `#![autozng::walk_filter(...)]`: the crate-wide interface filter.
     pub walk_filter: WalkFilter,
+    /// The driver was invoked with a verbose flag (`-v` / `--verbose`).
+    ///
+    /// A warn-and-skip diagnostic for an item from another crate is silent by default: the user
+    /// cannot act on a `std`/dependency method that the interface cannot represent. With this on,
+    /// those diagnostics are emitted like local ones.
+    pub verbose: bool,
 }
 
 impl Default for Config {
@@ -109,6 +115,7 @@ impl Default for Config {
             max_trait_interface_depth: 2,
             max_self_ref_depth: 1,
             walk_filter: WalkFilter::default(),
+            verbose: false,
         }
     }
 }

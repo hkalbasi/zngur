@@ -136,6 +136,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> (Config, Vec<String>) {
     }
 
     let mut args: Vec<String> = args.into_iter().collect();
+    // `-v` / `--verbose` keep the warn-and-skip diagnostics for external items (see
+    // `Config::verbose`); they are forwarded to rustc unchanged.
+    config.verbose = args
+        .iter()
+        .any(|arg| arg == "-v" || arg == "--verbose" || arg == "-vv");
     if is_wrapper_mode(&args) {
         args.remove(1);
     }
@@ -173,4 +178,22 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> (Config, Vec<String>) {
     }
 
     (config, rustc_args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verbose_flag_is_read_from_the_driver_args() {
+        for flag in ["-v", "--verbose", "-vv"] {
+            let args = ["autozng-driver".to_string(), flag.to_string()];
+            let (config, rustc_args) = parse_args(args);
+            assert!(config.verbose, "`{flag}` should enable verbose diagnostics");
+            assert_eq!(rustc_args[1], flag, "the flag is forwarded to rustc");
+        }
+
+        let (config, _) = parse_args(["autozng-driver".to_string()]);
+        assert!(!config.verbose);
+    }
 }

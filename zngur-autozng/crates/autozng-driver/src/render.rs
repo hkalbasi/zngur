@@ -1392,6 +1392,11 @@ pub fn print_to_file(spec: &ZngurSpec, path: &Path) -> std::io::Result<()> {
 ///
 /// Only valid while the analysis callback is running (it needs the live `TyCtxt`).
 fn warn(def_id: DefId, emit_span: Span, msg: impl Into<DiagMessage>) {
+    // A skipped/unsupported item from another crate is not actionable by this crate's user; its
+    // warn-and-skip diagnostic is only emitted with the driver's verbose flag.
+    if !with_ctxt(|ctx| ctx.cfg.verbose || internal(ctx.tcx, def_id).is_local()) {
+        return;
+    }
     let item_span = span_of_def(def_id);
     with_struct_warning_for_rustc_public_span(def_id.span(), msg, |mut diag, _tcx| {
         // Point at the emission site only when it is not the item itself (an `emit_items`
