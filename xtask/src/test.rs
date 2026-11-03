@@ -589,7 +589,7 @@ fn is_autozng_diagnostic(block: &str) -> bool {
     block.starts_with("warning: autozng:") || block.starts_with("error: autozng:")
 }
 
-fn autozng_diagnostics(stderr: &[u8]) -> String {
+fn autozng_diagnostics(stderr: &[u8], sysroot: Option<&Path>) -> String {
     let text = normalize_driver_stderr(stderr);
 
     let mut blocks: Vec<String> = Vec::new();
@@ -608,11 +608,25 @@ fn autozng_diagnostics(stderr: &[u8]) -> String {
         .map(|block| block.replace('\\', "/"))
         .collect::<Vec<_>>()
         .join("\n\n");
+    let joined = match sysroot {
+        Some(sysroot) => normalize_sysroot(&joined, sysroot),
+        None => joined,
+    };
     if joined.is_empty() {
         joined
     } else {
         joined + "\n"
     }
+}
+
+/// Replace the toolchain root in a diagnostic's span path with `<sysroot>`.
+///
+/// A warning about an external item points into the toolchain's source tree
+/// (`.../lib/rustlib/src/rust/library/core/src/...`). The root is machine-specific, so a snapshot
+/// that kept it would fail on any other machine or CI runner.
+fn normalize_sysroot(text: &str, sysroot: &Path) -> String {
+    let root = sysroot.to_string_lossy().replace('\\', "/");
+    text.replace(&root, "<sysroot>")
 }
 
 fn check_autozng_stderr(fix: bool, path: &Path, actual: &str, name: &str) -> Result<()> {
@@ -727,7 +741,7 @@ fn check_autozng(
             std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
         }
     } else {
-        let diagnostics = autozng_diagnostics(&output.stderr);
+        let diagnostics = autozng_diagnostics(&output.stderr, Some(toolchain.root()));
         check_autozng_stderr(
             fix,
             &source.with_extension("stderr"),
@@ -1223,7 +1237,7 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{example_matches, glob_matches, path_matches};
+    use super::{example_matches, glob_matches, normalize_sysroot, path_matches};
     use std::path::Path;
 
     #[test]
@@ -1256,6 +1270,18 @@ mod tests {
             &example,
             &["examples/simple/*".to_owned()]
         ));
+    }
+
+    #[test]
+    fn sysroot_paths_are_normalized_in_diagnostics() {
+        let sysroot = Path::new(r"C:\rust\toolchains\nightly");
+        let text = "warning: autozng: skipped\
+                    \n --> C:/rust/toolchains/nightly/lib/rustlib/src/rust/library/core/src/net/ip_addr.rs:1:2";
+        assert_eq!(
+            normalize_sysroot(text, sysroot),
+            "warning: autozng: skipped\
+             \n --> <sysroot>/lib/rustlib/src/rust/library/core/src/net/ip_addr.rs:1:2"
+        );
     }
 }
 
