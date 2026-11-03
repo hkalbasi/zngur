@@ -93,6 +93,10 @@ impl RenameTarget for rustc_public::ty::AdtDef {
         // the crate/module path is preserved so the type stays discoverable.
         simple_name(CrateDef::name(self))
     }
+
+    fn method_carrier(&self) -> Option<rustc_public::ty::Ty> {
+        Some(self.ty())
+    }
 }
 
 /// `#[autozng::layout(...)]` on an ADT: record the chosen layout policy on the type's metadata

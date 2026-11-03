@@ -1,5 +1,7 @@
 use convert_case::{Case, Casing};
 use rustc_attr_parsing::template;
+use rustc_public::CrateDef;
+use rustc_public::ty::{AssocKind, Ty};
 use rustc_span::Span;
 
 use crate::{
@@ -11,11 +13,25 @@ use crate::{
         },
     },
     ctx::AutozngContext,
-    metadata::{ExportName, IntoMetadataKey},
+    error::{emit_error_for_span, emit_warning_for_span},
+    metadata::{ExportName, IntoMetadataKey, MetadataKey},
+    rustc_ext::RustcPublicTyExt,
 };
 
 pub trait RenameTarget: IntoMetadataKey {
     fn item_name(&self) -> String;
+
+    /// The type whose inherent methods a `rename(method = "...")` can target, when this item can
+    /// carry one: an ADT (its own type) or a type alias (the aliased type).
+    fn method_carrier(&self) -> Option<Ty> {
+        None
+    }
+
+    /// Whether this item is a type alias. An alias is not emitted itself, so it only accepts
+    /// `rename(method = "...")`.
+    fn is_type_alias(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -58,11 +74,29 @@ pub enum RenameTargetType {
     Children,
 }
 
-/// Applies
+/// One renaming carried by a `rename` attribute: either the item itself or one of its methods.
+#[derive(Debug, Clone)]
+pub struct RenameSpec {
+    /// `Some(name)` targets that method; `None` targets the item itself.
+    method: Option<String>,
+    actions: Vec<RenameAction>,
+}
+
+impl RenameSpec {
+    fn apply(&self, name: &str) -> String {
+        self.actions
+            .iter()
+            .fold(name.to_owned(), |name, action| action.apply(&name))
+    }
+}
+
+/// Applies `rename` / `rename_all` actions.
 #[derive(Debug, Clone)]
 pub struct Rename {
     path: AttrPath,
-    actions: Vec<RenameAction>,
+    /// One attribute may carry several renames (e.g. the type itself and one of its methods);
+    /// duplicate `rename` attributes on one item are merged into this list.
+    specs: Vec<RenameSpec>,
     target: RenameTargetType,
     /// Span of the `#[autozng::rename(...)]` attribute, kept so it can be recorded alongside the
     /// export name and used for a `renamed here` diagnostic.
@@ -82,7 +116,7 @@ impl Attr for Rename {
             // redirect target to This for children
             Some(Rename {
                 path: self.path.clone(),
-                actions: self.actions.clone(),
+                specs: self.specs.clone(),
                 target: RenameTargetType::This,
                 span: self.span,
             })
@@ -91,16 +125,51 @@ impl Attr for Rename {
         }
     }
 
+    fn merge(&mut self, other: Self) {
+        // Two `rename` attributes on one item keep both specs: one may rename the item itself
+        // while the other renames a method, for example.
+        self.specs.extend(other.specs);
+    }
+
     fn visit(&self, item: &dyn RenameTarget, ctx: &AutozngContext) {
-        // if item re-nameable and the attr targets `This`
-        if matches!(self.target, RenameTargetType::This) {
-            // apply actions in order
-            let export_name = self
-                .actions
-                .iter()
-                .fold(item.item_name(), |name, action| action.apply(&name));
-            // set the new name, remembering the attribute that produced it
-            ctx.with_metadata_mut(item, |mut metadata| {
+        if !matches!(self.target, RenameTargetType::This) {
+            return;
+        }
+        for spec in &self.specs {
+            let Some(method) = &spec.method else {
+                if item.is_type_alias() {
+                    emit_error_for_span(
+                        self.span,
+                        "autozng: `rename` on a type alias needs `method = \"...\"`: the alias \
+                         itself is not emitted",
+                    );
+                    continue;
+                }
+                let export_name = spec.apply(&item.item_name());
+                ctx.with_metadata_mut(item, |mut metadata| {
+                    metadata.export_name = Some(ExportName {
+                        name: export_name,
+                        span: self.span,
+                    });
+                });
+                continue;
+            };
+            let Some(carrier) = item.method_carrier() else {
+                emit_error_for_span(
+                    self.span,
+                    "autozng: `method = \"...\"` is only valid on an ADT or a type alias",
+                );
+                continue;
+            };
+            let Some((def_id, method_name)) = inherent_method(carrier, method) else {
+                emit_warning_for_span(
+                    self.span,
+                    format!("autozng: no inherent method `{method}` on `{carrier}` to rename"),
+                );
+                continue;
+            };
+            let export_name = spec.apply(&method_name);
+            ctx.with_metadata_mut(&MetadataKey::from_public_def_id(def_id), |mut metadata| {
                 metadata.export_name = Some(ExportName {
                     name: export_name,
                     span: self.span,
@@ -110,10 +179,32 @@ impl Attr for Rename {
     }
 }
 
+/// Find an inherent method by name on the type `ty` names, returning its definition and simple
+/// name.
+fn inherent_method(ty: Ty, name: &str) -> Option<(rustc_public::DefId, String)> {
+    let adt = ty.base_ty().adt_def()?;
+    for impl_def in adt.inherent_impls() {
+        for assoc_item in impl_def.associated_items() {
+            let AssocKind::Fn {
+                name: method_name, ..
+            } = &assoc_item.kind
+            else {
+                continue;
+            };
+            if method_name == name {
+                return Some((assoc_item.def_id.def_id(), method_name.clone()));
+            }
+        }
+    }
+    None
+}
+
 #[derive(Debug, Default)]
 pub struct RenameParser {
     path: Option<AttrPath>,
     actions: Option<Vec<RenameAction>>,
+    /// `method = "name"`: target that method instead of the item itself.
+    method: Option<String>,
     target: Option<RenameTargetType>,
     span: Option<Span>,
 }
@@ -137,7 +228,8 @@ impl AttributeParser for RenameParser {
                     r#"name = "new_name""#,
                     r#"case = "case""#,
                     r#"prefix = "pre"#,
-                    r#"suffix = "suffix""#
+                    r#"suffix = "suffix""#,
+                    r#"method = "method_name""#
                 ],
                 "https://link/to/docs"
             ),
@@ -160,13 +252,14 @@ impl AttributeParser for RenameParser {
         if let RenameParser {
             path: Some(path),
             actions: Some(actions),
+            method,
             target: Some(target),
             span: Some(span),
         } = self
         {
             Some(Rename {
                 path,
-                actions,
+                specs: vec![RenameSpec { method, actions }],
                 target,
                 span,
             })
@@ -276,11 +369,25 @@ impl RenameParser {
         } else {
             let actions = args
                 .mixed()
-                .map(|action| -> Result<RenameAction, ()> {
-                    let Some((action, value)) = cx.expect_name_value(action, action.span(), None)
-                    else {
-                        return Err(());
+                .filter_map(|arg| -> Option<Result<RenameAction, ()>> {
+                    let Some((action, value)) = cx.expect_name_value(arg, arg.span(), None) else {
+                        return Some(Err(()));
                     };
+
+                    // `method = "name"` selects a method of the carrier instead of the item itself.
+                    if action.value == "method" {
+                        if *path == RENAME_ALL_PATH {
+                            cx.dcx
+                                .struct_err("`method` is not supported in `rename_all`")
+                                .emit();
+                            return Some(Err(()));
+                        }
+                        let Some(value) = cx.expect_string_literal(value) else {
+                            return Some(Err(()));
+                        };
+                        self.method = Some(value.value);
+                        return None;
+                    }
 
                     let Some(action) = RENAME_ACTION_NAMES.iter().find_map(|(action_ty, name)| {
                         if action.value == *name {
@@ -299,21 +406,21 @@ impl RenameParser {
                                     .collect(),
                             ),
                         });
-                        return Err(());
+                        return Some(Err(()));
                     };
 
                     let Some(value) = cx.expect_string_literal(value) else {
-                        return Err(());
+                        return Some(Err(()));
                     };
 
-                    match action {
+                    Some(match action {
                         RenameActionType::Rename => {
                             // it makes not send to apply a single name to all items
                             if *path == RENAME_ALL_PATH {
                                 cx.dcx
                                     .struct_err("unsupported rename action in `rename_all`")
                                     .emit();
-                                return Err(());
+                                return Some(Err(()));
                             }
 
                             Ok(RenameAction::Rename(value.value))
@@ -322,14 +429,14 @@ impl RenameParser {
                             let Some(case) =
                                 RenameParser::expect_case(&value.value, value.span, cx)
                             else {
-                                return Err(());
+                                return Some(Err(()));
                             };
 
                             Ok(RenameAction::ConvertCase(case))
                         }
                         RenameActionType::Prefix => Ok(RenameAction::Prefix(value.value)),
                         RenameActionType::Suffix => Ok(RenameAction::Suffix(value.value)),
-                    }
+                    })
                 })
                 .collect::<Vec<_>>();
 

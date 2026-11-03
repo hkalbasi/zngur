@@ -1,0 +1,5 @@
+warning: autozng: no inherent method `missing` on `NoSuchMethod` to rename
+ --> src/lib.rs:6:21
+  |
+6 | #[cfg_attr(autozng, autozng::rename(method = "missing", suffix = "Cpp"))]
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

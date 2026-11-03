@@ -221,6 +221,32 @@ instantiation that the binding names: `foo::<u32>` does not rename `foo::<u8>`, 
 `Generic::<u32>::method` does not rename the method on `Generic<String>`. Name each instantiation
 you want to rename. A `rename` on the method declaration applies to every instantiation.
 
+`rename(method = "name", ...)` on an ADT or a type alias targets one of its inherent methods
+instead of the item itself, and applies to every instantiation:
+
+```rust
+#[autozng::rename(method = "get", suffix = "Cpp")]
+pub struct Generic<T> {
+    inner: T,
+}
+```
+
+A type that cannot carry the attribute (an external type) can be named with a type alias inside an
+`emit_items` const:
+
+```rust
+#[autozng::emit_items]
+const _: () = {
+    #[autozng::rename(method = "reverse", suffix = "Cpp")]
+    type OrderingAlias = ::std::cmp::Ordering;
+};
+```
+
+`method = "..."` is only valid on an ADT or a type alias; a `rename` on a type alias must use it,
+because the alias itself is not emitted. Several `rename` attributes on one item are merged, so a
+type rename and a method rename can coexist. A specific instantiation rename still wins over a
+type-level one.
+
 ## `layout`
 
 Overrides the layout policy of a type.

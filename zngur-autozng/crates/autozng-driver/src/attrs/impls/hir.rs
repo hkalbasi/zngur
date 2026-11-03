@@ -230,4 +230,18 @@ impl EmitTarget for crate::rustc_ext::HirTyAlias {
     }
 }
 
-impl_attr_target!(crate::rustc_ext::HirTyAlias, EmitTarget);
+impl_attr_target!(crate::rustc_ext::HirTyAlias, EmitTarget, RenameTarget);
+
+impl RenameTarget for crate::rustc_ext::HirTyAlias {
+    fn item_name(&self) -> String {
+        self.ident.to_string()
+    }
+
+    fn method_carrier(&self) -> Option<rustc_public::ty::Ty> {
+        Some(self.ty)
+    }
+
+    fn is_type_alias(&self) -> bool {
+        true
+    }
+}

@@ -1,0 +1,11 @@
+warning: autozng: ignoring `rename` on type `scratch_crate::Generic`: only associated methods can be renamed
+  --> src/lib.rs:10:1
+   |
+10 | pub struct Generic<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^
+   |
+note: renamed here
+  --> src/lib.rs:8:21
+   |
+ 8 | #[cfg_attr(autozng, autozng::rename("IgnoredTypeName"))]
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
