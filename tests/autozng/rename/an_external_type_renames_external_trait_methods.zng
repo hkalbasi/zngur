@@ -1,0 +1,16 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+
+    safe fn eq(&self, &str) -> bool use ::std::cmp::PartialEq as eqStr;
+    safe fn eq(&self, &::std::string::String) -> bool use ::std::cmp::PartialEq as eqString;
+}
+
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type str {
+    wellknown_traits(?Sized, Debug);
+}

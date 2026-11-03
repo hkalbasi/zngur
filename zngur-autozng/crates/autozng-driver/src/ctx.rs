@@ -29,6 +29,7 @@ use std::hash::Hash;
 
 use crate::config::Config;
 
+use crate::attrs::attributes::rename::TraitRenameSpec;
 use crate::driver::with_ctxt;
 use crate::error::{emit_warning_for_span, span_of_def};
 use crate::metadata::{
@@ -284,6 +285,12 @@ struct AutozngContextData {
     /// when the crate walk and the re-export pass both reach it (see
     /// [`AutozngContext::ensure_trait_exportable`]).
     unexportable_traits: RefCell<Vec<TraitDef>>,
+    /// `rename(trait = "...")` specs, keyed by the ADT whose trait methods they rename (see
+    /// [`crate::attrs::attributes::rename::TraitRenameSpec`]).
+    trait_renames: RefCell<FxHashMap<DefId, Vec<TraitRenameSpec>>>,
+    /// Spans of the `trait_path` specs that matched an emitted trait method, so an unmatched
+    /// selector can be warned about once.
+    matched_trait_renames: RefCell<FxHashSet<Span>>,
 }
 
 impl AutozngContextData {
@@ -532,6 +539,47 @@ impl AutozngContext {
             .borrow()
             .get(&key.to_metadata_key())
             .and_then(|record| record.export_name.clone())
+    }
+
+    /// Record a `rename(trait = "...")` spec on the ADT whose trait methods it renames.
+    pub fn add_trait_rename(&self, adt: &AdtDef, spec: TraitRenameSpec) {
+        self.data
+            .trait_renames
+            .borrow_mut()
+            .entry(adt.def_id())
+            .or_default()
+            .push(spec);
+    }
+
+    /// The `rename(trait = "...")` specs recorded on `adt`, in attribute order.
+    pub fn trait_renames_for_adt(&self, adt: &AdtDef) -> Vec<TraitRenameSpec> {
+        self.data
+            .trait_renames
+            .borrow()
+            .get(&adt.def_id())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Every `rename(trait = "...")` spec, in discovery order.
+    pub fn trait_rename_specs(&self) -> Vec<TraitRenameSpec> {
+        self.data
+            .trait_renames
+            .borrow()
+            .values()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
+    /// Mark `span`'s `trait_path` spec as having matched an emitted trait method.
+    pub fn mark_trait_rename_matched(&self, span: Span) {
+        self.data.matched_trait_renames.borrow_mut().insert(span);
+    }
+
+    /// Whether `span`'s `trait_path` spec matched an emitted trait method.
+    pub fn trait_rename_matched(&self, span: Span) -> bool {
+        self.data.matched_trait_renames.borrow().contains(&span)
     }
 
     /// The `#[autozng::layout(...)]` override recorded for `key`, if any.

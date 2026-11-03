@@ -74,10 +74,14 @@ pub enum RenameTargetType {
     Children,
 }
 
-/// One renaming carried by a `rename` attribute: either the item itself or one of its methods.
+/// One renaming carried by a `rename` attribute: the item itself, one of its methods, or the
+/// methods of a trait implemented by it.
 #[derive(Debug, Clone)]
 pub struct RenameSpec {
-    /// `Some(name)` targets that method; `None` targets the item itself.
+    /// `Some(path)` renames the methods of that trait; `method` may narrow it to one method.
+    trait_path: Option<String>,
+    /// `Some(name)` targets that method; `None` targets the item itself (or every method, with a
+    /// `trait_path`).
     method: Option<String>,
     actions: Vec<RenameAction>,
 }
@@ -88,6 +92,19 @@ impl RenameSpec {
             .iter()
             .fold(name.to_owned(), |name, action| action.apply(&name))
     }
+}
+
+/// A `rename(trait_path = "...")` recorded on an ADT, applied when a trait method is rendered on
+/// it.
+#[derive(Debug, Clone)]
+pub struct TraitRenameSpec {
+    /// The trait path exactly as it appears in the `.zng` (e.g. `::std::convert::From<u32>`).
+    pub trait_path: String,
+    /// `Some(name)` narrows the rename to that method of the trait.
+    pub method: Option<String>,
+    pub actions: Vec<RenameAction>,
+    /// Span of the attribute, for diagnostics.
+    pub span: Span,
 }
 
 /// Applies `rename` / `rename_all` actions.
@@ -136,6 +153,32 @@ impl Attr for Rename {
             return;
         }
         for spec in &self.specs {
+            if let Some(trait_path) = &spec.trait_path {
+                let Some(carrier) = item.method_carrier() else {
+                    emit_error_for_span(
+                        self.span,
+                        "autozng: `trait_path = \"...\"` is only valid on an ADT or a type alias",
+                    );
+                    continue;
+                };
+                let Some(adt) = carrier.base_ty().adt_def() else {
+                    emit_error_for_span(
+                        self.span,
+                        "autozng: `trait_path = \"...\"` needs an ADT or a type alias to an ADT",
+                    );
+                    continue;
+                };
+                ctx.add_trait_rename(
+                    &adt,
+                    TraitRenameSpec {
+                        trait_path: trait_path.clone(),
+                        method: spec.method.clone(),
+                        actions: spec.actions.clone(),
+                        span: self.span,
+                    },
+                );
+                continue;
+            }
             let Some(method) = &spec.method else {
                 if item.is_type_alias() {
                     emit_error_for_span(
@@ -205,6 +248,8 @@ pub struct RenameParser {
     actions: Option<Vec<RenameAction>>,
     /// `method = "name"`: target that method instead of the item itself.
     method: Option<String>,
+    /// `trait = "path"`: target the methods of that trait (optionally narrowed by `method`).
+    trait_path: Option<String>,
     target: Option<RenameTargetType>,
     span: Option<Span>,
 }
@@ -229,7 +274,8 @@ impl AttributeParser for RenameParser {
                     r#"case = "case""#,
                     r#"prefix = "pre"#,
                     r#"suffix = "suffix""#,
-                    r#"method = "method_name""#
+                    r#"method = "method_name""#,
+                    r#"trait_path = "trait_path""#
                 ],
                 "https://link/to/docs"
             ),
@@ -253,13 +299,33 @@ impl AttributeParser for RenameParser {
             path: Some(path),
             actions: Some(actions),
             method,
+            trait_path,
             target: Some(target),
             span: Some(span),
         } = self
         {
+            // Renaming every method of a trait to the same name would produce duplicate C++
+            // members; a `trait` rename must keep the methods distinct.
+            if trait_path.is_some()
+                && method.is_none()
+                && actions
+                    .iter()
+                    .any(|action| matches!(action, RenameAction::Rename(_)))
+            {
+                emit_error_for_span(
+                    span,
+                    "autozng: `name` cannot rename every method of a trait; add `method = \"...\"` \
+                     or use `case`/`prefix`/`suffix`",
+                );
+                return None;
+            }
             Some(Rename {
                 path,
-                specs: vec![RenameSpec { method, actions }],
+                specs: vec![RenameSpec {
+                    trait_path,
+                    method,
+                    actions,
+                }],
                 target,
                 span,
             })
@@ -386,6 +452,21 @@ impl RenameParser {
                             return Some(Err(()));
                         };
                         self.method = Some(value.value);
+                        return None;
+                    }
+
+                    // `trait_path = "path"` targets the methods of that trait on the carrier.
+                    if action.value == "trait_path" {
+                        if *path == RENAME_ALL_PATH {
+                            cx.dcx
+                                .struct_err("`trait_path` is not supported in `rename_all`")
+                                .emit();
+                            return Some(Err(()));
+                        }
+                        let Some(value) = cx.expect_string_literal(value) else {
+                            return Some(Err(()));
+                        };
+                        self.trait_path = Some(value.value);
                         return None;
                     }
 

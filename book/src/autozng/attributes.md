@@ -247,6 +247,18 @@ because the alias itself is not emitted. Several `rename` attributes on one item
 type rename and a method rename can coexist. A specific instantiation rename still wins over a
 type-level one.
 
+`rename(trait_path = "::std::convert::From<u32>", ...)` on an ADT or a type alias renames the
+methods of that trait when they are emitted on that type (`emit_on_implementers` or an
+`emit_items` binding). It applies only to that type, never to other implementers of the trait.
+`method = "..."` narrows it to one method; without it every method of the trait is renamed.
+
+The selector is matched exactly against the trait reference as it appears in the `.zng`: the
+visible path (`crate::Trait` or `::std::...`) and, when given, the argument list in the IDL form
+(`::std::string::String`, `crate::Foo<u32>`). Whitespace is ignored; relative paths are not
+resolved. Without arguments the selector matches every instantiation of the trait on the type;
+with arguments it matches only that rendered instantiation. A selector that matches no emitted
+trait method warns. `rename_all` does not accept `trait_path`.
+
 ## `layout`
 
 Overrides the layout policy of a type.

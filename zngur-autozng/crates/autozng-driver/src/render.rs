@@ -24,7 +24,7 @@ use rustc_public::abi::FieldsShape;
 use rustc_public::rustc_internal::{internal, stable};
 use rustc_public::ty::{
     AdtDef, AssocKind, FieldDef, FnDef, GenericArgKind, GenericArgs, GenericParamDefKind, RigidTy,
-    TraitDef, Ty, TyKind,
+    TraitDef, TraitRef, Ty, TyKind,
 };
 use rustc_public::{CrateDef, CrateDefType, DefId};
 use rustc_span::Span;
@@ -83,6 +83,19 @@ pub fn build_spec(ctx: &AutozngContext) -> ZngurSpec {
         ctx.trait_records().iter().filter_map(build_trait).collect();
     traits.sort_by_cached_key(|(key, _)| key.to_string());
     let traits: IndexMap<RustTrait, ZngurTrait> = traits.into_iter().collect();
+
+    // A `trait_path` selector that never matched an emitted trait method is almost always a typo.
+    for spec in ctx.trait_rename_specs() {
+        if !ctx.trait_rename_matched(spec.span) {
+            emit_warning_for_span(
+                spec.span,
+                format!(
+                    "autozng: `trait_path = \"{}\"` matched no trait method emitted on its type",
+                    spec.trait_path
+                ),
+            );
+        }
+    }
 
     ZngurSpec {
         types,
@@ -777,6 +790,59 @@ struct RenderedMethod {
     emit_span: Span,
 }
 
+/// The C++ name a `rename(trait_path = "...")` spec recorded on the rendered type gives
+/// `method_name`, if any.
+///
+/// The selector is compared to the trait reference exactly as the `.zng` renders it
+/// (`::std::convert::From<u32>`, `crate::Trait<::std::string::String>`); only whitespace is
+/// ignored. The last matching spec wins.
+fn trait_rename_for(
+    ctx: &AutozngContext,
+    record: &TyRecord,
+    trait_fn: &TraitFnRecord,
+    method_name: &str,
+) -> Option<String> {
+    let adt = record.adt?;
+    let trait_ref = trait_fn.trait_ref.as_ref()?;
+    let rendered = strip_whitespace(&rendered_trait_ref(trait_fn.trait_def, trait_ref)?);
+    for spec in ctx.trait_renames_for_adt(&adt).into_iter().rev() {
+        if strip_whitespace(&spec.trait_path) == rendered
+            && spec
+                .method
+                .as_deref()
+                .is_none_or(|method| method == method_name)
+        {
+            ctx.mark_trait_rename_matched(spec.span);
+            return Some(
+                spec.actions
+                    .iter()
+                    .fold(method_name.to_owned(), |name, action| action.apply(&name)),
+            );
+        }
+    }
+    None
+}
+
+/// Render a trait reference the way the IDL printer does, for exact selector matching.
+fn rendered_trait_ref(trait_def: TraitDef, trait_ref: &TraitRef) -> Option<String> {
+    let path = RustPathAndGenerics {
+        path: visible_path(&trait_def),
+        generics: concrete_trait_generics(trait_ref)?,
+        named_generics: Vec::new(),
+    };
+    let mut buffer = Vec::new();
+    {
+        let mut printer = IDLPrinter::new(&mut buffer);
+        printer.write_idl(&path).ok()?;
+    }
+    String::from_utf8(buffer).ok()
+}
+
+/// Drop all whitespace, so `Trait< A , B >` and `Trait<A, B>` compare equal.
+fn strip_whitespace(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
 /// Build the methods recorded for a type (from its inherent impl blocks).
 ///
 /// For a fully monomorphized generic type (e.g. `Container<i32>`) the methods live on the ADT
@@ -1183,8 +1249,9 @@ fn build_trait_method(
     let name = name.to_string();
     // See `build_method`: a `rename` on the `let` binding is keyed by the named monomorphization.
     let cpp_name = monomorphization_export_name(ctx, def, Some(&trait_fn.generics))
-        .or_else(|| ctx.export_name_for(&assoc_item))
-        .map(|export| export.name);
+        .map(|export| export.name)
+        .or_else(|| trait_rename_for(ctx, record, trait_fn, &name))
+        .or_else(|| ctx.export_name_for(&assoc_item).map(|export| export.name));
     let self_ty = record.ty;
     let self_def_ty = record.adt.map(|adt| adt.ty().base_ty());
 
