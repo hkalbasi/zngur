@@ -33,6 +33,16 @@ if not ($zng | path exists) {
     exit 1
 }
 
+# Every type gets exactly one block: records are keyed by the region-erased type, so a lifetime
+# parameter must not duplicate `Info<'a>` / `Info<'_>`.
+let type_headers = (open --raw $zng | lines | where { |line| $line | str starts-with "type " })
+let duplicates = ($type_headers | group-by | transpose name blocks | where { |row| ($row.blocks | length) > 1 })
+if ($duplicates | is-not-empty) {
+    print "FAIL: duplicate type blocks in the generated interface:"
+    print ($duplicates | select name | to text)
+    exit 1
+}
+
 # 2. Generate the bridge sources.
 let zngur = $env.ZNGUR_BIN
 let bridge = (do {

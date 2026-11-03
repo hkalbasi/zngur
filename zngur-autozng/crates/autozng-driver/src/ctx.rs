@@ -293,12 +293,12 @@ impl AutozngContextData {
     }
 
     fn have_ty(&self, ty: &Ty) -> bool {
-        self.tys.borrow().contains_key(ty)
+        self.tys.borrow().contains_key(&canonical_ty(*ty))
     }
 
     /// Mark `ty` as seen, so it is never queued for a third-pass visit.
     fn mark_seen(&self, ty: Ty) {
-        let ty = ty.base_ty();
+        let ty = canonical_ty(ty);
         self.walk_states
             .borrow_mut()
             .entry(ty)
@@ -306,6 +306,7 @@ impl AutozngContextData {
     }
 
     fn ty_record_mut(&self, ty: Ty, span: Span) -> std::cell::RefMut<'_, TyRecord> {
+        let ty = canonical_ty(ty);
         // Every type that gets a record is seen: it must not be queued for a third-pass visit.
         self.mark_seen(ty);
         let adt = ty.adt_def();
@@ -393,6 +394,14 @@ fn erase_regions(ty: Ty) -> Ty {
         let tcx = driver.tcx;
         rustc_public::rustc_internal::stable(ty.internal(tcx).fold_with(&mut EraseRegions(tcx)))
     })
+}
+
+/// The canonical identity of `ty` for records, walk state, and queues.
+///
+/// Records and states are keyed by this: regions are erased (so `Info<'a>` and `Info<'_>` are
+/// one type) and one-argument wrappers are unwrapped.
+fn canonical_ty(ty: Ty) -> Ty {
+    erase_regions(ty).base_ty()
 }
 
 /// The signature of `fn_def` with `args` applied when they cover every generic parameter of the
@@ -564,7 +573,7 @@ impl AutozngContext {
                 .data
                 .tys
                 .borrow()
-                .get(&adt.ty().base_ty())
+                .get(&canonical_ty(adt.ty()))
                 .is_some_and(|record| record.selected_explicitly);
             if explicit {
                 WalkFilter::default()
@@ -598,7 +607,7 @@ impl AutozngContext {
     /// Like [`AutozngContext::record_ty`], but marks an explicit `emit` / `emit_items`
     /// selection, which overrides the walk filter for the type's subtree.
     pub fn record_ty_with_reason(&self, ty: &Ty, span: Span, explicit: bool) {
-        let ty = ty.base_ty();
+        let ty = canonical_ty(*ty);
         if let Some(adt) = ty.adt_def()
             && adt.is_unstable()
         {
@@ -623,7 +632,7 @@ impl AutozngContext {
         if adt.is_unstable() {
             return;
         }
-        let ty = adt.ty().base_ty();
+        let ty = canonical_ty(adt.ty());
         if self.data.have_ty(&ty) {
             if explicit {
                 if let Some(record) = self.data.tys.borrow_mut().get_mut(&ty) {
@@ -662,7 +671,7 @@ impl AutozngContext {
         span: Span,
         filter: WalkFilter,
     ) {
-        let ty = ty.base_ty();
+        let ty = canonical_ty(ty);
         if let Some(adt) = ty.adt_def()
             && (matches!(adt.visibility(), Visibility::PrivateAPI) || adt.is_unstable())
         {
@@ -670,7 +679,7 @@ impl AutozngContext {
         }
         // Signature types carry late-bound lifetimes (`Iter<'_, T>`); the IDL drops
         // lifetimes, so use one region-erased identity for the block and for dedupe.
-        let key = erase_regions(ty).base_ty();
+        let key = ty;
         if !can_have_type_block(key) {
             return;
         }
@@ -783,7 +792,7 @@ impl AutozngContext {
                 config.walk_filter.clone(),
             )
         };
-        let ty = erase_regions(ty.base_ty()).base_ty();
+        let ty = canonical_ty(ty);
         WalkRequest {
             ty,
             key: ty,
@@ -812,12 +821,21 @@ impl AutozngContext {
 
     /// The walk state recorded for `ty`, if any.
     pub fn walk_state(&self, ty: &Ty) -> Option<WalkState> {
-        self.data.walk_states.borrow().get(&ty.base_ty()).cloned()
+        self.data
+            .walk_states
+            .borrow()
+            .get(&canonical_ty(*ty))
+            .cloned()
     }
 
     /// Store the effective filter on an already-recorded type.
     pub(crate) fn set_walk_filter(&self, ty: &Ty, filter: WalkFilter) {
-        if let Some(state) = self.data.walk_states.borrow_mut().get_mut(&ty.base_ty()) {
+        if let Some(state) = self
+            .data
+            .walk_states
+            .borrow_mut()
+            .get_mut(&canonical_ty(*ty))
+        {
             state.filter = filter;
         }
     }
@@ -896,7 +914,7 @@ impl AutozngContext {
     ///
     /// Called when a concrete instance is recorded; `pop_concrete` drains the worklist.
     pub fn enqueue_concrete(&self, ty: Ty) {
-        let ty = ty.base_ty();
+        let ty = canonical_ty(ty);
         let Some(adt) = ty.adt_def() else {
             return;
         };
@@ -925,7 +943,7 @@ impl AutozngContext {
 
         let methods: Vec<(FnDef, Option<GenericArgs>)> = {
             let tys = self.data.tys.borrow();
-            tys.get(&adt.ty().base_ty())
+            tys.get(&canonical_ty(adt.ty()))
                 .map(|record| {
                     record
                         .impls
@@ -1052,7 +1070,7 @@ impl AutozngContext {
     /// selection, then instantiates the field type with the instance's arguments.
     pub fn field_emit_span(&self, adt: &AdtDef, field: &FieldDef) -> Option<Span> {
         let tys = self.data.tys.borrow();
-        let record = tys.get(&adt.ty().base_ty())?;
+        let record = tys.get(&canonical_ty(adt.ty()))?;
         record.fields.get(&field.def_id()).map(|field| field.span)
     }
 
@@ -1102,7 +1120,7 @@ impl AutozngContext {
     /// per-type work (like walking impl blocks) so it never implicitly emits a type that the
     /// `emit`/`skip` attributes left out.
     pub fn is_ty_recorded(&self, ty: &Ty) -> bool {
-        self.data.have_ty(&ty.base_ty())
+        self.data.have_ty(ty)
     }
 
     /// Record a free function for emission (as a `fn` entry in the IDL spec).
@@ -1206,7 +1224,7 @@ impl AutozngContext {
         // Every type the trait method exposes is part of the interface.
         self.request_trait_arg_types(&trait_ref, span);
         self.request_signature_types(def, Some(&generics), VisitReason::TraitMethod, span);
-        let ty = trait_ref.self_ty().base_ty();
+        let ty = canonical_ty(trait_ref.self_ty());
         let mut record = self.data.ty_record_mut(ty, span);
         record.trait_fns.insert(TraitFnRecord {
             def,
