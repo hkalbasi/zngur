@@ -54,7 +54,17 @@ if $bridge.exit_code != 0 {
     exit 1
 }
 
-# 3. Assemble the scratch crate. It sits outside the zngur-autozng workspace, so the copied
+# 3. Guard the walk budgets. The unmodified defaults once produced a 154 MB header for this
+#    interface; the current (6,1,1) budgets plus the free std hop keep it around 12 MB. A
+#    regression here must fail the test rather than merely slow the build down.
+let header = ($crate | path join "generated.h")
+let header_size = (ls $header | get 0.size)
+if $header_size > 20MB {
+    print $"FAIL: generated.h is ($header_size), over the 20 MB limit"
+    exit 1
+}
+
+# 4. Assemble the scratch crate. It sits outside the zngur-autozng workspace, so the copied
 #    manifest gains an empty [workspace] table.
 cp ($example | path join "Cargo.toml") ($crate | path join "Cargo.toml")
 cp ($example | path join "src" "lib.rs") ($crate | path join "src" "lib.rs")
@@ -67,7 +77,7 @@ $manifest | save -f ($crate | path join "Cargo.toml")
 let lib = (open --raw ($crate | path join "src" "lib.rs")) + "\nmod generated;\n"
 $lib | save -f ($crate | path join "src" "lib.rs")
 
-# 4. Build the staticlib.
+# 5. Build the staticlib.
 let build = (do {
     ^cargo build --manifest-path ($crate | path join "Cargo.toml")
 } | complete)
@@ -77,7 +87,7 @@ if $build.exit_code != 0 {
     exit 1
 }
 
-# 5. Compile and link the C++ test.
+# 6. Compile and link the C++ test.
 let generated_cpp = ($crate | path join "generated.cpp")
 let os = $nu.os-info.name
 if $os == "windows" {
@@ -111,7 +121,7 @@ if $os == "windows" {
     }
 }
 
-# 6. Run it and compare the vertex list with the fixture.
+# 7. Run it and compare the vertex list with the fixture.
 let exe = if $os == "windows" { "vertices.exe" } else { "vertices" }
 let run = (do { ^($env.ZNGUR_TEST_DIR | path join $exe) } | complete)
 if $run.exit_code != 0 {
