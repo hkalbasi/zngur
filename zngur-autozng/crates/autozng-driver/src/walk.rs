@@ -479,9 +479,14 @@ impl WalkFilter {
                 "contains",
                 "to_vec",
             ],
-            TyKind::RigidTy(RigidTy::Str) => {
-                &["len", "is_empty", "from_utf8", "as_bytes", "as_bytes_mut"]
-            }
+            TyKind::RigidTy(RigidTy::Str) => &[
+                "len",
+                "is_empty",
+                "from_utf8",
+                "as_bytes",
+                "as_bytes_mut",
+                "contains",
+            ],
             _ => return None,
         };
         Some(Self {
