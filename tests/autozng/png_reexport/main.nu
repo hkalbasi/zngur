@@ -74,9 +74,6 @@ cp ($example | path join "testdata" "quadrants.png") "quadrants.png"
 let manifest = "[workspace]\n\n" + (open --raw ($crate | path join "Cargo.toml"))
 $manifest | save -f ($crate | path join "Cargo.toml")
 
-let lib = (open --raw ($crate | path join "src" "lib.rs")) + "\nmod generated;\n"
-$lib | save -f ($crate | path join "src" "lib.rs")
-
 # 5. Build the staticlib.
 let build = (do {
     ^cargo build --manifest-path ($crate | path join "Cargo.toml")

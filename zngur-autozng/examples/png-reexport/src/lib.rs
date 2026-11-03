@@ -10,10 +10,7 @@
 
 #![cfg_attr(autozng, feature(register_tool, custom_inner_attributes))]
 #![cfg_attr(autozng, register_tool(autozng))]
-#![cfg_attr(
-    autozng,
-    autozng::policy(implicitly_emit_external_interfaces)
-)]
+#![cfg_attr(autozng, autozng::policy(implicitly_emit_external_interfaces))]
 
 pub use png::*;
 
@@ -27,3 +24,20 @@ pub fn open(path: &str) -> Reader<BufReader<File>> {
         .read_info()
         .expect("reading the PNG header")
 }
+
+#[cfg(autozng)]
+#[autozng::emit_items]
+const _: () = {
+    // for buffer building
+    let _ = std::slice::from_raw_parts::<u8>;
+    let _ = std::slice::from_raw_parts_mut::<u8>;
+
+    // rename methods coliding with fields
+    #[autozng::rename(prefix = "get_")]
+    let _ = png::Info::animation_control;
+    #[autozng::rename(prefix = "get_")]
+    let _ = png::Info::frame_control;
+};
+
+#[cfg(not(autozng))]
+pub mod generated;
