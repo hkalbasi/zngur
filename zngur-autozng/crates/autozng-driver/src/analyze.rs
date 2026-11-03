@@ -194,7 +194,7 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
     });
     if ctx.is_ty_recorded(&ty) && already_walked {
         ctx.enqueue_concrete(ty);
-        ctx.mark_walked(request.key);
+        ctx.mark_walked(request.key, request.requested_as);
         return;
     }
     let walk = WalkContext {
@@ -234,7 +234,7 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
         }
     });
     ctx.enqueue_concrete(ty);
-    ctx.mark_walked(request.key);
+    ctx.mark_walked(request.key, request.requested_as);
 }
 
 /// Record the items this crate re-exports from *other* crates (`pub use png::*;`), as if each

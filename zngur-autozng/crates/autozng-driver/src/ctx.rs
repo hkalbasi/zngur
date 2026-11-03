@@ -850,9 +850,18 @@ impl AutozngContext {
     }
 
     /// Record that the interface of `key` has been visited.
-    pub fn mark_walked(&self, key: Ty) {
+    ///
+    /// The state becomes a `Walk`: a later request with a smaller budget must not replace it with
+    /// a declaration that drops the interface it already has (see
+    /// [`AutozngContext::request_ty_with_filter`]). A walk that used the type by value also
+    /// enables its by-value methods and constructor, which a truncated declaration had disabled.
+    pub fn mark_walked(&self, key: Ty, requested_as: RequestedAs) {
         if let Some(state) = self.data.walk_states.borrow_mut().get_mut(&key) {
+            state.intent = WalkIntent::Walk;
             state.walked = WalkParts::all();
+            if requested_as == RequestedAs::Value {
+                state.seen_by_value = true;
+            }
         }
     }
 

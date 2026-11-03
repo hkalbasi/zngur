@@ -1,0 +1,35 @@
+warning: autozng: skipping method `octets`: array types are not supported in a zngur interface
+   --> <sysroot>/lib/rustlib/src/rust/library/core/src/net/ip_addr.rs:697:5
+    |
+697 |     pub const fn octets(&self) -> [u8; 4] {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: autozng: skipping method `from_octets`: array types are not supported in a zngur interface
+   --> <sysroot>/lib/rustlib/src/rust/library/core/src/net/ip_addr.rs:715:5
+    |
+715 |     pub const fn from_octets(octets: [u8; 4]) -> Ipv4Addr {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: autozng: skipping method `segments`: array types are not supported in a zngur interface
+    --> <sysroot>/lib/rustlib/src/rust/library/core/src/net/ip_addr.rs:1525:5
+     |
+1525 |     pub const fn segments(&self) -> [u16; 8] {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: autozng: skipping method `from_segments`: array types are not supported in a zngur interface
+    --> <sysroot>/lib/rustlib/src/rust/library/core/src/net/ip_addr.rs:1565:5
+     |
+1565 |     pub const fn from_segments(segments: [u16; 8]) -> Ipv6Addr {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: autozng: skipping method `octets`: array types are not supported in a zngur interface
+    --> <sysroot>/lib/rustlib/src/rust/library/core/src/net/ip_addr.rs:2112:5
+     |
+2112 |     pub const fn octets(&self) -> [u8; 16] {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: autozng: skipping method `from_octets`: array types are not supported in a zngur interface
+    --> <sysroot>/lib/rustlib/src/rust/library/core/src/net/ip_addr.rs:2139:5
+     |
+2139 |     pub const fn from_octets(octets: [u8; 16]) -> Ipv6Addr {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
