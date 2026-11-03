@@ -1,0 +1,8 @@
+type crate::Generic<u32> {
+    #layout(size = 4, align = 4);
+    constructor {value: u32};
+
+    field value (offset = 0, type = u32);
+
+    safe fn value(&self) -> &u32 as valueCpp;
+}

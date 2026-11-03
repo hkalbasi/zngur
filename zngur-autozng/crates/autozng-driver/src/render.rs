@@ -19,7 +19,7 @@ use std::path::Path;
 
 use indexmap::IndexMap;
 use rustc_errors::DiagMessage;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_public::abi::FieldsShape;
 use rustc_public::rustc_internal::{internal, stable};
 use rustc_public::ty::{
@@ -368,7 +368,7 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
         (Vec::new(), Vec::new())
     };
 
-    let mut methods = if walk_methods {
+    let mut methods: Vec<RenderedMethod> = if walk_methods {
         build_methods(ctx, record)
     } else {
         Vec::new()
@@ -377,6 +377,93 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     // they apply to, as if the functions had been enumerated in an `emit_items` const.
     if walk_methods {
         methods.extend(build_emit_for_methods(ctx, record));
+    }
+    // A C++ class cannot have a field and a method with the same name, and `zngur` rejects the
+    // resulting `.zng`. The field keeps its name (it exposes the value). A colliding inherent
+    // method is exposed as `{name}_method`; a colliding trait method as `{name}_{Trait}`, which
+    // also separates it from an inherent method with the same name. A numeric suffix handles the
+    // case where the generated name is taken as well.
+    if !fields.is_empty() && !methods.is_empty() {
+        let field_names: FxHashSet<&str> = fields.iter().map(|field| field.name.as_str()).collect();
+        // `record.fields` is keyed by `DefId`, but the rendered `fields` (after a field was
+        // mapped) are what the collision check must agree with, so match by name.
+        let field_defs: FxHashMap<&str, DefId> = record
+            .fields
+            .values()
+            .map(|field| (field.def.name.as_str(), field.def.def_id()))
+            .collect();
+        // A name used by several methods (an inherent and a trait method) collides even without a
+        // field.
+        let mut name_counts: FxHashMap<String, usize> = FxHashMap::default();
+        for field in &fields {
+            *name_counts.entry(field.name.clone()).or_default() += 1;
+        }
+        for method in &methods {
+            *name_counts
+                .entry(effective_name(&method.details))
+                .or_default() += 1;
+        }
+        // Inherent methods keep their name; their definitions let a trait-method warning point at
+        // the inherent method it collides with.
+        let inherent_defs: FxHashMap<String, DefId> = methods
+            .iter()
+            .filter(|method| method.details.use_path.is_none())
+            .map(|method| (effective_name(&method.details), method.def_id))
+            .collect();
+        // Reserve every current name, so a generated name never takes one that is used.
+        let mut used: FxHashSet<String> = name_counts.keys().cloned().collect();
+        for method in &mut methods {
+            let name = effective_name(&method.details);
+            let shares_name = name_counts.get(&name).is_some_and(|count| *count > 1);
+            let collides_with_field = field_names.contains(name.as_str());
+            if !collides_with_field && !(method.details.use_path.is_some() && shares_name) {
+                continue;
+            }
+            let base = match method
+                .details
+                .use_path
+                .as_ref()
+                .and_then(|path| path.last())
+            {
+                Some(trait_name) => format!("{name}_{trait_name}"),
+                None => format!("{name}_method"),
+            };
+            let mut candidate = base.clone();
+            let mut suffix = 2;
+            while used.contains(&candidate) {
+                candidate = format!("{base}{suffix}");
+                suffix += 1;
+            }
+            used.insert(candidate.clone());
+            let (other, kind) = if collides_with_field {
+                (
+                    field_defs
+                        .get(name.as_str())
+                        .copied()
+                        .map(|id| (id, "the field is declared here")),
+                    "a field",
+                )
+            } else {
+                (
+                    inherent_defs
+                        .get(&name)
+                        .copied()
+                        .map(|id| (id, "the inherent method is declared here")),
+                    "another method",
+                )
+            };
+            warn_cpp_name_collision(
+                method.def_id,
+                method.emit_span,
+                other,
+                format!(
+                    "autozng: method `{}` on `{}` collides with {kind} in C++; exposing it as \
+                     `{candidate}`",
+                    method.details.data.name, record.ty
+                ),
+            );
+            method.details.cpp_name = Some(candidate);
+        }
     }
 
     // An explicit `#[autozng::layout(...)]` replaces the automatic `StackAllocated` policy
@@ -430,6 +517,9 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     {
         wellknown.clear();
     }
+
+    // The definition tracking was only needed for the collision diagnostic above.
+    let methods = methods.into_iter().map(|method| method.details).collect();
 
     Some(ZngurType {
         ty: rust_ty,
@@ -667,13 +757,33 @@ fn monomorphization_export_name(
     ctx.export_name_for(&MetadataKey::for_monomorphization(def.def_id(), args))
 }
 
+/// The C++ name a rendered method is exposed under.
+fn effective_name(method: &ZngurMethodDetails) -> String {
+    method
+        .cpp_name
+        .clone()
+        .unwrap_or_else(|| method.data.name.clone())
+}
+
+/// A rendered method plus the definition it came from.
+///
+/// The definition is not part of the IDL. It is kept until [`build_type`] finishes so a C++ name
+/// collision can point its warning at the method through the live `TyCtxt`; [`build_type`] strips
+/// it before building the `ZngurType`.
+struct RenderedMethod {
+    details: ZngurMethodDetails,
+    def_id: DefId,
+    /// The `#[autozng::emit]` that selected the method, for an `emitted here` note.
+    emit_span: Span,
+}
+
 /// Build the methods recorded for a type (from its inherent impl blocks).
 ///
 /// For a fully monomorphized generic type (e.g. `Container<i32>`) the methods live on the ADT
 /// *definition*'s record: the analysis pass walks an ADT's inherent impls once, onto the
 /// generic self type. They are looked up there and instantiated with the concrete arguments of
 /// `record.ty` (see [`build_method`]).
-fn build_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurMethodDetails> {
+fn build_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<RenderedMethod> {
     // The generic arguments of the fully monomorphized `record.ty`, if any. `None` for a type
     // with no generic arguments; the methods then render uninstantiated.
     let args = concrete_ty_args(record);
@@ -704,7 +814,7 @@ fn build_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurMethodDeta
         .map(|method| method.def)
         .collect();
 
-    let mut methods: Vec<ZngurMethodDetails> = impls
+    let mut methods: Vec<RenderedMethod> = impls
         .into_iter()
         .flat_map(|impl_record| {
             impl_record
@@ -716,7 +826,13 @@ fn build_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurMethodDeta
             if method.partial_args.is_none() && monomorphized.contains(&method.def) {
                 return None;
             }
-            build_method(ctx, record, impl_record, method, args.as_ref())
+            build_method(ctx, record, impl_record, method, args.as_ref()).map(|details| {
+                RenderedMethod {
+                    details,
+                    def_id: method.def.def_id(),
+                    emit_span: method.span,
+                }
+            })
         })
         .collect();
 
@@ -911,11 +1027,17 @@ fn method_signature_parts(
 }
 
 /// Build the trait methods attached to a type (see [`TraitFnRecord`]).
-fn build_trait_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurMethodDetails> {
+fn build_trait_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<RenderedMethod> {
     record
         .trait_fns
         .iter()
-        .filter_map(|trait_fn| build_trait_method(ctx, record, trait_fn))
+        .filter_map(|trait_fn| {
+            build_trait_method(ctx, record, trait_fn).map(|details| RenderedMethod {
+                details,
+                def_id: trait_fn.def.def_id(),
+                emit_span: trait_fn.span,
+            })
+        })
         .collect()
 }
 
@@ -928,7 +1050,7 @@ fn build_trait_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurMeth
 /// A function already emitted on the type (because it was explicitly enumerated in an
 /// `emit_items` const, or contributed by another record) is skipped, so an explicit enumeration
 /// and `emit_on_implementers` do not produce duplicate entries.
-fn build_emit_for_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurMethodDetails> {
+fn build_emit_for_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<RenderedMethod> {
     let mut seen: FxHashSet<FnDef> = record
         .trait_fns
         .iter()
@@ -989,7 +1111,11 @@ fn build_emit_for_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<ZngurM
                 span: emit_for.span,
             };
             if let Some(method) = build_trait_method(ctx, record, &instantiated) {
-                methods.push(method);
+                methods.push(RenderedMethod {
+                    details: method,
+                    def_id: trait_fn.def.def_id(),
+                    emit_span: emit_for.span,
+                });
             }
         }
     }
@@ -1181,4 +1307,29 @@ fn warn(def_id: DefId, emit_span: Span, msg: impl Into<DiagMessage>) {
 /// Only valid while the analysis callback is running (it needs the live `TyCtxt`).
 fn warn_emit_span(emit_span: Span, msg: impl Into<DiagMessage>) {
     emit_warning_for_span(emit_span, msg);
+}
+
+/// Warn that a method's C++ name collides with another member: the method definition is the
+/// primary span, with the other member's definition as a note.
+///
+/// Only valid while the analysis callback is running (it needs the live `TyCtxt`).
+fn warn_cpp_name_collision(
+    def_id: DefId,
+    emit_span: Span,
+    other: Option<(DefId, &'static str)>,
+    msg: impl Into<DiagMessage>,
+) {
+    let item_span = span_of_def(def_id);
+    with_struct_warning_for_rustc_public_span(def_id.span(), msg, |mut diag, _tcx| {
+        if let Some((other_id, label)) = other {
+            let other_span = span_of_def(other_id);
+            if !other_span.is_dummy() && other_span != item_span {
+                diag.span_note(other_span, label);
+            }
+        }
+        if !emit_span.is_dummy() && !item_span.contains(emit_span) {
+            diag.span_note(emit_span, "emitted here");
+        }
+        diag.emit()
+    });
 }

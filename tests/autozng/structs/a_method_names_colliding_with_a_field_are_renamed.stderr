@@ -1,0 +1,11 @@
+warning: autozng: method `width` on `Collides` collides with a field in C++; exposing it as `width_method`
+  --> src/lib.rs:13:5
+   |
+13 |     pub fn width(&self) -> u32 {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the field is declared here
+  --> src/lib.rs:9:5
+   |
+ 9 |     pub width: u32,
+   |     ^^^^^^^^^^^^^^

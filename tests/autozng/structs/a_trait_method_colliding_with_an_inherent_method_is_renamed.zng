@@ -1,0 +1,13 @@
+type crate::Widget {
+    #layout(size = 4, align = 4);
+    constructor {value: u32};
+
+    field value (offset = 0, type = u32);
+
+    safe fn width(&self) -> u32;
+    safe fn width(&self) -> u32 use crate::Measure as width_Measure;
+}
+
+trait crate::Measure {
+    safe fn width(&self) -> u32;
+}

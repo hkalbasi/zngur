@@ -1,0 +1,9 @@
+type crate::Collides {
+    #layout(size = 4, align = 4);
+    constructor {width: u32};
+
+    field width (offset = 0, type = u32);
+
+    safe fn width(&self) -> u32 as width_method;
+    safe fn height(&self) -> u32;
+}
