@@ -18,7 +18,7 @@ use rustc_public::abi::Layout;
 use rustc_public::mir::Mutability;
 use rustc_public::ty::{
     AdtDef, FieldDef, FnDef, FnSig, GenericArgKind, GenericArgs, GenericParamDefKind, ImplDef,
-    RigidTy, TraitDecl, TraitDef, TraitRef, TyKind,
+    RigidTy, TraitDecl, TraitDef, TraitRef, TyKind, VariantIdx,
 };
 use rustc_public::{DefId, ty::Ty};
 use rustc_span::Span;
@@ -37,13 +37,14 @@ use crate::metadata::{
 };
 use crate::rustc_ext::{
     ClausesOfExt, FnDefExt, GenericClauses, GetAssocInfoExt, RustcInternalEx, RustcPublicTyExt,
-    StabilityExt, Visibility, VisibilityExt, fn_trait_name, stable_trait, visible_path,
+    StabilityExt, Visibility, VisibilityExt, fn_trait_name, resolvable_path, stable_trait,
+    visible_path,
 };
 use crate::type_map::{is_type_block_less, map_rustc_public_ty_to_zngur};
 use crate::walk::{
     ReceiverKind, RequestedAs, VisibilityKind, VisitReason, WalkBudget, WalkContext, WalkFilter,
-    WalkIntent, WalkItem, WalkItemKind, WalkParts, WalkPhase, WalkRequest, WalkState, WalkTarget,
-    base_ty,
+    WalkIntent, WalkItem, WalkItemKind, WalkOwner, WalkParts, WalkPhase, WalkRequest, WalkState,
+    WalkTarget, base_ty,
 };
 
 #[derive(Debug)]
@@ -240,6 +241,9 @@ pub struct TyRecord {
     pub impls: IndexMap<DefId, ImplRecord>,
     /// Trait methods attached to this type (see [`TraitFnRecord`]).
     pub trait_fns: IndexSet<TraitFnRecord>,
+    /// Enum variants the walk filter denied, by index; rendering omits them, so a denied enum
+    /// is layout-only.
+    pub denied_variants: IndexSet<VariantIdx>,
     /// Whether an explicit `emit` / `emit_items` selected this type. Explicit selection
     /// overrides the walk filter for the type's subtree.
     pub selected_explicitly: bool,
@@ -335,6 +339,7 @@ impl AutozngContextData {
                 fields: IndexMap::default(),
                 impls: IndexMap::default(),
                 trait_fns: IndexSet::default(),
+                denied_variants: IndexSet::default(),
                 selected_explicitly: false,
                 selected_walk_filter: None,
             })
@@ -417,6 +422,47 @@ fn erase_regions(ty: Ty) -> Ty {
 /// one type) and one-argument wrappers are unwrapped.
 fn canonical_ty(ty: Ty) -> Ty {
     erase_regions(ty).base_ty()
+}
+
+/// The owner metadata for the `Crate`, `PathPrefix`, and `External` filter rules.
+///
+/// An ADT owner uses its **defining** crate and its **public** `.zng` path: a re-exported
+/// external type keeps the re-export path (so `PathPrefix` sees `crate::...`) while `Crate`
+/// still names the defining crate (`png`). Slices and `str` have no ADT; their defining crate is
+/// the crate of the inherent impl under `SimplifiedType` (normally `core`), and they have no
+/// module path.
+pub(crate) fn walk_owner(ty: Ty) -> WalkOwner {
+    let ty = canonical_ty(ty);
+    if let Some(adt) = ty.adt_def() {
+        let krate = adt.krate();
+        return WalkOwner {
+            path: resolvable_path(&adt),
+            krate: Some(krate.name),
+            is_external: !krate.is_local,
+        };
+    }
+    let krate = match ty.base_ty().kind() {
+        TyKind::RigidTy(RigidTy::Slice(_) | RigidTy::Str) => ty
+            .incoherent_impls()
+            .first()
+            .map(|impl_def| impl_def.krate().name),
+        _ => None,
+    };
+    WalkOwner {
+        is_external: krate.is_some(),
+        krate,
+        path: None,
+    }
+}
+
+/// The owner metadata of a trait declaration, for [`AutozngContext::trait_method_allowed`].
+fn trait_walk_owner(trait_def: &TraitDef) -> WalkOwner {
+    let krate = trait_def.krate();
+    WalkOwner {
+        path: resolvable_path(trait_def),
+        krate: Some(krate.name),
+        is_external: !krate.is_local,
+    }
 }
 
 /// The signature of `fn_def` with `args` applied when they cover every generic parameter of the
@@ -1168,7 +1214,15 @@ impl AutozngContext {
     }
 
     /// Whether the walk filter allows this trait method.
-    fn trait_method_allowed(&self, trait_def: &TraitDef, fn_def: &FnDef) -> bool {
+    ///
+    /// `owner` is the type the method is emitted on (the implementing type for a concrete
+    /// method, or the trait itself for a declaration), so the owner-based rules match it.
+    fn trait_method_allowed(
+        &self,
+        trait_def: &TraitDef,
+        fn_def: &FnDef,
+        owner: &WalkOwner,
+    ) -> bool {
         let filter = self
             .walk_filter_for(trait_def)
             .unwrap_or_else(|| self.current_filter());
@@ -1185,6 +1239,7 @@ impl AutozngContext {
             receiver: Some(receiver_kind(fn_def)),
             visibility: Some(visibility_kind(fn_def.visibility())),
             trait_path: Some(trait_path.trim_start_matches("::")),
+            owner: Some(owner),
         };
         filter.allows(&item)
     }
@@ -1200,6 +1255,17 @@ impl AutozngContext {
         record.fields.get(&field.def_id()).map(|field| field.span)
     }
 
+    /// Record that the walk filter denied an enum variant.
+    ///
+    /// Rendering skips denied variants, so denying every variant of an enum leaves a layout-only
+    /// `type` block (the same result as denying every field of a struct).
+    pub fn record_denied_variant(&self, ty: Ty, variant: VariantIdx) {
+        self.data
+            .ty_record_mut(ty, Span::default())
+            .denied_variants
+            .insert(variant);
+    }
+
     /// Record a field as selected for emission onto `ty`'s [`TyRecord`].
     ///
     /// Called while walking an ADT's fields in `analyze.rs` (through
@@ -1210,6 +1276,7 @@ impl AutozngContext {
             return;
         }
         let filter = self.current_filter();
+        let owner = walk_owner(ty);
         let name = field.name.to_string();
         let item = WalkItem {
             kind: WalkItemKind::Field,
@@ -1217,6 +1284,7 @@ impl AutozngContext {
             receiver: None,
             visibility: Some(visibility_kind(field.visibility())),
             trait_path: None,
+            owner: Some(&owner),
         };
         if !filter.allows(&item) {
             return;
@@ -1318,6 +1386,7 @@ impl AutozngContext {
             return;
         }
         let filter = self.current_filter();
+        let owner = walk_owner(ty);
         let name = fn_def
             .name()
             .rsplit("::")
@@ -1330,6 +1399,7 @@ impl AutozngContext {
             receiver: Some(receiver_kind(&fn_def)),
             visibility: Some(visibility_kind(fn_def.visibility())),
             trait_path: None,
+            owner: Some(&owner),
         };
         if !filter.allows(&item) || selection_filter.is_some_and(|filter| !filter.allows(&item)) {
             return;
@@ -1370,7 +1440,8 @@ impl AutozngContext {
         generics: GenericArgs,
         span: Span,
     ) {
-        if !self.trait_method_allowed(&trait_ref.def_id, &def) {
+        let owner = walk_owner(trait_ref.self_ty());
+        if !self.trait_method_allowed(&trait_ref.def_id, &def, &owner) {
             return;
         }
         // Every type the trait method exposes is part of the interface.
@@ -1724,7 +1795,8 @@ impl AutozngContext {
         if fn_def.is_unstable() {
             return;
         }
-        if !self.trait_method_allowed(&trait_def, &fn_def) {
+        let owner = trait_walk_owner(&trait_def);
+        if !self.trait_method_allowed(&trait_def, &fn_def, &owner) {
             return;
         }
         if let Some(trait_ref) = &trait_ref {

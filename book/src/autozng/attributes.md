@@ -306,9 +306,31 @@ It takes an ordered list of roots:
 ```
 
 Each matching root sets the verdict (`all` / `include` allow, `none` / `exclude` deny), and the
-last matching root wins. The rules are `Fields`, `Variants`, `InherentMethods`,
-`TraitMethods`, `Named("...")`, `Receiver(Value | Ref | RefMut | Static)` and
-`Visibility(Public | PublicInternal | Private)`.
+last matching root wins.
+
+The item rules are `Fields`, `Variants`, `InherentMethods`, `TraitMethods`, `Named("...")`,
+`Receiver(Value | Ref | RefMut | Static)` and `Visibility(Public | PublicInternal | Private)`.
+
+The owner rules match every item of a type:
+
+- `Crate("std")` — the type's **defining** crate, not its `.zng` path. A re-exported external
+  type (for example `pub use png::*`) still matches `Crate("png")` even though its path is
+  `crate::...`.
+- `PathPrefix("crate::module")` — a segment-wise prefix of the type's **public** `.zng` path.
+  `crate` is the analyzed crate, and a re-export keeps its re-export path. A leading `::` is
+  ignored.
+- `External` — the type is defined outside the analyzed crate.
+
+For example, with [`implicitly_emit_external_interfaces`](#policy), keep the local interface and
+the re-exported crate's own types while making `std`/`core`/`alloc` layout-only:
+
+```rust
+#![autozng::walk_filter(exclude(Crate("std"), Crate("core"), Crate("alloc")))]
+```
+
+`exclude(External)` drops every external interface; `PathPrefix` narrows the walk by module.
+Owner rules are useful with generic types, where the path is the base type's path without its
+arguments.
 
 Slices and `str` have a default filter, because their full interfaces pull in large amounts of
 iterator API that a C++ caller rarely needs:

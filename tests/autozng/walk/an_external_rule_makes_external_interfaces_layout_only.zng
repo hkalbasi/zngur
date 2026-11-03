@@ -1,0 +1,12 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type crate::Holder {
+    #layout(size = 32, align = 8);
+    constructor {text: ::std::string::String, length: usize};
+
+    field text (offset = 0, type = ::std::string::String);
+    field length (offset = 24, type = usize);
+}

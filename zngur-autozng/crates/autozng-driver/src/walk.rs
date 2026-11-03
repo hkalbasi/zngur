@@ -372,6 +372,13 @@ pub enum WalkRule {
     Named(String),
     Receiver(ReceiverKind),
     Visibility(VisibilityKind),
+    /// The owner type's **defining** crate (`adt.krate().name()`), not its `.zng` path.
+    Crate(String),
+    /// A prefix of the owner type's **public** `.zng` path, matchable segment-wise. `crate` is
+    /// the analyzed crate; a re-exported external type keeps its re-export path.
+    PathPrefix(Vec<String>),
+    /// The owner type is defined outside the analyzed crate.
+    External,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -397,6 +404,19 @@ pub enum WalkItemKind {
     TraitMethod,
 }
 
+/// The type an interface item belongs to, for the owner-based `Crate` / `PathPrefix` /
+/// `External` rules.
+#[derive(Debug, Clone, Default)]
+pub struct WalkOwner {
+    /// The public `.zng` path segments, without a leading `::`. A re-exported external type keeps
+    /// its re-export path (`crate::...`); `crate` means the analyzed crate.
+    pub path: Option<Vec<String>>,
+    /// The defining crate (`"std"`, `"png"`, ...), not the re-export path.
+    pub krate: Option<String>,
+    /// Whether the owner is defined outside the analyzed crate.
+    pub is_external: bool,
+}
+
 /// The interface item being considered by a filter.
 #[derive(Debug, Clone, Copy)]
 pub struct WalkItem<'a> {
@@ -405,6 +425,8 @@ pub struct WalkItem<'a> {
     pub receiver: Option<ReceiverKind>,
     pub visibility: Option<VisibilityKind>,
     pub trait_path: Option<&'a str>,
+    /// The type the item belongs to; `None` for an item with no owner (a free function).
+    pub owner: Option<&'a WalkOwner>,
 }
 
 impl Default for WalkFilter {
@@ -505,6 +527,14 @@ impl WalkRule {
             WalkRule::Named(name) => item.name == Some(name.as_str()),
             WalkRule::Receiver(receiver) => item.receiver == Some(*receiver),
             WalkRule::Visibility(visibility) => item.visibility == Some(*visibility),
+            WalkRule::Crate(krate) => {
+                item.owner.and_then(|owner| owner.krate.as_deref()) == Some(krate.as_str())
+            }
+            WalkRule::PathPrefix(prefix) => item
+                .owner
+                .and_then(|owner| owner.path.as_deref())
+                .is_some_and(|path| path.starts_with(prefix)),
+            WalkRule::External => item.owner.is_some_and(|owner| owner.is_external),
         }
     }
 }
@@ -520,6 +550,7 @@ mod tests {
             receiver: None,
             visibility: None,
             trait_path: None,
+            owner: None,
         }
     }
 
@@ -586,5 +617,45 @@ mod tests {
             ..item(WalkItemKind::TraitMethod, Some("fmt"))
         };
         assert!(trait_path.allows(&debug));
+    }
+
+    #[test]
+    fn crate_path_and_external_rules_match_the_owner() {
+        let local = WalkOwner {
+            path: Some(vec!["crate".into(), "nested".into(), "Thing".into()]),
+            krate: Some("example_crate".into()),
+            is_external: false,
+        };
+        let local_item = WalkItem {
+            owner: Some(&local),
+            ..item(WalkItemKind::Field, Some("value"))
+        };
+
+        let by_crate = |krate: &str| {
+            WalkFilter::new(vec![WalkFilterRoot::Include(vec![WalkRule::Crate(
+                krate.into(),
+            )])])
+        };
+        assert!(by_crate("example_crate").allows(&local_item));
+        assert!(!by_crate("std").allows(&local_item));
+
+        let by_path = |segments: &[&str]| {
+            WalkFilter::new(vec![WalkFilterRoot::Include(vec![WalkRule::PathPrefix(
+                segments.iter().map(|s| (*s).to_string()).collect(),
+            )])])
+        };
+        assert!(by_path(&["crate", "nested"]).allows(&local_item));
+        assert!(!by_path(&["crate", "other"]).allows(&local_item));
+
+        let external = WalkFilter::new(vec![WalkFilterRoot::Include(vec![WalkRule::External])]);
+        assert!(!external.allows(&local_item));
+        let external_owner = WalkOwner {
+            is_external: true,
+            ..local.clone()
+        };
+        assert!(external.allows(&WalkItem {
+            owner: Some(&external_owner),
+            ..local_item
+        }));
     }
 }

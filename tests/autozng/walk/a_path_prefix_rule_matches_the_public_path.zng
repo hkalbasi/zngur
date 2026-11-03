@@ -1,0 +1,10 @@
+type crate::Visible {
+    #layout(size = 4, align = 4);
+    constructor {hidden: crate::nested::Hidden};
+
+    field hidden (offset = 0, type = crate::nested::Hidden);
+}
+
+type crate::nested::Hidden {
+    #layout(size = 4, align = 4);
+}

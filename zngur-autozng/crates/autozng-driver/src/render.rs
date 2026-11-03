@@ -376,7 +376,7 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
             None => (Vec::new(), Vec::new()),
         }
     } else if walk_variants && let Some(adt) = adt.filter(|adt| adt.kind().is_enum()) {
-        (Vec::new(), build_variant_names(&adt))
+        (Vec::new(), build_variant_names(record, &adt))
     } else {
         (Vec::new(), Vec::new())
     };
@@ -556,10 +556,12 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
 ///
 /// The fields and methods are not walked, so every variant is non-exhaustive: C++ can match it
 /// but cannot access or construct its fields.
-fn build_variant_names(adt: &AdtDef) -> Vec<ZngurVariant> {
+fn build_variant_names(record: &TyRecord, adt: &AdtDef) -> Vec<ZngurVariant> {
     adt.variants()
         .into_iter()
-        .filter(|variant| !variant.is_unstable())
+        .filter(|variant| {
+            !variant.is_unstable() && !record.denied_variants.contains(&variant.idx())
+        })
         .map(|variant| ZngurVariant {
             name: variant.name().to_string(),
             exhaustive: false,
@@ -620,7 +622,9 @@ fn build_fields(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<Zn
 fn build_variants(ctx: &AutozngContext, record: &TyRecord, adt: &AdtDef) -> Vec<ZngurVariant> {
     adt.variants()
         .into_iter()
-        .filter(|variant| !variant.is_unstable())
+        .filter(|variant| {
+            !variant.is_unstable() && !record.denied_variants.contains(&variant.idx())
+        })
         .map(|variant| {
             let all_fields = variant.fields();
             let fields = all_fields
@@ -1206,12 +1210,14 @@ fn build_emit_for_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<Render
             };
             let name = name.to_string();
             let trait_path = emit_for.trait_def.name();
+            let owner = crate::ctx::walk_owner(record.ty);
             let item = WalkItem {
                 kind: WalkItemKind::TraitMethod,
                 name: Some(&name),
                 receiver: Some(receiver_kind(&trait_fn.def)),
                 visibility: Some(visibility_kind(trait_fn.def.visibility())),
                 trait_path: Some(trait_path.trim_start_matches("::")),
+                owner: Some(&owner),
             };
             if !filter.allows(&item) {
                 continue;

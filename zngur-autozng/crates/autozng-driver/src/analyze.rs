@@ -36,8 +36,8 @@ use crate::{
     rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt, VisibilityExt},
     visit::{self, RustcPublicVisitable, RustcPublicVisitor},
     walk::{
-        RequestedAs, VisitReason, WalkBudget, WalkContext, WalkFilter, WalkParts, WalkPhase,
-        WalkRequest, base_ty,
+        RequestedAs, VisitReason, WalkBudget, WalkContext, WalkFilter, WalkItem, WalkItemKind,
+        WalkParts, WalkPhase, WalkRequest, base_ty,
     },
 };
 use zngur_def::ZngurSpec;
@@ -163,9 +163,28 @@ fn record_trait_methods(trait_def: &rustc_public::ty::TraitDef, ctx: &AutozngCon
 /// method queues the types it exposes for a third-pass visit (see
 /// [`AutozngContext::request_ty`]).
 fn visit_adt_children(adt: &rustc_public::ty::AdtDef, ctx: &AutozngContext) {
+    let owner = crate::ctx::walk_owner(adt.ty());
     for variant in adt.variants() {
         if variant.is_unstable() {
             continue;
+        }
+        // An enum variant is an interface item of its own, so `Variants` and the owner rules
+        // can deny it. A struct's single implicit variant is not filtered: its fields are the
+        // struct's `Fields`.
+        if adt.kind().is_enum() {
+            let name = variant.name().to_string();
+            let item = WalkItem {
+                kind: WalkItemKind::Variant,
+                name: Some(&name),
+                receiver: None,
+                visibility: None,
+                trait_path: None,
+                owner: Some(&owner),
+            };
+            if !ctx.current_filter().allows(&item) {
+                ctx.record_denied_variant(adt.ty(), variant.idx());
+                continue;
+            }
         }
         for field in variant.fields() {
             let field_attrs = field.autozng_attrs();

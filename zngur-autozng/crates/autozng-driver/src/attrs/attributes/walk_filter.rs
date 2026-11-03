@@ -17,11 +17,19 @@
 //! #![autozng::walk_filter(exclude(TraitMethods))]
 //! #[autozng::walk_filter(include(Fields), exclude(Named("private")))]
 //! #[autozng::walk_filter(include(Fields, InherentMethods))]
+//! #![autozng::walk_filter(exclude(Crate("std"), Crate("core"), Crate("alloc")))]
+//! #[autozng::walk_filter(include(PathPrefix("crate::nested"), External))]
 //! ```
 //!
 //! Each matching root sets the verdict (`all` / `include` allow, `none` / `exclude` deny) and
 //! the last matching root wins. With no match, the default is the inverse of the first root:
 //! `include` / `none` deny, `exclude` / `all` allow.
+//!
+//! The item rules (`Fields`, `Variants`, `InherentMethods`, `TraitMethods`, `Named`,
+//! `Receiver`, `Visibility`) match one item. The owner rules match every item of a type:
+//! `Crate("std")` is its defining crate, `PathPrefix("std::option")` is a segment-wise prefix
+//! of its public `.zng` path (`crate` means the analyzed crate; a re-export keeps its re-export
+//! path), and `External` means the type is defined outside the analyzed crate.
 
 use rustc_attr_parsing::template;
 use rustc_span::Span;
@@ -57,6 +65,9 @@ const RULE_NAMES: &[&str] = &[
     "Named",
     "Receiver",
     "Visibility",
+    "Crate",
+    "PathPrefix",
+    "External",
 ];
 const RECEIVER_NAMES: &[&str] = &["Value", "Ref", "RefMut", "Static"];
 const VISIBILITY_NAMES: &[&str] = &["Public", "PublicInternal", "Private"];
@@ -172,6 +183,7 @@ impl WalkFilterParser {
                 "Variants" => Some(WalkRule::Variants),
                 "InherentMethods" => Some(WalkRule::InherentMethods),
                 "TraitMethods" => Some(WalkRule::TraitMethods(None)),
+                "External" => Some(WalkRule::External),
                 _ => {
                     cx.expected_specific_argument(meta.span(), RULE_NAMES);
                     None
@@ -195,6 +207,26 @@ impl WalkFilterParser {
             "Named" => {
                 let name = Self::single_string(cx, meta)?;
                 Some(WalkRule::Named(name))
+            }
+            "Crate" => {
+                let krate = Self::single_string(cx, meta)?;
+                if krate.is_empty() {
+                    cx.expected_specific_argument(meta.span(), RULE_NAMES);
+                    return None;
+                }
+                Some(WalkRule::Crate(krate))
+            }
+            "PathPrefix" => {
+                let path = Self::single_string(cx, meta)?;
+                let mut segments = Vec::new();
+                for segment in path.trim_start_matches("::").split("::") {
+                    if segment.is_empty() {
+                        cx.expected_specific_argument(meta.span(), RULE_NAMES);
+                        return None;
+                    }
+                    segments.push(segment.to_string());
+                }
+                Some(WalkRule::PathPrefix(segments))
             }
             "Receiver" => {
                 let (receiver, span) = Self::nested_word(cx, meta)?;
