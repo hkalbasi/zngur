@@ -741,13 +741,13 @@ fn warn_unsupported_rename_with(export: Option<ExportName>, def_id: DefId, item:
     );
 }
 
-/// The export name recorded for one monomorphization of `def` (`#[autozng::rename]` on a `let`
-/// binding inside an `emit_items` const).
+/// The export name recorded for one rendered instantiation of `def` (`#[autozng::rename]` on a
+/// `let` binding inside an `emit_items` const).
 ///
-/// The name is keyed by the fn's `DefId` plus its enumerated generic args (the same list stored
-/// as `FnRecord::partial_args` / `TraitFnRecord::generics`), so it only applies to that
-/// instantiation and not to every monomorphization of the same `FnDef`. An empty arg list is the
-/// plain `DefId` key (see [`MetadataKey::for_monomorphization`]).
+/// The name is keyed by the fn's `DefId` plus the *rendered* generic args (the impl's args from
+/// the concrete instance and the method's own enumerated args), so a rename recorded for one
+/// instantiation does not leak to another. An empty arg list is the plain `DefId` key — the
+/// method declaration's `rename`, which applies to every instantiation.
 fn monomorphization_export_name(
     ctx: &AutozngContext,
     def: FnDef,
@@ -803,38 +803,73 @@ fn build_methods(ctx: &AutozngContext, record: &TyRecord) -> Vec<RenderedMethod>
         Vec::new()
     };
 
-    // Methods with an explicitly-enumerated monomorphization (an `emit_items` const naming
-    // `Self::foo::<T>`) are emitted as those monomorphizations; the uninstantiated record of the
-    // same method is a template that cannot be rendered on its own, so it is skipped silently
-    // (like a generic template *type*) rather than warned about.
-    let monomorphized: Vec<FnDef> = impls
-        .iter()
-        .flat_map(|impl_record| impl_record.methods.iter())
-        .filter(|method| method.partial_args.is_some())
-        .map(|method| method.def)
-        .collect();
+    // Group the recorded methods by their definition: a method recorded by an `emit_items`
+    // binding carries that binding's generic args (`partial_args`), while the impl walk records
+    // the uninstantiated template (`partial_args = None`). For one rendered instance, the record
+    // whose impl arguments match the instance replaces the template. A record for another
+    // instantiation is not rendered here: it would duplicate the method and could apply its
+    // rename to the wrong type.
+    let mut by_def: IndexMap<FnDef, Vec<(&ImplRecord, &FnRecord)>> = IndexMap::new();
+    for impl_record in impls {
+        for method in impl_record.methods.iter() {
+            by_def
+                .entry(method.def)
+                .or_default()
+                .push((impl_record, method));
+        }
+    }
 
-    let mut methods: Vec<RenderedMethod> = impls
-        .into_iter()
-        .flat_map(|impl_record| {
-            impl_record
-                .methods
-                .iter()
-                .map(move |method| (impl_record, method))
-        })
-        .filter_map(|(impl_record, method)| {
-            if method.partial_args.is_none() && monomorphized.contains(&method.def) {
-                return None;
+    let mut methods: Vec<RenderedMethod> = Vec::new();
+    for (def, records) in by_def {
+        let parent_count = def.generics_of().parent_count;
+        // Whether `method` was recorded for the instance being rendered. A record whose
+        // `partial_args` do not cover the impl's parameters is a template for a different
+        // instantiation.
+        let matches_instance = |method: &FnRecord| -> bool {
+            let Some(partial) = method.partial_args.as_ref() else {
+                return false;
+            };
+            if parent_count == 0 {
+                return true;
             }
-            build_method(ctx, record, impl_record, method, args.as_ref()).map(|details| {
-                RenderedMethod {
+            let Some(instance) = args.as_ref() else {
+                return false;
+            };
+            partial.0.len() >= parent_count
+                && instance.0.len() >= parent_count
+                && partial.0[..parent_count] == instance.0[..parent_count]
+        };
+        let has_matching = records.iter().any(|(_, method)| matches_instance(method));
+        let has_template = records
+            .iter()
+            .any(|(_, method)| method.partial_args.is_none());
+        let mut selected: Vec<(&ImplRecord, &FnRecord)> = records
+            .iter()
+            .copied()
+            .filter(|(_, method)| {
+                if method.partial_args.is_some() {
+                    matches_instance(method)
+                } else {
+                    // The template renders only when no record was recorded for this instance.
+                    !has_matching
+                }
+            })
+            .collect();
+        // A type reached only through an `emit_items` binding may have no template record; use
+        // the first record as a signature template (its per-instance rename will not match).
+        if selected.is_empty() && !has_template {
+            selected.extend(records.first().copied());
+        }
+        for (impl_record, method) in selected {
+            if let Some(details) = build_method(ctx, record, impl_record, method, args.as_ref()) {
+                methods.push(RenderedMethod {
                     details,
                     def_id: method.def.def_id(),
                     emit_span: method.span,
-                }
-            })
-        })
-        .collect();
+                });
+            }
+        }
+    }
 
     // Trait methods attached to the type (from an `emit_items` const naming e.g.
     // `Example::to_string`) are emitted alongside the inherent ones.
@@ -895,22 +930,22 @@ fn build_method(
     // The IDL keeps the original Rust name (needed to construct the bindings); a `rename` goes
     // into `cpp_name` as the `fn ... as <name>` suffix.
     let name = name.to_string();
-    // A `rename` on the method declaration is keyed by the `AssocItem`; one on a `let` binding is
-    // keyed by the named monomorphization, so it is looked up first and only applies to it.
-    let cpp_name = monomorphization_export_name(ctx, def, method.partial_args.as_ref())
-        .or_else(|| ctx.export_name_for(&assoc_item))
-        .map(|export| export.name);
-    let self_ty = record.ty;
-    // The ADT definition's (identity) self type, e.g. `Generic<T>` for a `Generic<i32>` record.
-    // Used to still recognize the receiver of a method whose own generics prevent instantiation.
-    let self_def_ty = record.adt.map(|adt| adt.ty().base_ty());
-
     // The concrete arguments to instantiate `def` with: the method's own explicitly-enumerated
     // args (when an `emit_items` const named it) with the impl's parameters taken from the
     // concrete instance. `None` when they do not cover every generic parameter of the method, in
     // which case its identity signature is rendered and skipped as an unsupported parameter.
     let combined_args = combine_method_args(&def, method.partial_args.as_ref(), instance_args);
     let args = combined_args.as_ref();
+    // A `rename` on the method declaration is keyed by the `AssocItem` and applies to every
+    // instantiation; one on a `let` binding is keyed by the *rendered* instantiation (its impl
+    // args included), so it applies only to that one.
+    let cpp_name = monomorphization_export_name(ctx, def, args)
+        .or_else(|| ctx.export_name_for(&assoc_item))
+        .map(|export| export.name);
+    let self_ty = record.ty;
+    // The ADT definition's (identity) self type, e.g. `Generic<T>` for a `Generic<i32>` record.
+    // Used to still recognize the receiver of a method whose own generics prevent instantiation.
+    let self_def_ty = record.adt.map(|adt| adt.ty().base_ty());
 
     if let Some(args) = args {
         // The clauses of both the impl block and the function itself must hold for the concrete

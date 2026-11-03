@@ -216,6 +216,11 @@ while the C++ binding uses the exported name
 Currently only methods are renamed;
 `rename` on a type, field or free function is accepted but has no effect.
 
+A `rename` on a `let` binding inside an [`emit_items`](#emit_items) const applies only to the
+instantiation that the binding names: `foo::<u32>` does not rename `foo::<u8>`, and
+`Generic::<u32>::method` does not rename the method on `Generic<String>`. Name each instantiation
+you want to rename. A `rename` on the method declaration applies to every instantiation.
+
 ## `layout`
 
 Overrides the layout policy of a type.
