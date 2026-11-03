@@ -88,6 +88,12 @@ impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
             };
             self.ctx
                 .with_walk(walk, || visit_adt_children(adt, self.ctx));
+            // The crate walk is the full interface walk for a local ADT: record it so a later
+            // `emit_items` / re-export request does not walk the type again. Concrete instances
+            // recorded earlier by `emit_items` render from this definition's record.
+            self.ctx.mark_walked(adt.ty(), WalkParts::all());
+            self.ctx
+                .mark_recorded_instances_walked(adt, WalkParts::all());
         }
 
         adt.super_visit(self)
@@ -263,14 +269,12 @@ fn visit_incoherent_children(ty: &rustc_public::ty::Ty, ctx: &AutozngContext) {
 /// methods are walked, which may queue further types.
 fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
     let ty = request.ty;
-    let already_walked = ctx.walk_state(&ty).is_some_and(|state| {
-        state
-            .walked
-            .contains(WalkParts::FIELDS | WalkParts::INHERENT | WalkParts::TRAIT)
-    });
+    let already_walked = ctx
+        .walk_state(&ty)
+        .is_some_and(|state| state.walked.all_walked());
     if ctx.is_ty_recorded(&ty) && already_walked {
         ctx.enqueue_concrete(ty);
-        ctx.mark_walked(request.key, request.requested_as);
+        ctx.mark_walked_as(request.key, WalkParts::all(), request.requested_as);
         return;
     }
     let walk = WalkContext {
@@ -312,7 +316,7 @@ fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
         }
     });
     ctx.enqueue_concrete(ty);
-    ctx.mark_walked(request.key, request.requested_as);
+    ctx.mark_walked_as(request.key, WalkParts::all(), request.requested_as);
 }
 
 /// Record the items this crate re-exports from *other* crates (`pub use png::*;`), as if each

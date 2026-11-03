@@ -314,7 +314,10 @@ impl AutozngContextData {
         self.tys.borrow().contains_key(&canonical_ty(*ty))
     }
 
-    /// Mark `ty` as seen, so it is never queued for a third-pass visit.
+    /// Mark `ty` as seen, so it is never queued again without an interface part being recorded.
+    ///
+    /// The state starts with no walked parts; a partial record adds the parts it visited, and a
+    /// full walk adds [`WalkParts::all`] (see [`AutozngContext::mark_walked`]).
     fn mark_seen(&self, ty: Ty) {
         let ty = canonical_ty(ty);
         self.walk_states
@@ -871,7 +874,14 @@ impl AutozngContext {
         let mut states = self.data.walk_states.borrow_mut();
         let request_by_value = requested_as == RequestedAs::Value;
         let existing = states.get(&key).map(|state| {
-            state.intent == WalkIntent::Declare
+            // A recorded-but-not-walked type (an `emit_items` method selection, a direct
+            // `record_ty`, ...) can still be upgraded to a full walk. A queued request has a
+            // non-zero budget, and a finished walk has every part, so neither is re-queued.
+            let can_upgrade = state.intent == WalkIntent::Declare
+                || (!state.walked.all_walked()
+                    && state.best_remaining_depth == 0
+                    && !request.budget.exhausted());
+            can_upgrade
                 && (reason.precedence() > state.strongest_reason.precedence()
                     || request.budget.remaining_depth > state.best_remaining_depth
                     || request.budget.remaining_external > state.best_remaining_external
@@ -1011,19 +1021,64 @@ impl AutozngContext {
         self.data.visit_queue.borrow_mut().pop_front()
     }
 
-    /// Record that the interface of `key` has been visited.
+    /// Record that `walked` parts of `key`'s interface have been visited.
+    ///
+    /// Pass [`WalkParts::all`] after a full walk. A partial record (a method selected by
+    /// `emit_items`, a field recorded while walking an owner) passes only the part it covered, so
+    /// [`WalkParts::all_walked`] stays false and a later request can still complete the walk.
     ///
     /// The state becomes a `Walk`: a later request with a smaller budget must not replace it with
     /// a declaration that drops the interface it already has (see
-    /// [`AutozngContext::request_ty_with_filter`]). A walk that used the type by value also
-    /// enables its by-value methods and constructor, which a truncated declaration had disabled.
-    pub fn mark_walked(&self, key: Ty, requested_as: RequestedAs) {
+    /// [`AutozngContext::request_ty_with_filter`]).
+    pub fn mark_walked(&self, key: Ty, walked: WalkParts) {
+        let key = canonical_ty(key);
         if let Some(state) = self.data.walk_states.borrow_mut().get_mut(&key) {
             state.intent = WalkIntent::Walk;
-            state.walked = WalkParts::all();
-            if requested_as == RequestedAs::Value {
+            state.walked |= walked;
+        }
+    }
+
+    /// Like [`AutozngContext::mark_walked`], and also enable by-value methods and the constructor
+    /// when the walk used the type by value.
+    ///
+    /// A truncated declaration disables those items; a later full walk by value must turn them
+    /// back on (see `visit_emitted_ty`). Partial records and the crate walk use plain
+    /// [`AutozngContext::mark_walked`], so a type reached only by reference stays by-reference.
+    pub fn mark_walked_as(&self, key: Ty, walked: WalkParts, requested_as: RequestedAs) {
+        self.mark_walked(key, walked);
+        if requested_as == RequestedAs::Value {
+            let key = canonical_ty(key);
+            if let Some(state) = self.data.walk_states.borrow_mut().get_mut(&key) {
                 state.seen_by_value = true;
             }
+        }
+    }
+
+    /// Mark every already-recorded instance of `adt` as having had `walked` parts visited.
+    ///
+    /// A concrete instance (`Generic<u32>`) gets its own `TyRecord`, but its fields and methods
+    /// are rendered from the generic definition's record. When the crate walk finishes the local
+    /// definition, the instances recorded by `emit_items` before that walk can use the same
+    /// interface. Only directly recorded, unqueued instances are upgraded; declarations and
+    /// pending requests keep their own budget.
+    pub fn mark_recorded_instances_walked(&self, adt: &AdtDef, walked: WalkParts) {
+        let def_id = adt.def_id();
+        let keys: Vec<Ty> = {
+            let states = self.data.walk_states.borrow();
+            states
+                .iter()
+                .filter(|(ty, state)| {
+                    state.intent == WalkIntent::Walk
+                        && state.best_remaining_depth == 0
+                        && ty
+                            .adt_def()
+                            .is_some_and(|candidate| candidate.def_id() == def_id)
+                })
+                .map(|(ty, _)| *ty)
+                .collect()
+        };
+        for key in keys {
+            self.mark_walked(key, walked);
         }
     }
 
@@ -1264,6 +1319,7 @@ impl AutozngContext {
             .ty_record_mut(ty, Span::default())
             .denied_variants
             .insert(variant);
+        self.mark_walked(ty, WalkParts::VARIANTS);
     }
 
     /// Record a field as selected for emission onto `ty`'s [`TyRecord`].
@@ -1308,6 +1364,8 @@ impl AutozngContext {
         record
             .fields
             .insert(field.def_id(), FieldRecord { def: field, span });
+        drop(record);
+        self.mark_walked(ty, WalkParts::FIELDS);
     }
 
     /// Whether a type has already been recorded (i.e. selected for emission). Used to gate
@@ -1426,6 +1484,8 @@ impl AutozngContext {
             partial_args,
             span,
         });
+        drop(record);
+        self.mark_walked(ty, WalkParts::INHERENT);
     }
 
     /// Record a trait method onto the implementing type's [`TyRecord`].
@@ -1457,6 +1517,8 @@ impl AutozngContext {
             generics,
             span,
         });
+        drop(record);
+        self.mark_walked(ty, WalkParts::TRAIT);
     }
 
     /// Whether a trait declaration has already been recorded (i.e. selected for emission). Used

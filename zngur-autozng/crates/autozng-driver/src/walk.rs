@@ -273,6 +273,17 @@ bitflags::bitflags! {
     }
 }
 
+impl WalkParts {
+    /// Whether every known interface part has been walked.
+    ///
+    /// A recorded type starts with no parts (see [`WalkState::seen`]); [`WalkParts::all`] is only
+    /// reached once a full interface walk has finished. A partial record (for example an
+    /// `emit_items` method selection) can therefore still be upgraded to a full walk.
+    pub fn all_walked(self) -> bool {
+        self.contains(WalkParts::all())
+    }
+}
+
 /// What is known about a type reached during the walk.
 #[derive(Debug, Clone)]
 pub struct WalkState {
@@ -289,13 +300,14 @@ pub struct WalkState {
 }
 
 impl WalkState {
-    /// A type recorded directly by the crate walk: its interface is handled outside the
-    /// interface queue.
+    /// A type recorded directly by the crate walk: its children are walked outside the
+    /// interface queue, and [`crate::ctx::AutozngContext::mark_walked`] records the parts the walk
+    /// actually visited.
     pub fn seen(ty: Ty) -> Self {
         Self {
             ty,
             intent: WalkIntent::Walk,
-            walked: WalkParts::all(),
+            walked: WalkParts::empty(),
             best_remaining_depth: 0,
             best_remaining_external: 0,
             best_std_hop_used: true,

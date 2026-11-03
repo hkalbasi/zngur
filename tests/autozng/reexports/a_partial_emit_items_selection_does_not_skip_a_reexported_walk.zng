@@ -1,0 +1,21 @@
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type crate::Ordering {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+    variant Less {}
+    variant Equal {}
+    variant Greater {}
+
+    safe fn is_lt(self) -> bool;
+    safe fn is_eq(self) -> bool;
+    safe fn is_ne(self) -> bool;
+    safe fn is_gt(self) -> bool;
+    safe fn is_le(self) -> bool;
+    safe fn is_ge(self) -> bool;
+    safe fn reverse(self) -> crate::Ordering;
+    safe fn then(self, crate::Ordering) -> crate::Ordering;
+}
