@@ -1,4 +1,5 @@
-//@ autozng
+//@ autozng_fail
+//@ error_contains: must be a power of two
 
 #[cfg_attr(autozng, autozng::layout(conservative(size = 4, align = 3)))]
 pub struct FourBytes {

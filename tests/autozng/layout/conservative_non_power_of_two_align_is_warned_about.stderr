@@ -1,5 +1,0 @@
-warning: autozng: `conservative` layout align 3 for `scratch_crate::FourBytes` is not a power of two
- --> src/lib.rs:4:21
-  |
-4 | #[cfg_attr(autozng, autozng::layout(conservative(size = 4, align = 3)))]
-  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

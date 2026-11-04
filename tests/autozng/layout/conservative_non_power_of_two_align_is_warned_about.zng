@@ -1,9 +1,0 @@
-type crate::FourBytes {
-    #layout_conservative(size = 4, align = 3);
-    constructor {a: u8, b: u8, c: u8, d: u8};
-
-    field a (offset = 0, type = u8);
-    field b (offset = 1, type = u8);
-    field c (offset = 2, type = u8);
-    field d (offset = 3, type = u8);
-}

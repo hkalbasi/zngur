@@ -9,7 +9,7 @@
 //! Exactly one policy may be given per type:
 //! - `stack(size = N, align = N)` — the values **must** match the type's real size and alignment;
 //! - `conservative(size = N, align = N)` — the values must be *at least* the real size /
-//!   alignment (an alignment that is not a power of two is warned about);
+//!   alignment, and the alignment must be a power of two;
 //! - `heap_allocated`;
 //! - `only_by_ref`.
 //!
@@ -30,7 +30,7 @@ use crate::{
         },
     },
     ctx::AutozngContext,
-    error::{emit_error_for_span, emit_warning_for_span},
+    error::emit_error_for_span,
     metadata::{IntoMetadataKey, LayoutOverride},
 };
 
@@ -67,13 +67,26 @@ impl Layout {
     /// Check an explicit `stack` / `conservative` size and alignment against the type's real
     /// layout. `heap_allocated` / `only_by_ref` carry no values to check.
     fn validate(&self, item: &dyn LayoutTarget) {
+        let name = item.layout_type_name();
+        // A non-power-of-two alignment is not a valid `.zng` layout, and a generic ADT skips the
+        // real-layout comparison below, so reject it before the layout is looked up.
+        if let LayoutPolicy::Conservative { align, .. } = &self.policy {
+            if !align.is_power_of_two() {
+                emit_error_for_span(
+                    self.span,
+                    format!(
+                        "autozng: `conservative` layout align {align} for `{name}` must be a \
+                         power of two"
+                    ),
+                );
+            }
+        }
         let Some(real) = item.real_layout() else {
             return;
         };
         let shape = real.shape();
         let real_size = shape.size.bytes();
         let real_align = shape.abi_align as usize;
-        let name = item.layout_type_name();
         match self.policy {
             LayoutPolicy::StackAllocated { size, align } => {
                 if size != real_size {
@@ -111,15 +124,6 @@ impl Layout {
                         format!(
                             "autozng: `conservative` layout align for `{name}` must be at least its \
                              real align {real_align} (found {align})"
-                        ),
-                    );
-                }
-                if !align.is_power_of_two() {
-                    emit_warning_for_span(
-                        self.span,
-                        format!(
-                            "autozng: `conservative` layout align {align} for `{name}` is not a \
-                             power of two"
                         ),
                     );
                 }
