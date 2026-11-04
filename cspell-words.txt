@@ -133,3 +133,6 @@ compl
 consteval
 constinit
 reflexpr
+Werror
+nologo
+turbofish
