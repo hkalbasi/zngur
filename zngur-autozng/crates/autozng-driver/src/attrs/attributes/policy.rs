@@ -44,8 +44,11 @@ pub enum PolicyKind {
 
 const POLICY_FLAG: &str = "implicitly_emit_external_interfaces";
 
+/// Constructor for a name-value policy's setting.
+type PolicyCtor = fn(usize) -> PolicyKind;
+
 /// The known name-value policies and the constructor for their setting.
-const POLICY_VALUES: &[(&str, fn(usize) -> PolicyKind)] = &[
+const POLICY_VALUES: &[(&str, PolicyCtor)] = &[
     ("max_walk_depth", PolicyKind::MaxWalkDepth),
     ("max_external_depth", PolicyKind::MaxExternalDepth),
     ("max_trait_impl_depth", PolicyKind::MaxTraitImplDepth),

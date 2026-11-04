@@ -365,7 +365,7 @@ fn build_type(ctx: &AutozngContext, record: &TyRecord) -> Option<ZngurType> {
     let walk_variants = walked.contains(WalkParts::VARIANTS);
     let walk_methods = !declare_only
         && (walked.contains(WalkParts::INHERENT) || walked.contains(WalkParts::TRAIT));
-    let by_value = state.as_ref().map_or(true, |state| state.seen_by_value);
+    let by_value = state.as_ref().is_none_or(|state| state.seen_by_value);
 
     let (fields, variants) = if walk_fields {
         match adt {
@@ -1003,7 +1003,7 @@ fn build_method(
     let def = method.def;
     if !ctx
         .walk_state(&record.ty)
-        .map_or(true, |state| state.seen_by_value)
+        .is_none_or(|state| state.seen_by_value)
         && receiver_kind(&def) == ReceiverKind::Value
     {
         return None;
@@ -1258,7 +1258,7 @@ fn build_trait_method(
     let def = trait_fn.def;
     if !ctx
         .walk_state(&record.ty)
-        .map_or(true, |state| state.seen_by_value)
+        .is_none_or(|state| state.seen_by_value)
         && receiver_kind(&def) == ReceiverKind::Value
     {
         return None;

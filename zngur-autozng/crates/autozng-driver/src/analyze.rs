@@ -366,7 +366,8 @@ pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
 
     let krate = rustc_public::local_crate();
     let crate_name = &krate.name;
-    eprintln!("--- Analyzing crate: {crate_name}");
+
+    tcx.dcx().note(format!("analyzing crate `{crate_name}`"));
 
     tcx.hir_visit_all_item_likes_in_crate(&mut visit::HirVisitor { ctx: &mut ctx, tcx });
     CrateAnalysisVisitor { ctx: &ctx }.visit_all_rustc_public_items()?;

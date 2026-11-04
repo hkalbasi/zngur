@@ -70,16 +70,16 @@ impl Layout {
         let name = item.layout_type_name();
         // A non-power-of-two alignment is not a valid `.zng` layout, and a generic ADT skips the
         // real-layout comparison below, so reject it before the layout is looked up.
-        if let LayoutPolicy::Conservative { align, .. } = &self.policy {
-            if !align.is_power_of_two() {
-                emit_error_for_span(
-                    self.span,
-                    format!(
-                        "autozng: `conservative` layout align {align} for `{name}` must be a \
-                         power of two"
-                    ),
-                );
-            }
+        if let LayoutPolicy::Conservative { align, .. } = &self.policy
+            && !align.is_power_of_two()
+        {
+            emit_error_for_span(
+                self.span,
+                format!(
+                    "autozng: `conservative` layout align {align} for `{name}` must be a \
+                     power of two"
+                ),
+            );
         }
         let Some(real) = item.real_layout() else {
             return;

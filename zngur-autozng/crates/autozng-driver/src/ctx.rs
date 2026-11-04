@@ -762,10 +762,8 @@ impl AutozngContext {
         }
         let ty = canonical_ty(adt.ty());
         if self.data.have_ty(&ty) {
-            if explicit {
-                if let Some(record) = self.data.tys.borrow_mut().get_mut(&ty) {
-                    record.selected_explicitly = true;
-                }
+            if explicit && let Some(record) = self.data.tys.borrow_mut().get_mut(&ty) {
+                record.selected_explicitly = true;
             }
             self.enqueue_concrete(ty);
             return;
