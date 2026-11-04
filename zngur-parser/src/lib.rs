@@ -7,6 +7,7 @@ use std::{
 
 use ariadne::{Color, Label, Report, ReportKind};
 use chumsky::{input::MapExtra, prelude::*};
+use indexmap::IndexMap;
 use itertools::{Either, Itertools};
 
 use zngur_def::{
@@ -126,18 +127,24 @@ enum EntityPath {
 }
 
 impl EntityPath {
+    /// Creates a Rust entity path from its segments (either crate-relative if
+    /// the first segment is `"crate"`, or globally rooted otherwise).
     fn rust<'s>(segments: impl IntoIterator<Item = &'s str>) -> EntityPath {
         EntityPath::Rust(segments.into_iter().map(str::to_owned).collect())
     }
 
+    /// Creates a `c++::` entity path from its segments (excluding the `c++::` prefix).
     fn cpp<'s>(segments: impl IntoIterator<Item = &'s str>) -> EntityPath {
         EntityPath::Cpp(segments.into_iter().map(str::to_owned).collect())
     }
 
+    /// Creates a crate-relative Rust entity path (`crate::<segments>`).
     fn crate_relative<'s>(segments: impl IntoIterator<Item = &'s str>) -> EntityPath {
         EntityPath::rust(["crate"].into_iter().chain(segments))
     }
 
+    /// Returns a new path with `name` appended as a single trailing segment,
+    /// preserving whether this path lives in the Rust or C++ universe.
     fn child(&self, name: &str) -> EntityPath {
         let mut child = self.clone();
         match &mut child {
@@ -146,6 +153,8 @@ impl EntityPath {
         child
     }
 
+    /// Returns a new path with `extra` segments appended to `self`,
+    /// preserving whether this path lives in the Rust or C++ universe.
     fn join<'s>(&self, extra: impl IntoIterator<Item = &'s str>) -> EntityPath {
         let mut joined = self.clone();
         match &mut joined {
@@ -173,21 +182,177 @@ impl EntityPath {
     }
 }
 
+/// A `use <path> as <name>;` alias whose target path has been resolved against
+/// the lexical scope (base module path and enclosing aliases) of its declaring module.
+///
+/// Storing the already-resolved `EntityPath` ensures that when an alias is inherited
+/// into a nested `mod`, it continues to refer to the entity from its declaring module
+/// rather than being re-evaluated against the nested module's base path.
 #[derive(Debug, Clone)]
 struct ResolvedAlias<'a> {
+    /// The short identifier introduced by `use ... as <name>;`.
     name: &'a str,
+    /// The fully resolved Rust or C++ entity path that `name` expands to.
     target: EntityPath,
 }
 
 impl ResolvedAlias<'_> {
+    /// Returns `true` if `path` is a relative path whose first segment equals `self.name`.
+    ///
+    /// Root-prefixed (`::...`), `crate::`, and `c++::` paths never match an alias.
     fn matches(&self, path: &ParsedPath<'_>) -> bool {
-        path.start == ParsedPathStart::Relative
-            && path.segments.first().is_some_and(|part| *part == self.name)
+        path.split_relative_head()
+            .is_some_and(|(head, _)| head == self.name)
     }
 
+    /// If `path` starts with `self.name`, replaces that leading segment with `self.target`
+    /// and appends any remaining segments from `path` (e.g., expanding `sub::Foo` via
+    /// `use c++::a::b as sub;` produces `c++::a::b::Foo`).
     fn expand(&self, path: &ParsedPath<'_>) -> Option<EntityPath> {
-        self.matches(path)
-            .then(|| self.target.join(path.segments.iter().skip(1).copied()))
+        let (head, rest) = path.split_relative_head()?;
+        (head == self.name).then(|| self.target.join(rest.iter().copied()))
+    }
+}
+
+/// Outcome of attempting to step to `next_node` during a depth-first search.
+enum DfsEdge {
+    /// `next_node` is not on the active recursion stack and can be visited safely.
+    TreeOrCross,
+    /// `next_node` is already on the active recursion stack, forming a directed cycle.
+    /// `newly_detected_head` holds `Some(head)` the first time this cycle is encountered
+    /// (where `head` is the smallest node index on the cycle, i.e., the earliest
+    /// declaration), or `None` if an error has already been reported for this cycle.
+    BackEdgeCycle { newly_detected_head: Option<usize> },
+}
+
+/// Tracks the active recursion stack during a depth-first traversal over indexed
+/// nodes (`0..n`) to detect directed cycles and report each unique cycle at most once.
+#[derive(Default)]
+struct DfsCycleDetector {
+    /// Node indices currently on the active DFS call stack, in visit order.
+    active_stack: Vec<usize>,
+    /// Canonical cycle heads (minimum node index in each cycle) that have already
+    /// been reported, preventing duplicate diagnostics when multiple paths reach
+    /// the same cycle.
+    reported_cycle_heads: HashSet<usize>,
+}
+
+impl DfsCycleDetector {
+    /// Inspects the edge to `next_node` against `active_stack` to check for a cycle.
+    fn classify_edge(&mut self, next_node: usize) -> DfsEdge {
+        let Some(cycle_pos) = self.active_stack.iter().position(|&v| v == next_node) else {
+            return DfsEdge::TreeOrCross;
+        };
+        let cycle_head = *self.active_stack[cycle_pos..]
+            .iter()
+            .min()
+            .expect("cycle slice on active_stack is non-empty");
+        let newly_detected_head = self
+            .reported_cycle_heads
+            .insert(cycle_head)
+            .then_some(cycle_head);
+        DfsEdge::BackEdgeCycle {
+            newly_detected_head,
+        }
+    }
+
+    /// Pushes `node` onto the active DFS stack for the duration of `f`, popping it
+    /// automatically when `f` returns.
+    fn with_node<R>(&mut self, node: usize, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.active_stack.push(node);
+        let result = f(self);
+        self.active_stack.pop();
+        result
+    }
+}
+
+/// Resolves the `use <path> as <name>;` aliases declared directly within a single module.
+///
+/// Aliases in the same module are order-independent (an earlier `use` may reference an
+/// alias defined later in the same module) and shadow `parent_aliases` inherited from
+/// enclosing modules. Cycles among same-module aliases are detected via [`DfsCycleDetector`].
+struct ModuleAliasResolver<'a, 'b> {
+    /// Deduplicated local aliases in declaration order, keyed by alias name.
+    local_aliases: &'b IndexMap<&'a str, &'b ParsedAlias<'a>>,
+    /// Base path of the module in which `local_aliases` were declared.
+    base: &'b EntityPath,
+    /// Already-resolved aliases inherited from enclosing modules (innermost first).
+    parent_aliases: &'b [ResolvedAlias<'a>],
+}
+
+impl<'a, 'b> ModuleAliasResolver<'a, 'b> {
+    /// Resolves every local alias in declaration order.
+    fn resolve_all(&self, ctx: &mut ParseContext) -> Vec<ResolvedAlias<'a>> {
+        let mut dfs = DfsCycleDetector::default();
+        (0..self.local_aliases.len())
+            .map(|idx| {
+                let (&name, _) = self
+                    .local_aliases
+                    .get_index(idx)
+                    .expect("valid local alias index");
+                let target = dfs.with_node(idx, |dfs| self.resolve_alias_at(idx, dfs, ctx));
+                ResolvedAlias { name, target }
+            })
+            .collect()
+    }
+
+    /// Resolves the target path of `self.local_aliases[idx]` using three precedence rules:
+    /// 1. **Same-module alias**: If the path is relative and its leading segment names
+    ///    another alias in `self.local_aliases`, recursively resolve that local alias
+    ///    (or report a cycle error if it is already on the active DFS stack) and append
+    ///    any trailing segments.
+    /// 2. **Inherited parent alias**: Otherwise, if the path matches an alias in
+    ///    `self.parent_aliases`, expand it via that parent alias.
+    /// 3. **Module base path**: Otherwise, resolve the path directly against `self.base`.
+    fn resolve_alias_at(
+        &self,
+        idx: usize,
+        dfs: &mut DfsCycleDetector,
+        ctx: &mut ParseContext,
+    ) -> EntityPath {
+        let (_, &alias) = self
+            .local_aliases
+            .get_index(idx)
+            .expect("valid local alias index");
+
+        if let Some((head, rest)) = alias.path.split_relative_head() {
+            if let Some(target_idx) = self.local_aliases.get_index_of(head) {
+                return match dfs.classify_edge(target_idx) {
+                    DfsEdge::TreeOrCross => {
+                        let prefix = dfs.with_node(target_idx, |dfs| {
+                            self.resolve_alias_at(target_idx, dfs, ctx)
+                        });
+                        prefix.join(rest.iter().copied())
+                    }
+                    DfsEdge::BackEdgeCycle {
+                        newly_detected_head,
+                    } => {
+                        if let Some(head_idx) = newly_detected_head {
+                            let (_, &head_alias) = self
+                                .local_aliases
+                                .get_index(head_idx)
+                                .expect("valid cycle head index");
+                            ctx.add_error_str(
+                                &format!("cyclic `use` alias definition `{}`", head_alias.name),
+                                head_alias.span,
+                            );
+                        }
+                        // Recover from the cycle by resolving the raw path against `self.base`.
+                        alias.path.to_zngur(self.base)
+                    }
+                };
+            }
+
+            if let Some(expanded) = self
+                .parent_aliases
+                .iter()
+                .find_map(|parent| parent.expand(&alias.path))
+            {
+                return expanded;
+            }
+        }
+
+        alias.path.to_zngur(self.base)
     }
 }
 
@@ -210,110 +375,75 @@ impl<'a> Scope<'a> {
         }
     }
 
+    /// Resolves `new_aliases` declared in a module with `base` path and combines them
+    /// with `parent_aliases` inherited from enclosing modules.
+    ///
+    /// Local aliases precede `parent_aliases` in the returned `Vec` so that inner
+    /// module aliases shadow outer ones during [`Scope::resolve_path`].
     fn resolve_aliases(
         new_aliases: &[ParsedAlias<'a>],
         base: &EntityPath,
         parent_aliases: &[ResolvedAlias<'a>],
         ctx: &mut ParseContext,
     ) -> Vec<ResolvedAlias<'a>> {
-        fn resolve_one<'a>(
-            idx: usize,
-            unique_aliases: &[&ParsedAlias<'a>],
-            base: &EntityPath,
-            parent_aliases: &[ResolvedAlias<'a>],
-            visited: &mut Vec<usize>,
-            reported_cycles: &mut HashSet<usize>,
-            ctx: &mut ParseContext,
-        ) -> EntityPath {
-            let alias = unique_aliases[idx];
-            if alias.path.start == ParsedPathStart::Relative {
-                if let Some(&first) = alias.path.segments.first() {
-                    if let Some(target_idx) = unique_aliases.iter().position(|a| a.name == first) {
-                        if let Some(cycle_pos) = visited.iter().position(|&v| v == target_idx) {
-                            let cycle_head = *visited[cycle_pos..].iter().min().unwrap();
-                            if reported_cycles.insert(cycle_head) {
-                                let head_alias = unique_aliases[cycle_head];
-                                ctx.add_error_str(
-                                    &format!("cyclic `use` alias definition `{}`", head_alias.name),
-                                    head_alias.span,
-                                );
-                            }
-                        } else {
-                            visited.push(target_idx);
-                            let target = resolve_one(
-                                target_idx,
-                                unique_aliases,
-                                base,
-                                parent_aliases,
-                                visited,
-                                reported_cycles,
-                                ctx,
-                            );
-                            visited.pop();
-                            return target.join(alias.path.segments.iter().skip(1).copied());
-                        }
-                    } else if let Some(expanded) = parent_aliases
-                        .iter()
-                        .find_map(|existing| existing.expand(&alias.path))
-                    {
-                        return expanded;
-                    }
+        let unique_aliases = Self::dedup_module_aliases(new_aliases, ctx);
+        let resolver = ModuleAliasResolver {
+            local_aliases: &unique_aliases,
+            base,
+            parent_aliases,
+        };
+        let mut resolved = resolver.resolve_all(ctx);
+        resolved.extend_from_slice(parent_aliases);
+        resolved
+    }
+
+    /// Collects the aliases declared in a single module into an order-preserving map
+    /// keyed by alias name, emitting an error whenever two `use` items in the same
+    /// module define the same alias name.
+    fn dedup_module_aliases<'b>(
+        aliases: &'b [ParsedAlias<'a>],
+        ctx: &mut ParseContext,
+    ) -> IndexMap<&'a str, &'b ParsedAlias<'a>> {
+        let mut unique = IndexMap::with_capacity(aliases.len());
+        for alias in aliases {
+            match unique.entry(alias.name) {
+                indexmap::map::Entry::Vacant(vacant) => {
+                    vacant.insert(alias);
+                }
+                indexmap::map::Entry::Occupied(first) => {
+                    Self::report_duplicate_alias(alias, first.get(), ctx);
                 }
             }
-            alias.path.to_zngur(base)
         }
+        unique
+    }
 
-        let mut unique_aliases: Vec<&ParsedAlias<'a>> = Vec::with_capacity(new_aliases.len());
-        let mut seen_names: std::collections::HashMap<&'a str, Span> =
-            std::collections::HashMap::with_capacity(new_aliases.len());
-        for alias in new_aliases {
-            if let Some(&first_span) = seen_names.get(alias.name) {
-                let dup_span = ctx.report_span_for_range(alias.span.into_range());
-                let prev_span = ctx.report_span_for_range(first_span.into_range());
-                let msg = format!("duplicate `use` alias `{}` in the same module", alias.name);
-                let report = Report::build(ReportKind::Error, dup_span.clone())
+    /// Reports a diagnostic when `duplicate` redefines `first` in the same module.
+    fn report_duplicate_alias(
+        duplicate: &ParsedAlias<'_>,
+        first: &ParsedAlias<'_>,
+        ctx: &mut ParseContext,
+    ) {
+        let dup_span = ctx.report_span_for_range(duplicate.span.into_range());
+        let prev_span = ctx.report_span_for_range(first.span.into_range());
+        let msg = format!(
+            "duplicate `use` alias `{}` in the same module",
+            duplicate.name
+        );
+        let report = Report::build(ReportKind::Error, dup_span.clone())
+            .with_message(&msg)
+            .with_label(
+                Label::new(dup_span)
                     .with_message(&msg)
-                    .with_label(
-                        Label::new(dup_span)
-                            .with_message(&msg)
-                            .with_color(Color::Red),
-                    )
-                    .with_label(
-                        Label::new(prev_span)
-                            .with_message("previously defined here")
-                            .with_color(Color::Blue),
-                    )
-                    .finish();
-                ctx.add_fatal_report(report);
-            } else {
-                seen_names.insert(alias.name, alias.span);
-                unique_aliases.push(alias);
-            }
-        }
-
-        let mut local: Vec<ResolvedAlias<'a>> =
-            Vec::with_capacity(unique_aliases.len() + parent_aliases.len());
-        let mut visited = Vec::new();
-        let mut reported_cycles = HashSet::new();
-        for idx in 0..unique_aliases.len() {
-            visited.clear();
-            visited.push(idx);
-            let target = resolve_one(
-                idx,
-                &unique_aliases,
-                base,
-                parent_aliases,
-                &mut visited,
-                &mut reported_cycles,
-                ctx,
-            );
-            local.push(ResolvedAlias {
-                name: unique_aliases[idx].name,
-                target,
-            });
-        }
-        local.extend_from_slice(parent_aliases);
-        local
+                    .with_color(Color::Red),
+            )
+            .with_label(
+                Label::new(prev_span)
+                    .with_message("previously defined here")
+                    .with_color(Color::Blue),
+            )
+            .finish();
+        ctx.add_fatal_report(report);
     }
 
     fn has_alias(&self, path: &ParsedPath<'_>) -> bool {
@@ -401,7 +531,21 @@ impl<'a> Scope<'a> {
     }
 }
 
-impl ParsedPath<'_> {
+impl<'a> ParsedPath<'a> {
+    /// If `self` is a relative path (`foo` or `foo::bar`), splits it into its
+    /// leading segment (`"foo"`) and remaining segments (`&["bar"]`).
+    ///
+    /// Returns `None` for `::`, `crate::`, and `c++::` paths, which never match aliases.
+    fn split_relative_head(&self) -> Option<(&'a str, &[&'a str])> {
+        if self.start == ParsedPathStart::Relative {
+            self.segments
+                .split_first()
+                .map(|(&head, rest)| (head, rest))
+        } else {
+            None
+        }
+    }
+
     fn to_zngur(&self, base: &EntityPath) -> EntityPath {
         let segments = self.segments.iter().copied();
         match self.start {
