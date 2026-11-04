@@ -1,0 +1,7 @@
+type crate::Generic<u32> {
+    #heap_allocated;
+    wellknown_traits(Debug);
+    constructor {val: u32};
+
+    field val (offset = 0, type = u32);
+}

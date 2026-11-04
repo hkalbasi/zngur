@@ -1,0 +1,29 @@
+type ::std::option::Option<::std::boxed::Box<crate::A>> {
+    #layout(size = 8, align = 8);
+    variant None {}
+    variant Some {
+        non_exhaustive;
+    }
+}
+
+type ::std::option::Option<::std::boxed::Box<crate::B>> {
+    #layout(size = 8, align = 8);
+    variant None {}
+    variant Some {
+        non_exhaustive;
+    }
+}
+
+type crate::A {
+    #layout(size = 8, align = 8);
+    constructor {b: ::std::option::Option<::std::boxed::Box<crate::B>>};
+
+    field b (offset = 0, type = ::std::option::Option<::std::boxed::Box<crate::B>>);
+}
+
+type crate::B {
+    #layout(size = 8, align = 8);
+    constructor {a: ::std::option::Option<::std::boxed::Box<crate::A>>};
+
+    field a (offset = 0, type = ::std::option::Option<::std::boxed::Box<crate::A>>);
+}

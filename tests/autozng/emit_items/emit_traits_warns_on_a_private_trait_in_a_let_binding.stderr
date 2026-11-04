@@ -1,0 +1,5 @@
+warning: autozng: private traits and functions can be exposed in a zngur interface
+  --> src/lib.rs:13:5
+   |
+13 |     let _: &dyn inner::Secret;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^

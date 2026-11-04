@@ -1,0 +1,39 @@
+type ::std::net::IpAddr {
+    #layout(size = 17, align = 1);
+    wellknown_traits(Copy, Debug);
+    variant V4 {
+        field 0 (offset = auto, type = ::std::net::Ipv4Addr);
+    }
+    variant V6 {
+        field 0 (offset = auto, type = ::std::net::Ipv6Addr);
+    }
+
+    safe fn is_unspecified(&self) -> bool;
+    safe fn is_loopback(&self) -> bool;
+    safe fn is_multicast(&self) -> bool;
+    safe fn is_ipv4(&self) -> bool;
+    safe fn is_ipv6(&self) -> bool;
+    safe fn to_canonical(&self) -> ::std::net::IpAddr;
+}
+
+type ::std::net::Ipv4Addr {
+    #layout(size = 4, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type ::std::net::Ipv6Addr {
+    #layout(size = 16, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type crate::Holder {
+    #layout(size = 17, align = 1);
+    constructor {addr: ::std::net::IpAddr};
+
+    field addr (offset = 0, type = ::std::net::IpAddr);
+}

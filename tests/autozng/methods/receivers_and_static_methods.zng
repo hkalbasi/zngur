@@ -1,0 +1,12 @@
+type crate::Counter {
+    #layout(size = 4, align = 4);
+    constructor {value: i32};
+
+    field value (offset = 0, type = i32);
+
+    safe fn new() -> crate::Counter;
+    safe fn get(&self) -> i32;
+    safe fn set(&mut self, i32);
+    safe fn consume(self) -> i32;
+    safe fn add(i32, i32) -> i32;
+}

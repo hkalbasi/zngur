@@ -1,0 +1,12 @@
+type crate::Widget {
+    #layout(size = 4, align = 4);
+    constructor {value: u32};
+
+    field value (offset = 0, type = u32);
+
+    safe fn convert(&self) -> u32 use crate::Convert;
+}
+
+trait crate::Convert<u32> {
+    safe fn convert(&self) -> u32;
+}

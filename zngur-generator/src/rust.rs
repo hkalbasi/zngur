@@ -345,8 +345,8 @@ macro_rules! __zngur_assert_has_field {
         const _: () = {
             #[allow(dead_code)]
             #[allow(mismatched_lifetime_syntaxes)]
-            fn check_field(value: $x) -> $y {
-                value.$($field)+
+            fn check_field(value: &$x) {
+                let _: &$y = &value.$($field)+;
             }
         };
     };
@@ -1258,7 +1258,14 @@ pub extern "C" fn {drop_in_place}(v: *mut u8) {{ unsafe {{
                 let dbg_ty = if !is_unsized {
                     format!("{ty}")
                 } else {
-                    format!("&{ty}")
+                    // `&dyn A + B` binds the `+` outside the cast, so a dyn type with auto
+                    // traits needs parentheses.
+                    match ty {
+                        RustType::Dyn(_, auto_traits) if !auto_traits.is_empty() => {
+                            format!("&({ty})")
+                        }
+                        _ => format!("&{ty}"),
+                    }
                 };
                 wln!(
                     self,

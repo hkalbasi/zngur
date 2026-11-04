@@ -1,0 +1,8 @@
+type crate::Reordered {
+    #layout(size = 8, align = 4);
+    constructor {small: u8, large: u32, medium: u16};
+
+    field small (offset = 6, type = u8);
+    field large (offset = 0, type = u32);
+    field medium (offset = 4, type = u16);
+}

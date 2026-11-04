@@ -107,3 +107,29 @@ jobs:
         
       - name: Run `cargo xtask ci`
         run: nix develop .#${{ matrix.shell_name }} -c cargo xtask ci
+
+  autozng:
+    name: autozng (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Turn off autocrlf
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v3
+      - name: Install Nushell and the pinned tools
+        uses: jdx/mise-action@v3
+      - name: Enter VS Developer shell
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+      - name: Install stable and the pinned autozng toolchain
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+          rustup toolchain install nightly-2026-08-29 --profile minimal --component rustc-dev --component llvm-tools --component rustfmt
+      - name: Run autozng tests
+        run: cargo xtask test --only-autozng --require-autozng

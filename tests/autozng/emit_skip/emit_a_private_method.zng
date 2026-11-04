@@ -1,0 +1,6 @@
+type crate::Api {
+    #layout(size = 0, align = 1);
+
+    safe fn visible(&self);
+    safe fn hidden(&self);
+}

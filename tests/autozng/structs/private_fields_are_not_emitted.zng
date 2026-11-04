@@ -1,0 +1,5 @@
+type crate::Mixed {
+    #layout(size = 2, align = 1);
+
+    field visible (offset = 0, type = u8);
+}

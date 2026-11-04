@@ -1,0 +1,22 @@
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type crate::Widget {
+    #layout(size = 4, align = 4);
+    constructor {value: u32};
+
+    field value (offset = 0, type = u32);
+
+    safe fn convert(&self) -> u32 use crate::Convert as convertU32;
+    safe fn convert(&self) -> bool use crate::Convert as convertBool;
+}
+
+trait crate::Convert<bool> {
+    safe fn convert(&self) -> bool;
+}
+
+trait crate::Convert<u32> {
+    safe fn convert(&self) -> u32;
+}

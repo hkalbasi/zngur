@@ -1,0 +1,6 @@
+type crate::Thing {
+    #layout(size = 0, align = 1);
+
+    safe fn original(&self) as Renamed;
+    safe fn long_snake_name(&self) as LongSnakeName;
+}

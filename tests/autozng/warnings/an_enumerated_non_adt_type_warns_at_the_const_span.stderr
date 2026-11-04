@@ -1,0 +1,5 @@
+warning: autozng: skipping `[u8; 4]`: array types are not supported in a zngur interface
+ --> src/lib.rs:6:1
+  |
+6 | const _: [(&[u8; 4],); 0] = [];
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^

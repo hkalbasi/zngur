@@ -1,0 +1,3 @@
+//@ autozng
+
+pub fn nothing() {}

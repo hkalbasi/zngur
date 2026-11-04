@@ -1,0 +1,5 @@
+type crate::S {
+    #layout(size = 0, align = 1);
+
+    safe fn give<u8>(&self, u8) -> u8;
+}

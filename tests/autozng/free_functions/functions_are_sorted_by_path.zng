@@ -1,0 +1,3 @@
+safe fn crate::alpha();
+safe fn crate::in_the_middle();
+safe fn crate::zebra();

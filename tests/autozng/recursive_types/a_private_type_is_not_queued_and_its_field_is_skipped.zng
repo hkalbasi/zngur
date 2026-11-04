@@ -1,0 +1,5 @@
+type crate::Root {
+    #layout(size = 1, align = 1);
+
+    field visible (offset = 0, type = u8);
+}

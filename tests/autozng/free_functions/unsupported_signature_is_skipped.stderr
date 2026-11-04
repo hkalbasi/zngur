@@ -1,0 +1,5 @@
+warning: autozng: skipping fn `scratch_crate::takes_array`: array types are not supported in a zngur interface
+ --> src/lib.rs:4:1
+  |
+4 | pub fn takes_array(values: [u8; 3]) -> u8 {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

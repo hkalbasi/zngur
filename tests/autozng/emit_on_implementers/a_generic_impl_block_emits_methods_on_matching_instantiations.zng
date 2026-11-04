@@ -1,0 +1,13 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type crate::Wrapper<u32> {
+    #layout(size = 4, align = 4);
+    constructor {value: u32};
+
+    field value (offset = 0, type = u32);
+
+    safe fn describe(&self) -> ::std::string::String use crate::Describe;
+}

@@ -1,0 +1,11 @@
+warning: autozng: skipping method `give`: array types are not supported in a zngur interface
+  --> src/lib.rs:7:5
+   |
+ 7 |     pub fn give<D: Copy>(&self, value: D) -> [D; 4] {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: emitted here
+  --> src/lib.rs:14:9
+   |
+14 |         let _ = Self::give::<u8>;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^

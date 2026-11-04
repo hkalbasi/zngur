@@ -1,0 +1,36 @@
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type char {
+    #layout(size = 4, align = 4);
+    wellknown_traits(Copy, Debug);
+}
+
+type crate::Generic<bool> {
+    #layout(size = 1, align = 1);
+    constructor {inner: bool};
+
+    field inner (offset = 0, type = bool);
+
+    safe fn get(&self) -> &bool as getBool;
+}
+
+type crate::Generic<char> {
+    #layout(size = 4, align = 4);
+    constructor {inner: char};
+
+    field inner (offset = 0, type = char);
+
+    safe fn get(&self) -> &char;
+}
+
+type crate::Generic<u32> {
+    #layout(size = 4, align = 4);
+    constructor {inner: u32};
+
+    field inner (offset = 0, type = u32);
+
+    safe fn get(&self) -> &u32 as getU32;
+}

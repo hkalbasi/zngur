@@ -1,0 +1,16 @@
+warning: autozng: method `width` on `Widget` collides with another method in C++; exposing it as `width_Measure`
+  --> src/lib.rs:21:5
+   |
+21 |     fn width(&self) -> u32;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the inherent method is declared here
+  --> src/lib.rs:13:5
+   |
+13 |     pub fn width(&self) -> u32 {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: emitted here
+  --> src/lib.rs:20:1
+   |
+20 | pub trait Measure {
+   | ^^^^^^^^^^^^^^^^^

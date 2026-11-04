@@ -1,0 +1,17 @@
+type ::std::net::IpAddr {
+    #layout(size = 17, align = 1);
+    wellknown_traits(Copy, Debug);
+    variant V4 {
+        non_exhaustive;
+    }
+    variant V6 {
+        non_exhaustive;
+    }
+}
+
+type crate::Holder {
+    #layout(size = 17, align = 1);
+    constructor {addr: ::std::net::IpAddr};
+
+    field addr (offset = 0, type = ::std::net::IpAddr);
+}

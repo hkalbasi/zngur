@@ -1,0 +1,5 @@
+type crate::Fields {
+    #layout(size = 2, align = 1);
+
+    field kept (offset = 0, type = u8);
+}

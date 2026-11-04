@@ -1,0 +1,410 @@
+//! Entry point that drives the two analysis passes.
+//!
+//! [`analyze`] runs:
+//! 1. an **HIR pass** ([`visit::HirVisitor`]) over every item-like in the crate, which
+//!    handles `const` items (incl. `emit_items`), `ty` aliases and `let` bindings, and
+//! 2. a **`rustc_public` pass** ([`CrateAnalysisVisitor`]) over the local crate's ADTs
+//!    (including their fields and inherent impl blocks, whose fields and methods are recorded
+//!    onto the type), trait declarations (an `emit`-tagged trait and its associated functions)
+//!    and free functions.
+//!
+//! Results are accumulated into a single [`AutozngContext`], from which a `ZngurSpec` is
+//! built while `tcx` is alive (see `render.rs`).
+
+use std::ops::ControlFlow;
+
+use rustc_middle::ty::TyCtxt;
+use rustc_public::{
+    CrateDef,
+    mir::mono::StaticDef,
+    ty::{AssocKind, RigidTy, TyKind},
+};
+use rustc_span::Span;
+
+use crate::{
+    attrs::{AttrCollectionExt, AutozngAttrsExt, attributes::emit::EmitAction},
+    ctx::AutozngContext,
+    driver::{AnalyzeReport, with_ctxt},
+    error::span_of_def,
+    render,
+    rustc_ext::{GetAssocInfoExt, RustcPublicTyExt, StabilityExt, VariantDefExt, VisibilityExt},
+    visit::{self, RustcPublicVisitable, RustcPublicVisitor},
+    walk::{
+        RequestedAs, VisitReason, WalkBudget, WalkContext, WalkFilter, WalkItem, WalkItemKind,
+        WalkParts, WalkPhase, WalkRequest, base_ty,
+    },
+};
+use zngur_def::ZngurSpec;
+
+struct CrateAnalysisVisitor<'a> {
+    ctx: &'a AutozngContext,
+}
+
+impl<'a> RustcPublicVisitor for CrateAnalysisVisitor<'a> {
+    type Break = AnalyzeReport;
+
+    fn visit_crate(&mut self, krate: &rustc_public::Crate) -> ControlFlow<Self::Break> {
+        let attrs = krate.autozng_attrs();
+        attrs.visit(krate, self.ctx);
+
+        krate.super_visit(self)
+    }
+
+    fn visit_adt(&mut self, adt: &rustc_public::ty::AdtDef) -> std::ops::ControlFlow<Self::Break> {
+        let attrs = adt.autozng_attrs();
+        attrs.visit(adt, self.ctx);
+
+        // Children inherit the type's child-targeted attrs (`emit(name)`, `rename_all`).
+        // Only walk them when the type itself was emitted: recording a field/method
+        // implicitly creates its type's `TyRecord`, so walking children of a `skip`-ed type
+        // would leak it into the output.
+        if self.ctx.is_ty_recorded(&adt.ty()) {
+            let (max_walk_depth, max_external_depth, max_self_ref_depth) = {
+                let config = self.ctx.config();
+                (
+                    config.max_walk_depth,
+                    config.max_external_depth,
+                    config.max_self_ref_depth,
+                )
+            };
+            let walk = WalkContext {
+                owner: adt.ty(),
+                phase: WalkPhase::CrateWalk,
+                budget: WalkBudget::root(max_walk_depth, max_external_depth, max_self_ref_depth),
+                filter: {
+                    let filter = self.ctx.effective_filter_for_adt(adt);
+                    self.ctx.set_walk_filter(&adt.ty(), filter.clone());
+                    filter
+                },
+                span: span_of_def(adt.def_id()),
+                requested_as: RequestedAs::Value,
+                ancestors: smallvec::smallvec![base_ty(adt.ty())],
+            };
+            self.ctx
+                .with_walk(walk, || visit_adt_children(adt, self.ctx));
+            // The crate walk is the full interface walk for a local ADT: record it so a later
+            // `emit_items` / re-export request does not walk the type again. Concrete instances
+            // recorded earlier by `emit_items` render from this definition's record.
+            self.ctx.mark_walked(adt.ty(), WalkParts::all());
+            self.ctx
+                .mark_recorded_instances_walked(adt, WalkParts::all());
+        }
+
+        adt.super_visit(self)
+    }
+
+    fn visit_trait(
+        &mut self,
+        trait_def: &rustc_public::ty::TraitDef,
+    ) -> std::ops::ControlFlow<Self::Break> {
+        let attrs = trait_def.autozng_attrs();
+        attrs.visit(trait_def, self.ctx);
+
+        record_trait_methods(trait_def, self.ctx);
+
+        trait_def.super_visit(self)
+    }
+
+    fn visit_impl(
+        &mut self,
+        impl_def: &rustc_public::ty::ImplDef,
+    ) -> std::ops::ControlFlow<Self::Break> {
+        // Trait impls are visited here (inherent impls are walked from `visit_adt`); only an
+        // `#[autozng::emit_on_implementers]` impl does anything (see `EmitOnImplTarget`).
+        let attrs = impl_def.autozng_attrs();
+        attrs.visit(impl_def, self.ctx);
+        impl_def.super_visit(self)
+    }
+
+    fn visit_fn(&mut self, fn_def: &rustc_public::ty::FnDef) -> std::ops::ControlFlow<Self::Break> {
+        // Associated functions (methods) are handled through their impl block in `visit_adt`;
+        // only free functions are recorded here.
+        if fn_def.associated_item().is_none() {
+            let attrs = fn_def.autozng_attrs();
+            attrs.visit(fn_def, self.ctx);
+        }
+        fn_def.super_visit(self)
+    }
+
+    fn visit_static(&mut self, st: &StaticDef) -> ControlFlow<Self::Break> {
+        st.super_visit(self)
+    }
+}
+
+/// Record every associated function of a *recorded* trait declaration.
+///
+/// A trait's functions are at most as visible as the trait itself, so there is nothing further to
+/// filter. Only descend once the trait is recorded: recording a method implicitly records its
+/// trait, so walking a `skip`-ed trait's methods would leak it into the output. A trait recorded
+/// as a concrete instantiation (`emit_items(emit_traits = true)`) already has its functions
+/// recorded with concrete arguments, so it is not walked again here.
+fn record_trait_methods(trait_def: &rustc_public::ty::TraitDef, ctx: &AutozngContext) {
+    if !ctx.is_trait_recorded(trait_def) || ctx.is_trait_concretely_recorded(trait_def) {
+        return;
+    }
+    for assoc_item in trait_def.associated_items() {
+        if let Some((fn_def, generics)) = assoc_item.opt_fn_def() {
+            ctx.record_trait_method(
+                assoc_item.opt_trait_def().unwrap(),
+                assoc_item.opt_trait_ref(),
+                fn_def,
+                generics,
+                span_of_def(fn_def.def_id()),
+            );
+        }
+    }
+}
+
+/// Record an emitted ADT's children: its fields (struct/union and enum variant alike) and its
+/// inherent impl blocks, each through its own `emit`/`skip` action and visibility.
+///
+/// Shared by `CrateAnalysisVisitor::visit_adt` (an ADT the crate walk selected) and the third
+/// pass's [`visit_emitted_ty`] (a type an emitted interface exposed). Recording a field or a
+/// method queues the types it exposes for a third-pass visit (see
+/// [`AutozngContext::request_ty`]).
+fn visit_adt_children(adt: &rustc_public::ty::AdtDef, ctx: &AutozngContext) {
+    let owner = crate::ctx::walk_owner(adt.ty());
+    for variant in adt.variants() {
+        if variant.is_unstable() {
+            continue;
+        }
+        // An enum variant is an interface item of its own, so `Variants` and the owner rules
+        // can deny it. A struct's single implicit variant is not filtered: its fields are the
+        // struct's `Fields`.
+        if adt.kind().is_enum() {
+            let name = variant.name().to_string();
+            let item = WalkItem {
+                kind: WalkItemKind::Variant,
+                name: Some(&name),
+                receiver: None,
+                visibility: None,
+                trait_path: None,
+                owner: Some(&owner),
+            };
+            if !ctx.current_filter().allows(&item) {
+                ctx.record_denied_variant(adt.ty(), variant.idx());
+                continue;
+            }
+        }
+        for field in variant.fields() {
+            let field_attrs = field.autozng_attrs();
+            field_attrs.visit(&field, ctx);
+        }
+    }
+
+    // Methods live in the ADT's inherent impl blocks.
+    for impl_def in adt.inherent_impls() {
+        let impl_attrs = impl_def.autozng_attrs();
+        impl_attrs.visit(&impl_def, ctx);
+    }
+}
+
+/// Record the inherent methods of a non-ADT type (`[T]`, `str`).
+///
+/// `AdtDef::inherent_impls` cannot see these; rustc keys them by `SimplifiedType` (see
+/// [`RustcPublicTyExt::incoherent_impls`]). Every method is recorded onto the *rendered* type
+/// (`[u8]`, not the impl's `[T]`). Without an explicit `walk_filter`, only the built-in
+/// essentials are selected (see [`WalkFilter::default_for_inherent_methods`]); the walk budget
+/// still caps the signature types, and unsupported methods are warn-and-skipped.
+fn visit_incoherent_children(ty: &rustc_public::ty::Ty, ctx: &AutozngContext) {
+    if !matches!(
+        ty.base_ty().kind(),
+        TyKind::RigidTy(RigidTy::Slice(_) | RigidTy::Str)
+    ) {
+        return;
+    }
+    // These interfaces are large and mostly irrelevant to a C++ caller. Unless the user wrote a
+    // `walk_filter` for this subtree, walk only the built-in essentials; the filter gates the
+    // methods themselves, not the types their signatures mention.
+    let selection_filter = (!ctx.current_filter().is_explicit())
+        .then(|| WalkFilter::default_for_inherent_methods(*ty))
+        .flatten();
+    for impl_def in ty.incoherent_impls() {
+        // `impl<T> [T]` is generic over the element; `impl [u8]`/`impl str` are not. Passing the
+        // element args lets `record_impl_method` queue the *instantiated* signature types (the
+        // identity signature's `T` would otherwise be silently skipped).
+        let impl_args = if impl_def.generics_of().params.is_empty() {
+            None
+        } else {
+            ty.slice_element_args()
+        };
+        for assoc_item in impl_def.associated_items() {
+            let AssocKind::Fn { .. } = &assoc_item.kind else {
+                continue;
+            };
+            let def_id = assoc_item.def_id.def_id();
+            let span = span_of_def(def_id);
+            // A private inherent method (e.g. `str`'s internal helpers) is not reachable from the
+            // generated code; the normal impl walk would skip it silently.
+            if !EmitAction::Default.emit_for_visibility_or_warn(
+                assoc_item.visibility(),
+                ctx.config().default_emit_policy,
+                span,
+            ) {
+                continue;
+            }
+            ctx.record_impl_method_with_selection_filter(
+                *ty,
+                impl_def,
+                rustc_public::ty::FnDef(def_id),
+                impl_args.clone(),
+                selection_filter.as_ref(),
+                span,
+            );
+        }
+    }
+}
+
+/// Visit a type that an emitted interface exposed (see [`AutozngContext::request_ty`]), as
+/// if it carried an explicit `#[autozng::emit]`.
+///
+/// A type that already has a record was handled by the crate walk (or an earlier iteration), so
+/// it is left alone. Otherwise it is recorded and — for a local ADT — its fields and inherent
+/// methods are walked, which may queue further types.
+fn visit_emitted_ty(ctx: &AutozngContext, request: WalkRequest) {
+    let ty = request.ty;
+    let already_walked = ctx
+        .walk_state(&ty)
+        .is_some_and(|state| state.walked.all_walked());
+    if ctx.is_ty_recorded(&ty) && already_walked {
+        ctx.enqueue_concrete(ty);
+        ctx.mark_walked_as(request.key, WalkParts::all(), request.requested_as);
+        return;
+    }
+    let walk = WalkContext {
+        owner: ty,
+        phase: request.phase,
+        budget: request.budget,
+        filter: request.filter.clone(),
+        span: request.span,
+        requested_as: request.requested_as,
+        ancestors: request.ancestors.clone(),
+    };
+    ctx.with_walk(walk, || {
+        let Some(adt) = ty.adt_def() else {
+            // A non-ADT (`str`, a slice, a tuple, `bool`, a `dyn Trait`, ...) is just its own
+            // `type` block. A slice or `str` also exposes its inherent methods (which rustc
+            // keys by `SimplifiedType`, not by an `AdtDef`).
+            if !ctx.is_ty_recorded(&ty) {
+                ctx.record_ty(&ty, Span::default());
+            }
+            visit_incoherent_children(&ty, ctx);
+            return;
+        };
+        if adt.is_unstable() {
+            return;
+        }
+        if !ctx.is_ty_recorded(&ty) {
+            // Record the *concrete* type (`Vec<u32>`, not the `Vec<T, A>` definition `record_adt`
+            // would give), so it renders with its generic arguments.
+            ctx.record_ty(&ty, span_of_def(adt.def_id()));
+        }
+        // By default only the local crate's ADTs are walked: an external type (`Vec<u32>`,
+        // `String`, ...) contributes just its `type` block, not the internals of another crate.
+        // The `implicitly_emit_external_interfaces` policy turns that on (see
+        // `attrs::attributes::policy`).
+        let walk_children =
+            adt.krate().is_local || ctx.config().implicitly_emit_external_interfaces;
+        if walk_children {
+            visit_adt_children(&adt, ctx);
+        }
+    });
+    ctx.enqueue_concrete(ty);
+    ctx.mark_walked_as(request.key, WalkParts::all(), request.requested_as);
+}
+
+/// Record the items this crate re-exports from *other* crates (`pub use png::*;`), as if each
+/// carried an explicit `#[autozng::emit]`.
+///
+/// The crate walk only visits the local crate, so an external item a public `pub use` makes part
+/// of the public API would otherwise never be recorded — a crate whose entire API is re-exported
+/// would emit an empty IDL. A re-export is an explicit statement that the item is public API,
+/// so it is recorded like an `emit`: the type / function / trait is recorded, and a trait's
+/// associated functions with it (`CrateAnalysisVisitor::visit_trait` never sees an external
+/// trait). Recording is idempotent — `is_ty_recorded` / `seen_tys` / `is_trait_recorded` mean a
+/// re-export of something the crate walk (or another re-export) already recorded adds nothing.
+fn visit_reexported_items(ctx: &AutozngContext) {
+    use crate::attrs::attributes::emit::{EmitAction, EmitTarget};
+    use rustc_hir::def::DefKind;
+    use rustc_public::rustc_internal::stable;
+
+    for def_id in with_ctxt(|driver| driver.external_reexports()) {
+        with_ctxt(|driver| match driver.tcx.def_kind(def_id) {
+            DefKind::Struct | DefKind::Enum | DefKind::Union => {
+                // `visit_emitted_ty` is the "record a type as if it carried an explicit `emit`"
+                // path, and it already decides whether an *external* ADT's children are walked
+                // (the `implicitly_emit_external_interfaces` policy).
+                let adt = rustc_public::ty::AdtDef(stable(def_id));
+                let request = ctx.root_request(
+                    adt.ty(),
+                    VisitReason::Reexport,
+                    WalkPhase::Reexport,
+                    span_of_def(adt.def_id()),
+                );
+                visit_emitted_ty(ctx, request);
+            }
+            DefKind::Fn => {
+                let fn_def = rustc_public::ty::FnDef(stable(def_id));
+                fn_def.emit(EmitAction::Emit, fn_def.emit_span(), ctx);
+            }
+            // A trait is never exported through a re-export: a glob (`pub use some_crate::*;`)
+            // would expose far too much surface, and an external trait cannot carry
+            // `#[autozng::emit]`. Traits require an explicit local selection.
+            DefKind::Trait => {}
+            // A module has no IDL representation of its own, and every other kind (a const, a type
+            // alias, a macro, ...) is not exported yet.
+            _ => {}
+        });
+    }
+}
+
+pub fn analyze(tcx: TyCtxt) -> std::ops::ControlFlow<AnalyzeReport, ZngurSpec> {
+    // NOTE: the context borrows `tcx`, so the `ZngurSpec` is built from it before this
+    // function returns, while the `TyCtxt` is still alive. Printing happens later (see
+    // `render` / `driver`).
+    let mut ctx = AutozngContext::new(with_ctxt(|driver| driver.cfg.clone()));
+
+    let krate = rustc_public::local_crate();
+    let crate_name = &krate.name;
+
+    tcx.dcx().note(format!("analyzing crate `{crate_name}`"));
+
+    tcx.hir_visit_all_item_likes_in_crate(&mut visit::HirVisitor { ctx: &mut ctx, tcx });
+    CrateAnalysisVisitor { ctx: &ctx }.visit_all_rustc_public_items()?;
+
+    // A pass between the crate walk and the interface drain: the items this crate re-exports from
+    // *other* crates. The crate walk only visits the local crate, so they need their own pass
+    // (see `visit_reexported_items`).
+    visit_reexported_items(&ctx);
+
+    // Third pass: every type an emitted interface exposed (a field's type, or a function / method
+    // signature) gets its own `type` block, as if it carried an explicit `emit`. Visiting it may
+    // expose further types, and every recorded concrete instance queues its instantiated method
+    // signatures. Drain both worklists to a fixpoint; once both are empty, the interface is
+    // complete.
+    loop {
+        let mut visited = 0;
+        while let Some(request) = ctx.pop_ty_visit() {
+            visit_emitted_ty(&ctx, request);
+            visited += 1;
+        }
+        let mut queued_signatures = false;
+        while let Some((ty, adt)) = ctx.pop_concrete() {
+            ctx.request_concrete_method_signature_types(ty, &adt);
+            queued_signatures = true;
+        }
+        if visited == 0 && !queued_signatures {
+            break;
+        }
+    }
+
+    if tcx.dcx().has_errors().is_some() {
+        ControlFlow::Break(AnalyzeReport {
+            errors: tcx.dcx().err_count(),
+        })
+    } else {
+        // Build the owned spec while `tcx` is alive; the driver prints it after
+        // `run_compiler` returns (see `render::build_spec` / `render::print_to_file`).
+        ControlFlow::Continue(render::build_spec(&ctx))
+    }
+}

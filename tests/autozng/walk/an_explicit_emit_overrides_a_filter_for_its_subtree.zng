@@ -1,0 +1,8 @@
+type crate::Explicit {
+    #layout(size = 4, align = 4);
+    constructor {value: u32};
+
+    field value (offset = 0, type = u32);
+
+    safe fn method(&self);
+}

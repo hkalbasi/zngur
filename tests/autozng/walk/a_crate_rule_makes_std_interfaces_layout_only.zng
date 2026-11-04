@@ -1,0 +1,17 @@
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type ::std::vec::Vec<u32> {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type crate::Holder {
+    #layout(size = 48, align = 8);
+    constructor {text: ::std::string::String, values: ::std::vec::Vec<u32>};
+
+    field text (offset = 0, type = ::std::string::String);
+    field values (offset = 24, type = ::std::vec::Vec<u32>);
+}

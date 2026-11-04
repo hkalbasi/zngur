@@ -1,0 +1,5 @@
+type crate::Public {
+    #layout(size = 4, align = 4);
+
+    field value (offset = 0, type = u32);
+}

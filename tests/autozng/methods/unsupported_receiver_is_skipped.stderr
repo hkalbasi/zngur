@@ -1,0 +1,5 @@
+warning: autozng: skipping method `by_box`: unsupported receiver `std::boxed::Box<OnlyBoxable>`
+ --> src/lib.rs:7:5
+  |
+7 |     pub fn by_box(self: Box<Self>) {}
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

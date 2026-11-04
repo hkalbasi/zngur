@@ -1,0 +1,4 @@
+type crate::ParseIntError {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Debug);
+}

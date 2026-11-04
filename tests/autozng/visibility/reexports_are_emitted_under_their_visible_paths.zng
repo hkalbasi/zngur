@@ -1,0 +1,25 @@
+type crate::A {
+    #layout(size = 0, align = 1);
+}
+
+type crate::B {
+    #layout(size = 0, align = 1);
+}
+
+type crate::C {
+    #layout(size = 0, align = 1);
+}
+
+type crate::DRenamed {
+    #layout(size = 0, align = 1);
+}
+
+type crate::E {
+    #layout(size = 0, align = 1);
+}
+
+type crate::h::G {
+    #layout(size = 0, align = 1);
+}
+
+safe fn crate::i_fn();

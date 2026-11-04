@@ -1,0 +1,8 @@
+type crate::Holder {
+    #layout(size = 8, align = 8);
+    constructor {value: &u32};
+
+    field value (offset = 0, type = &u32);
+}
+
+safe fn crate::wrap(&u32) -> crate::Holder;

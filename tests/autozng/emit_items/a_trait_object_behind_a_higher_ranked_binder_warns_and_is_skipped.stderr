@@ -1,0 +1,5 @@
+warning: autozng: a trait object behind a higher-ranked binder is not supported; name it directly with `&dyn Trait`
+  --> src/lib.rs:13:5
+   |
+13 |     let _: fn(&dyn Callback);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^

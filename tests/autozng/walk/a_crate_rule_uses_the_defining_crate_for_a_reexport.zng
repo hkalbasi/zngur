@@ -1,0 +1,11 @@
+type crate::Holder {
+    #layout(size = 1, align = 1);
+    constructor {ordering: crate::Ordering};
+
+    field ordering (offset = 0, type = crate::Ordering);
+}
+
+type crate::Ordering {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}

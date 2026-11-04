@@ -1,0 +1,5 @@
+warning: autozng: `trait_path = "crate::Convert<bool>"` matched no trait method emitted on its type
+  --> src/lib.rs:19:5
+   |
+19 |     autozng::rename(trait_path = "crate::Convert<bool>", suffix = "Bool")
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

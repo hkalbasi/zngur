@@ -1,0 +1,34 @@
+type crate::Panel {
+    #layout(size = 4, align = 4);
+    constructor {value: u32};
+
+    field value (offset = 0, type = u32);
+
+    safe fn width(&self) -> u32 use crate::Measure as widthCpp;
+    safe fn height(&self) -> u32 use crate::Measure;
+}
+
+type crate::Plain {
+    #layout(size = 4, align = 4);
+    constructor {value: u32};
+
+    field value (offset = 0, type = u32);
+
+    safe fn width(&self) -> u32 use crate::Measure;
+    safe fn height(&self) -> u32 use crate::Measure;
+}
+
+type crate::Widget {
+    #layout(size = 4, align = 4);
+    constructor {value: u32};
+
+    field value (offset = 0, type = u32);
+
+    safe fn width(&self) -> u32 use crate::Measure as widthCpp;
+    safe fn height(&self) -> u32 use crate::Measure as heightCpp;
+}
+
+trait crate::Measure {
+    safe fn width(&self) -> u32;
+    safe fn height(&self) -> u32;
+}

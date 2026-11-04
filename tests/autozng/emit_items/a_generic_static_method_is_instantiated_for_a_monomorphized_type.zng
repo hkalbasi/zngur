@@ -1,0 +1,8 @@
+type crate::Wrapper<u32> {
+    #layout(size = 4, align = 4);
+    constructor {foo: u32};
+
+    field foo (offset = 0, type = u32);
+
+    safe fn make(u32) -> crate::Wrapper<u32>;
+}

@@ -1,0 +1,5 @@
+type crate::Holder {
+    #layout(size = 8, align = 4);
+
+    field value (offset = 0, type = u32);
+}

@@ -1,0 +1,68 @@
+type ::std::option::Option<crate::Ipv4Addr> {
+    #layout(size = 5, align = 1);
+    wellknown_traits(Copy, Debug);
+    variant None {
+        non_exhaustive;
+    }
+    variant Some {
+        non_exhaustive;
+    }
+}
+
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type crate::IpAddr {
+    #layout(size = 17, align = 1);
+    wellknown_traits(Copy, Debug);
+    variant V4 {
+        field 0 (offset = auto, type = crate::Ipv4Addr);
+    }
+    variant V6 {
+        field 0 (offset = auto, type = crate::Ipv6Addr);
+    }
+
+    safe fn is_unspecified(&self) -> bool;
+    safe fn is_loopback(&self) -> bool;
+    safe fn is_multicast(&self) -> bool;
+    safe fn is_ipv4(&self) -> bool;
+    safe fn is_ipv6(&self) -> bool;
+    safe fn to_canonical(&self) -> crate::IpAddr;
+}
+
+type crate::Ipv4Addr {
+    #layout(size = 4, align = 1);
+    wellknown_traits(Copy, Debug);
+
+    safe fn new(u8, u8, u8, u8) -> crate::Ipv4Addr;
+    safe fn to_bits(self) -> u32;
+    safe fn from_bits(u32) -> crate::Ipv4Addr;
+    safe fn is_unspecified(&self) -> bool;
+    safe fn is_loopback(&self) -> bool;
+    safe fn is_private(&self) -> bool;
+    safe fn is_link_local(&self) -> bool;
+    safe fn is_multicast(&self) -> bool;
+    safe fn is_broadcast(&self) -> bool;
+    safe fn is_documentation(&self) -> bool;
+    safe fn to_ipv6_compatible(&self) -> crate::Ipv6Addr;
+    safe fn to_ipv6_mapped(&self) -> crate::Ipv6Addr;
+}
+
+type crate::Ipv6Addr {
+    #layout(size = 16, align = 1);
+    wellknown_traits(Copy, Debug);
+
+    safe fn new(u16, u16, u16, u16, u16, u16, u16, u16) -> crate::Ipv6Addr;
+    safe fn to_bits(self) -> u128;
+    safe fn from_bits(u128) -> crate::Ipv6Addr;
+    safe fn is_unspecified(&self) -> bool;
+    safe fn is_loopback(&self) -> bool;
+    safe fn is_unique_local(&self) -> bool;
+    safe fn is_unicast_link_local(&self) -> bool;
+    safe fn is_multicast(&self) -> bool;
+    safe fn to_ipv4_mapped(&self) -> ::std::option::Option<crate::Ipv4Addr>;
+    safe fn to_ipv4(&self) -> ::std::option::Option<crate::Ipv4Addr>;
+    safe fn to_canonical(&self) -> crate::IpAddr;
+}

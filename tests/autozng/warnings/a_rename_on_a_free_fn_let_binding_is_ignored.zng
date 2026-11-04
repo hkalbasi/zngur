@@ -1,0 +1,6 @@
+type (u8, u8) {
+    #layout(size = 2, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+safe fn crate::twice<u8>(u8) -> (u8, u8);

@@ -1,0 +1,49 @@
+type ::std::result::Result<&str, ::std::str::Utf8Error> {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Copy, Debug);
+    variant Ok {
+        non_exhaustive;
+    }
+    variant Err {
+        non_exhaustive;
+    }
+}
+
+type ::std::string::String {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+
+    safe fn eq(&self, &str) -> bool use ::std::cmp::PartialEq as eqStr;
+    safe fn eq(&self, &::std::string::String) -> bool use ::std::cmp::PartialEq as eqString;
+}
+
+type ::std::vec::Vec<u8> {
+    #layout(size = 24, align = 8);
+    wellknown_traits(Debug);
+}
+
+type [u8] {
+    wellknown_traits(?Sized, Debug);
+
+    safe fn len(&self) -> usize;
+    safe fn is_empty(&self) -> bool;
+    safe fn as_ptr(&self) -> *const u8;
+    safe fn as_mut_ptr(&mut self) -> *mut u8;
+    safe fn contains(&self, &u8) -> bool;
+    safe fn to_vec(&self) -> ::std::vec::Vec<u8>;
+}
+
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}
+
+type str {
+    wellknown_traits(?Sized, Debug);
+
+    safe fn len(&self) -> usize;
+    safe fn is_empty(&self) -> bool;
+    safe fn from_utf8(&[u8]) -> ::std::result::Result<&str, ::std::str::Utf8Error>;
+    safe fn as_bytes(&self) -> &[u8];
+    unsafe fn as_bytes_mut(&mut self) -> &mut [u8];
+}

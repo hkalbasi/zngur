@@ -1,0 +1,7 @@
+type ::std::vec::Vec<u32> {
+    #layout(size = 24, align = 8);
+}
+
+trait crate::Marker<::std::vec::Vec<u32>> {
+    safe fn ping(&self);
+}

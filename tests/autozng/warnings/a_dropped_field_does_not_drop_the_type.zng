@@ -1,0 +1,5 @@
+type crate::HasArray {
+    #layout(size = 5, align = 1);
+
+    field count (offset = 4, type = u8);
+}

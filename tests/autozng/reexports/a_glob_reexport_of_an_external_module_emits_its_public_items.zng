@@ -1,0 +1,35 @@
+type crate::FpCategory {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+    variant Nan {}
+    variant Infinite {}
+    variant Zero {}
+    variant Subnormal {}
+    variant Normal {}
+}
+
+type crate::IntErrorKind {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+    non_exhaustive;
+    variant Empty {}
+    variant InvalidDigit {}
+    variant PosOverflow {}
+    variant NegOverflow {}
+    variant Zero {}
+}
+
+type crate::ParseFloatError {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Debug);
+}
+
+type crate::ParseIntError {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Debug);
+}
+
+type crate::TryFromIntError {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy, Debug);
+}

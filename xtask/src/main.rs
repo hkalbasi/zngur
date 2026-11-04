@@ -1,15 +1,36 @@
+use std::path::{Path, PathBuf};
+
 use clap::Parser;
 
+mod autozng;
 mod ci;
 mod format_book;
 mod format_templates;
 mod test;
+
+/// Repository root, resolved from this crate's manifest so paths don't depend
+/// on the directory `cargo xtask` was invoked from.
+pub(crate) fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask lives inside the repository")
+        .to_owned()
+}
 
 #[derive(Parser)]
 enum Command {
     CI {
         #[arg(long)]
         fix: bool,
+        /// Run only the `zngur-autozng` tests.
+        #[arg(long)]
+        only_autozng: bool,
+        /// Fail instead of skipping `zngur-autozng` tests when no toolchain resolves.
+        #[arg(long)]
+        require_autozng: bool,
+        /// Report autozng bridge generation/compile failures as skipped instead of failed.
+        #[arg(long)]
+        allow_autozng_bridge_failures: bool,
     },
     /// Run the end-to-end tests and examples.
     Test {
@@ -30,6 +51,15 @@ enum Command {
         /// Print every passing test instead of a progress dot.
         #[arg(short, long)]
         verbose: bool,
+        /// Run only the `zngur-autozng` tests.
+        #[arg(long)]
+        only_autozng: bool,
+        /// Fail instead of skipping `zngur-autozng` tests when no toolchain resolves.
+        #[arg(long)]
+        require_autozng: bool,
+        /// Report autozng bridge generation/compile failures as skipped instead of failed.
+        #[arg(long)]
+        allow_autozng_bridge_failures: bool,
     },
     FormatBook {
         #[arg(long)]
@@ -44,7 +74,17 @@ enum Command {
 fn main() -> anyhow::Result<()> {
     let cmd = Command::parse();
     match cmd {
-        Command::CI { fix } => ci::main(fix),
+        Command::CI {
+            fix,
+            only_autozng,
+            require_autozng,
+            allow_autozng_bridge_failures,
+        } => ci::main(
+            fix,
+            only_autozng,
+            require_autozng,
+            allow_autozng_bridge_failures,
+        ),
         Command::FormatBook { fix } => format_book::main(fix),
         Command::FormatTemplates { fix } => format_templates::main(fix),
         Command::Test {
@@ -53,6 +93,18 @@ fn main() -> anyhow::Result<()> {
             fail_list,
             fix,
             verbose,
-        } => test::main_with(fix, filter, filter_file, fail_list, verbose),
+            only_autozng,
+            require_autozng,
+            allow_autozng_bridge_failures,
+        } => test::main_with(
+            fix,
+            filter,
+            filter_file,
+            fail_list,
+            verbose,
+            only_autozng,
+            require_autozng,
+            allow_autozng_bridge_failures,
+        ),
     }
 }

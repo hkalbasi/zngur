@@ -1733,14 +1733,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zngur-autozng"
-version = "0.11.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "zngur-cli"
 version = "0.11.0"
 dependencies = [

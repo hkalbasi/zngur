@@ -1,0 +1,10 @@
+//@ pass
+
+type crate::RefOnly {
+    #only_by_ref;
+
+    field a (offset = 0, type = i32);
+
+    fn get() -> &crate::RefOnly;
+    fn get_mut() -> &mut crate::RefOnly;
+}
