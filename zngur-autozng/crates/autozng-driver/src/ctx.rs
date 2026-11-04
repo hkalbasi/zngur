@@ -257,7 +257,6 @@ pub struct TyRecord {
 /// A field selected for emission, together with the span of the `emit` that selected it.
 #[derive(Debug, Clone)]
 pub struct FieldRecord {
-    #[allow(dead_code)] // the field is re-looked-up from the ADT at render time
     pub def: FieldDef,
     pub span: Span,
 }

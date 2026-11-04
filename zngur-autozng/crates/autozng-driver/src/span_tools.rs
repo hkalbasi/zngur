@@ -1,6 +1,6 @@
 use rustc_span::{BytePos, Pos, Span};
 
-use crate::{driver::with_ctxt, error::AutozngError};
+use crate::driver::with_ctxt;
 
 #[derive(Clone, Debug, Copy, PartialEq, Hash)]
 pub struct Spanned<T> {
@@ -37,43 +37,11 @@ impl<T> Spanned<T> {
     }
 }
 
-impl<T> Spanned<Result<T, AutozngError>> {
-    /// transpose the result, leaving spans unchanged
-    #[allow(dead_code)] // part of the `Spanned` helper API
-    pub fn transpose(self) -> Result<Spanned<T>, AutozngError> {
-        match self.value {
-            Ok(value) => {
-                let span = self.span;
-                Ok(Spanned { value, span })
-            }
-            Err(err) => Err(err),
-        }
-    }
-}
-
 pub fn respan<T>(span: Span, value: T) -> Spanned<T> {
     Spanned { value, span }
 }
-
-#[allow(dead_code)] // helper kept alongside `OffsetRustcSpanExt`
-pub trait StableRustcPublicSpanExt {
-    fn stable(self) -> rustc_public::ty::Span;
-}
-
-impl StableRustcPublicSpanExt for Span {
-    fn stable(self) -> rustc_public::ty::Span {
-        rustc_public::rustc_internal::stable(self)
-    }
-}
-
 pub trait OffsetRustcSpanExt {
     fn offset_lo(&self, offset: usize) -> Span;
-    #[allow(dead_code)] // part of the span-offset API
-    fn offset_hi(&self, offset: usize) -> Span;
-    #[allow(dead_code)] // only reached through `offset_lo`/`offset_hi`
-    fn offset_by(&self, offset: usize) -> Span {
-        self.offset_lo(offset).offset_hi(offset)
-    }
     fn offset_inside(&self, outer: Span) -> Span;
 }
 
@@ -81,10 +49,6 @@ impl OffsetRustcSpanExt for Span {
     fn offset_lo(&self, offset: usize) -> Span {
         let lo = BytePos::from_usize(self.lo().to_usize() + offset);
         self.with_lo(lo)
-    }
-    fn offset_hi(&self, offset: usize) -> Span {
-        let hi = BytePos::from_usize(self.hi().to_usize() + offset);
-        self.with_hi(hi)
     }
     fn offset_inside(&self, outer: Span) -> Span {
         let (lo_offset, hi_offset) = with_ctxt(|ctx| {

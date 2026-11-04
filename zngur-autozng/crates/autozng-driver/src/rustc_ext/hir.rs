@@ -319,36 +319,3 @@ impl<'hir> HirConstBodyExt for rustc_hir::ImplItem<'hir> {
         }
     }
 }
-
-// impl HirConstBodyExt for rustc_public::CrateItem {
-//     fn opt_const_item(&self) -> Option<HirConstItem> {
-//         if let rustc_public::ItemKind::Const = self.kind() {
-//             with_tcx(|tcx| {
-//                 self.def_id()
-//                     .internal(tcx)
-//                     .as_local()
-//                     .and_then(|local_def_id| {
-//                         if let rustc_hir::Node::Item(rustc_hir::Item {
-//                             owner_id,
-//                             kind: rustc_hir::ItemKind::Const(_, _, ty, rhs),
-//                             ..
-//                         }) = tcx.hir_node_by_def_id(local_def_id)
-//                         {
-//                             Some(HirConstItem {
-//                                 owner_id: *owner_id,
-//                                 ty: { stable(rustc_hir_analysis::lower_ty(tcx, ty)) },
-//                                 body_id: match rhs {
-//                                     rustc_hir::ConstItemRhs::Body(body_id) => Some(*body_id),
-//                                     rustc_hir::ConstItemRhs::TypeConst(_) => None,
-//                                 },
-//                             })
-//                         } else {
-//                             None
-//                         }
-//                     })
-//             })
-//         } else {
-//             None
-//         }
-//     }
-// }

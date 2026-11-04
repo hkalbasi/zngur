@@ -138,6 +138,7 @@ impl RustcInternalEx for rustc_public::ty::AliasTerm {
     type T<'tcx> = rustc_middle::ty::AliasTerm<'tcx>;
     fn internal<'tcx>(self, tcx: TyCtxt<'tcx>) -> Self::T<'tcx> {
         // FIXME: rust-analyser, docs.rs, and rustc don't always agree on the 4th param's existence
+        // it will probably be added in a later nightly
         rustc_middle::ty::AliasTerm::new_from_def_id(
             tcx,
             self.def_id.def_id().internal(tcx),

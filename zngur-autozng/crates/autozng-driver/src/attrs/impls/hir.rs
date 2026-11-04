@@ -247,24 +247,6 @@ impl RenameTarget for crate::rustc_ext::HirLetBindStmt {
 
 impl_attr_target!(crate::rustc_ext::HirLetBindStmt, EmitTarget, RenameTarget);
 
-// impl<'hir> EmitVisitable for rustc_hir::Stmt<'hir> {
-//     fn emit(
-//         &self,
-//         _action: crate::attrs::emit::EmitAction,
-//         _ctx: &crate::ctx::AutozngContext,
-//     ) -> bool {
-//         false
-//     }
-//     fn name(&self) -> String {
-//         stable(self.hir_id.owner.to_def_id()).name()
-//     }
-//     fn implicit_action(&self) -> Option<crate::attrs::emit::EmitAction> {
-//         Some(crate::attrs::emit::EmitAction::Emit)
-//     }
-// }
-
-// impl_attributable!(rustc_hir::Stmt<'_>, EmitVisitable);
-
 // TODO: `ty` alias emission is unimplemented; always returns `false`.
 impl EmitTarget for crate::rustc_ext::HirTyAlias {
     fn emit(&self, _action: EmitAction, _span: Span, _ctx: &AutozngContext) -> bool {

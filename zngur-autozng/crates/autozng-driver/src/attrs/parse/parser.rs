@@ -42,13 +42,9 @@ impl MetaItemListParser {
     pub fn mixed(&self) -> impl Iterator<Item = &MetaItemOrLitParser> {
         self.items.iter()
     }
-
-    #[allow(dead_code)] // part of the list parser's API
     pub fn len(&self) -> usize {
         self.items.len()
     }
-
-    #[allow(dead_code)] // part of the list parser's API
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

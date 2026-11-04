@@ -100,8 +100,6 @@ impl AttrPath {
     pub fn from<T: Into<AttrPath>>(value: T) -> Self {
         value.into()
     }
-
-    #[allow(dead_code)] // part of the framework's path API; callers iterate `as_ident`/`Display`
     pub fn segments(&self) -> impl Iterator<Item = &str> {
         enum AttrPathIter<'a, S: Iterator<Item = &'a str>, U: Iterator<Item = &'a str>> {
             Static(S),
