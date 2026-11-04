@@ -1,0 +1,16 @@
+//@ pass
+
+type crate::Choice {
+    #layout(size = 8, align = 4);
+
+    variant First {
+        field value (offset = auto, type = i32);
+    }
+
+    variant Second {
+        field value (offset = auto, type = i32);
+    }
+
+    fn first() -> crate::Choice;
+    fn second() -> crate::Choice;
+}

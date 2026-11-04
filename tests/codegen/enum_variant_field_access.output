@@ -1,0 +1,6 @@
+first.value = 42
+second.value = 24
+second.value = 7
+first_ref.value = 42
+second_ref.value = 7
+second_ref.value = 9
