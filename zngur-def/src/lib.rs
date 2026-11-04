@@ -479,14 +479,47 @@ impl Display for PrimitiveRustType {
     }
 }
 
+impl RustType {
+    /// Whether a `dyn`/`impl` type with marker bounds needs parentheses when it follows a
+    /// `&`, `*const` or `*mut`. There the trailing `+` would otherwise bind outside the pointer:
+    /// `&dyn A + Send` is an ambiguous `+`, while `&(dyn A + Send)` is one type.
+    fn needs_parens_after_pointer(&self) -> bool {
+        matches!(
+            self,
+            RustType::Dyn(_, marker_bounds) | RustType::Impl(_, marker_bounds)
+                if !marker_bounds.is_empty()
+        )
+    }
+
+    fn fmt_after_pointer(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.needs_parens_after_pointer() {
+            write!(f, "({self})")
+        } else {
+            write!(f, "{self}")
+        }
+    }
+}
+
 impl Display for RustType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RustType::Primitive(s) => write!(f, "{s}"),
-            RustType::Ref(Mutability::Not, ty) => write!(f, "&{ty}"),
-            RustType::Ref(Mutability::Mut, ty) => write!(f, "&mut {ty}"),
-            RustType::Raw(Mutability::Not, ty) => write!(f, "*const {ty}"),
-            RustType::Raw(Mutability::Mut, ty) => write!(f, "*mut {ty}"),
+            RustType::Ref(Mutability::Not, ty) => {
+                write!(f, "&")?;
+                ty.fmt_after_pointer(f)
+            }
+            RustType::Ref(Mutability::Mut, ty) => {
+                write!(f, "&mut ")?;
+                ty.fmt_after_pointer(f)
+            }
+            RustType::Raw(Mutability::Not, ty) => {
+                write!(f, "*const ")?;
+                ty.fmt_after_pointer(f)
+            }
+            RustType::Raw(Mutability::Mut, ty) => {
+                write!(f, "*mut ")?;
+                ty.fmt_after_pointer(f)
+            }
             RustType::Boxed(ty) => write!(f, "Box<{ty}>"),
             RustType::Tuple(v) => write!(f, "({})", v.iter().join(", ")),
             RustType::Adt(pg) => write!(f, "{pg}"),
@@ -500,7 +533,7 @@ impl Display for RustType {
             RustType::Impl(tr, marker_bounds) => {
                 write!(f, "impl {tr}")?;
                 for mb in marker_bounds {
-                    write!(f, "+ {mb}")?;
+                    write!(f, " + {mb}")?;
                 }
                 Ok(())
             }

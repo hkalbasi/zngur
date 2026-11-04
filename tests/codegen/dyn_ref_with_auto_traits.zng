@@ -1,0 +1,13 @@
+//@ pass
+
+// A dyn type with auto traits nested under a reference must stay one type in the generated
+// Rust (`&(dyn Error + Send + Sync)`); without the parentheses the `+` binds outside the `&`.
+
+type dyn ::std::error::Error + ::std::marker::Send + ::std::marker::Sync {
+    wellknown_traits(?Sized);
+}
+
+type crate::Holder {
+    #layout(size = 0, align = 1);
+    fn error(&self) -> &dyn ::std::error::Error + ::std::marker::Send + ::std::marker::Sync;
+}
