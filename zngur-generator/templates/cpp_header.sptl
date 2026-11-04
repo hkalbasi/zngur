@@ -611,7 +611,6 @@ namespace {{ self.namespace }} {
     union {
       {% if is_unsized %}::std::array<size_t, 2> {% else %}size_t{% endif %} __zngur_data;
 
-    {% if !is_unsized %}
     {% for (index, field) in td.fields.iter().enumerate() %}
       ::{{ self.namespace }}::FieldRefMut<
         {{ field.ty.into_cpp(self.namespace, self.crate_name) }},
@@ -622,7 +621,6 @@ namespace {{ self.namespace }} {
       {% endif %}
       > {{ self.cpp_handle_field_name(field.name) }};
     {% endfor %}
-    {% endif %}
     };
 
     {% if !is_unsized && !td.layout.is_only_by_ref() %}
@@ -806,7 +804,6 @@ namespace {{ self.namespace }} {
     union {
       {% if is_unsized %}::std::array<size_t, 2>{% else %}size_t{% endif %} __zngur_data;
 
-    {% if !is_unsized %}
     {% for (index, field) in td.fields.iter().enumerate() %}
       ::{{ self.namespace }}::FieldRef<
         {{ field.ty.into_cpp(self.namespace, self.crate_name) }},
@@ -817,7 +814,6 @@ namespace {{ self.namespace }} {
       {% endif %}
       > {{ self.cpp_handle_field_name(field.name) }};
     {% endfor %}
-    {% endif %}
     };
 
     {% if !is_unsized && !td.layout.is_only_by_ref() %}

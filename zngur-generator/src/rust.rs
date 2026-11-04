@@ -345,8 +345,8 @@ macro_rules! __zngur_assert_has_field {
         const _: () = {
             #[allow(dead_code)]
             #[allow(mismatched_lifetime_syntaxes)]
-            fn check_field(value: $x) -> $y {
-                value.$($field)+
+            fn check_field(value: &$x) {
+                let _: &$y = &value.$($field)+;
             }
         };
     };
