@@ -1,0 +1,10 @@
+//@ pass
+
+type bool {
+    #layout(size = 1, align = 1);
+    wellknown_traits(Copy);
+}
+
+type dyn Fn(i32) -> bool {
+    wellknown_traits(?Sized);
+}

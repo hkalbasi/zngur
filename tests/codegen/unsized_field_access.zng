@@ -1,0 +1,11 @@
+//@ pass
+
+type crate::Unsized {
+    wellknown_traits(?Sized);
+
+    field value (offset = 0, type = i32);
+}
+
+extern "C++" {
+    safe fn unsized_field_access_main(&mut crate::Unsized);
+}

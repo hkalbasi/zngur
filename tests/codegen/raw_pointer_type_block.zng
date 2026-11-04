@@ -1,0 +1,20 @@
+//@ pass
+
+type crate::Point {
+    #layout(size = 1, align = 1);
+}
+
+type (*const crate::Point, usize) {
+    #layout(size = 16, align = 8);
+    wellknown_traits(Copy);
+}
+
+type (*mut crate::Point, usize) {
+    #layout(size = 16, align = 8);
+    wellknown_traits(Copy);
+}
+
+extern "C++" {
+    safe fn make_tuple() -> (*const crate::Point, usize);
+    safe fn make_mut_tuple() -> (*mut crate::Point, usize);
+}

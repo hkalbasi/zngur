@@ -704,6 +704,29 @@ namespace {{ self.cpp_namespace }} {
   {% endfor %}
 {% endfor %}
 
+// specializations for raw pointers to references. 
+{% for raw_kind in ["Raw", "RawMut"] %}
+  {% for ref_kind in ["Ref", "RefMut"] %}
+
+  template<typename T>
+  struct __zngur_internal< {{ raw_kind }} < {{ ref_kind }} < T > > > {
+    static inline uint8_t* data_ptr(const {{ raw_kind }} < {{ ref_kind }} < T > >& t) noexcept {
+        return const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(&t.__zngur_data));
+    }
+    static inline void assume_init({{ raw_kind }} < {{ ref_kind }} < T > >&) noexcept {}
+
+    static inline void check_init(const {{ raw_kind }} < {{ ref_kind }} < T > >&) noexcept {}
+
+    static inline void assume_deinit({{ raw_kind }} < {{ ref_kind }} < T > >&) noexcept {}
+
+    static inline size_t size_of() noexcept {
+        return sizeof(uintptr_t);
+    }
+  };
+
+  {% endfor %}
+{% endfor %}
+
 {% for ty in self.builtin_types() %}
   {% let needs_endif = self.is_size_t(ty) %}
   {% if needs_endif %}

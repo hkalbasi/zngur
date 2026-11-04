@@ -146,6 +146,7 @@ namespace {{ self.namespace }} {
 
 {% for (_, td) in self.trait_defs %}
   {% if let Some(normal) = td.as_normal() %}
+    {{ normal.0.header() }}
     {{ normal.0.path.open_namespace() }}
     {{ normal.0.specialization_decl() }} {
       public:
@@ -231,10 +232,6 @@ namespace {{ self.namespace }} {
 
     {% if td.layout.is_only_by_ref() %}
         {{ name }}() = delete;
-
-          {% if !td.fields.is_empty() %}
-          union {
-          {% endif %}
     {% else if td.layout.is_stack_allocated() %}
         union alignas({{ td.layout.stack_align() }}) {
           alignas({{ td.layout.stack_align() }}) mutable ::std::array< ::uint8_t, {{ td.layout.stack_size() }}> __zngur_data;
@@ -614,7 +611,6 @@ namespace {{ self.namespace }} {
     union {
       {% if is_unsized %}::std::array<size_t, 2> {% else %}size_t{% endif %} __zngur_data;
 
-    {% if !is_unsized && !td.layout.is_only_by_ref() %}
     {% for (index, field) in td.fields.iter().enumerate() %}
       ::{{ self.namespace }}::FieldRefMut<
         {{ field.ty.into_cpp(self.namespace, self.crate_name) }},
@@ -625,7 +621,6 @@ namespace {{ self.namespace }} {
       {% endif %}
       > {{ self.cpp_handle_field_name(field.name) }};
     {% endfor %}
-    {% endif %}
     };
 
     {% if !is_unsized && !td.layout.is_only_by_ref() %}
@@ -701,7 +696,7 @@ namespace {{ self.namespace }} {
       }
     {% endif %}
 
-    {{ td.render_make_box_ref(td.ty.path.name(), self.namespace, self.crate_name) }}
+    {{ td.render_ref_mut_dyn_ctor(self.namespace, self.crate_name) }}
 
     {% if let Some(cpp_heap_allocated) = td.cpp_heap_allocated %}
       inline {{ cpp_heap_allocated.cpp_type }}& cpp() {
@@ -809,7 +804,6 @@ namespace {{ self.namespace }} {
     union {
       {% if is_unsized %}::std::array<size_t, 2>{% else %}size_t{% endif %} __zngur_data;
 
-    {% if !is_unsized && !td.layout.is_only_by_ref() %}
     {% for (index, field) in td.fields.iter().enumerate() %}
       ::{{ self.namespace }}::FieldRef<
         {{ field.ty.into_cpp(self.namespace, self.crate_name) }},
@@ -820,7 +814,6 @@ namespace {{ self.namespace }} {
       {% endif %}
       > {{ self.cpp_handle_field_name(field.name) }};
     {% endfor %}
-    {% endif %}
     };
 
     {% if !is_unsized && !td.layout.is_only_by_ref() %}
@@ -925,7 +918,7 @@ namespace {{ self.namespace }} {
     {% endif %}
 
 
-    {{ td.render_make_box_ref_only(td.ty.path.name(), self.namespace, self.crate_name) }}
+    {{ td.render_ref_dyn_ctor(self.namespace, self.crate_name) }}
 
     {% if let Some(cpp_heap_allocated) = td.cpp_heap_allocated %}
       inline {{ cpp_heap_allocated.cpp_type }}& cpp() {

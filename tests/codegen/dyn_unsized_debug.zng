@@ -1,0 +1,9 @@
+//@ pass
+
+type dyn crate::DebugAny + ::std::marker::Send {
+    wellknown_traits(?Sized, Debug);
+}
+
+extern "C++" {
+    safe fn debug_dyn(&dyn crate::DebugAny + ::std::marker::Send);
+}
