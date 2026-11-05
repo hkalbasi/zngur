@@ -289,7 +289,8 @@ impl<'a, 'b> ModuleAliasResolver<'a, 'b> {
                             head_alias.span,
                         );
                     }
-                    // Recover from the cycle by resolving the raw path against `self.base`.
+                    // The cycle above will trigger an error. Resolve against self.base just to
+                    // allow collecting all errors in the module for better diagnostics.
                     alias.path.to_zngur(self.base)
                 }
             }
