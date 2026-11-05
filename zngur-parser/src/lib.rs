@@ -39,6 +39,7 @@ mod tests;
 
 pub mod cfg;
 mod conditional;
+mod dfs;
 mod template_types;
 
 use crate::{
@@ -200,69 +201,18 @@ impl ResolvedAlias<'_> {
     /// Returns `true` if `path` is a relative path whose first segment equals `self.name`.
     ///
     /// Root-prefixed (`::...`), `crate::`, and `c++::` paths never match an alias.
-    fn matches(&self, path: &ParsedPath<'_>) -> bool {
-        path.split_relative_head()
+    fn path_uses_alias(&self, path: &ParsedPath<'_>) -> bool {
+        path.try_as_relative()
+            .map(RelativePath::split_base)
             .is_some_and(|(head, _)| head == self.name)
     }
 
-    /// If `path` starts with `self.name`, replaces that leading segment with `self.target`
-    /// and appends any remaining segments from `path` (e.g., expanding `sub::Foo` via
+    /// If `path` uses this alias, replaces that leading segment with `self.target`
+    /// and appends any remaining segments from `path` (e.g., resolving `sub::Foo` via
     /// `use c++::a::b as sub;` produces `c++::a::b::Foo`).
-    fn expand(&self, path: &ParsedPath<'_>) -> Option<EntityPath> {
-        let (head, rest) = path.split_relative_head()?;
+    fn try_resolve(&self, path: &ParsedPath<'_>) -> Option<EntityPath> {
+        let (head, rest) = path.try_as_relative().map(RelativePath::split_base)?;
         (head == self.name).then(|| self.target.join(rest.iter().copied()))
-    }
-}
-
-/// Outcome of attempting to step to `next_node` during a depth-first search.
-enum DfsEdge {
-    /// `next_node` is not on the active recursion stack and can be visited safely.
-    TreeOrCross,
-    /// `next_node` is already on the active recursion stack, forming a directed cycle.
-    /// `newly_detected_head` holds `Some(head)` the first time this cycle is encountered
-    /// (where `head` is the smallest node index on the cycle, i.e., the earliest
-    /// declaration), or `None` if an error has already been reported for this cycle.
-    BackEdgeCycle { newly_detected_head: Option<usize> },
-}
-
-/// Tracks the active recursion stack during a depth-first traversal over indexed
-/// nodes (`0..n`) to detect directed cycles and report each unique cycle at most once.
-#[derive(Default)]
-struct DfsCycleDetector {
-    /// Node indices currently on the active DFS call stack, in visit order.
-    active_stack: Vec<usize>,
-    /// Canonical cycle heads (minimum node index in each cycle) that have already
-    /// been reported, preventing duplicate diagnostics when multiple paths reach
-    /// the same cycle.
-    reported_cycle_heads: HashSet<usize>,
-}
-
-impl DfsCycleDetector {
-    /// Inspects the edge to `next_node` against `active_stack` to check for a cycle.
-    fn classify_edge(&mut self, next_node: usize) -> DfsEdge {
-        let Some(cycle_pos) = self.active_stack.iter().position(|&v| v == next_node) else {
-            return DfsEdge::TreeOrCross;
-        };
-        let cycle_head = *self.active_stack[cycle_pos..]
-            .iter()
-            .min()
-            .expect("cycle slice on active_stack is non-empty");
-        let newly_detected_head = self
-            .reported_cycle_heads
-            .insert(cycle_head)
-            .then_some(cycle_head);
-        DfsEdge::BackEdgeCycle {
-            newly_detected_head,
-        }
-    }
-
-    /// Pushes `node` onto the active DFS stack for the duration of `f`, popping it
-    /// automatically when `f` returns.
-    fn with_node<R>(&mut self, node: usize, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.active_stack.push(node);
-        let result = f(self);
-        self.active_stack.pop();
-        result
     }
 }
 
@@ -270,7 +220,8 @@ impl DfsCycleDetector {
 ///
 /// Aliases in the same module are order-independent (an earlier `use` may reference an
 /// alias defined later in the same module) and shadow `parent_aliases` inherited from
-/// enclosing modules. Cycles among same-module aliases are detected via [`DfsCycleDetector`].
+/// enclosing modules. Cycles among same-module aliases are detected via
+/// [`dfs::DfsCycleDetector`].
 struct ModuleAliasResolver<'a, 'b> {
     /// Deduplicated local aliases in declaration order, keyed by alias name.
     local_aliases: &'b IndexMap<&'a str, &'b ParsedAlias<'a>>,
@@ -283,14 +234,16 @@ struct ModuleAliasResolver<'a, 'b> {
 impl<'a, 'b> ModuleAliasResolver<'a, 'b> {
     /// Resolves every local alias in declaration order.
     fn resolve_all(&self, ctx: &mut ParseContext) -> Vec<ResolvedAlias<'a>> {
-        let mut dfs = DfsCycleDetector::default();
+        let mut dfs = dfs::DfsCycleDetector::default();
         (0..self.local_aliases.len())
             .map(|idx| {
                 let (&name, _) = self
                     .local_aliases
                     .get_index(idx)
                     .expect("valid local alias index");
-                let target = dfs.with_node(idx, |dfs| self.resolve_alias_at(idx, dfs, ctx));
+                let target = dfs
+                    .with_node(idx, |dfs| self.resolve_alias_at(idx, dfs, ctx))
+                    .expect("initial node on an empty DFS stack cannot form a cycle");
                 ResolvedAlias { name, target }
             })
             .collect()
@@ -302,12 +255,12 @@ impl<'a, 'b> ModuleAliasResolver<'a, 'b> {
     ///    (or report a cycle error if it is already on the active DFS stack) and append
     ///    any trailing segments.
     /// 2. **Inherited parent alias**: Otherwise, if the path matches an alias in
-    ///    `self.parent_aliases`, expand it via that parent alias.
+    ///    `self.parent_aliases`, resolve it via that parent alias.
     /// 3. **Module base path**: Otherwise, resolve the path directly against `self.base`.
     fn resolve_alias_at(
         &self,
         idx: usize,
-        dfs: &mut DfsCycleDetector,
+        dfs: &mut dfs::DfsCycleDetector,
         ctx: &mut ParseContext,
     ) -> EntityPath {
         let (_, &alias) = self
@@ -315,44 +268,42 @@ impl<'a, 'b> ModuleAliasResolver<'a, 'b> {
             .get_index(idx)
             .expect("valid local alias index");
 
-        if let Some((head, rest)) = alias.path.split_relative_head() {
-            if let Some(target_idx) = self.local_aliases.get_index_of(head) {
-                return match dfs.classify_edge(target_idx) {
-                    DfsEdge::TreeOrCross => {
-                        let prefix = dfs.with_node(target_idx, |dfs| {
-                            self.resolve_alias_at(target_idx, dfs, ctx)
-                        });
-                        prefix.join(rest.iter().copied())
+        // If alias path matches another alias locally...
+        if let Some((head, rest)) = alias.path.try_as_relative().map(RelativePath::split_base)
+            && let Some(target_idx) = self.local_aliases.get_index_of(head)
+        {
+            match dfs.with_node(target_idx, |dfs| {
+                self.resolve_alias_at(target_idx, dfs, ctx)
+            }) {
+                Ok(prefix) => prefix.join(rest.iter().copied()),
+                Err(dfs::DfsCycle {
+                    newly_detected_head,
+                }) => {
+                    if let Some(head_idx) = newly_detected_head {
+                        let (_, &head_alias) = self
+                            .local_aliases
+                            .get_index(head_idx)
+                            .expect("valid cycle head index");
+                        ctx.add_error_str(
+                            &format!("cyclic `use` alias definition `{}`", head_alias.name),
+                            head_alias.span,
+                        );
                     }
-                    DfsEdge::BackEdgeCycle {
-                        newly_detected_head,
-                    } => {
-                        if let Some(head_idx) = newly_detected_head {
-                            let (_, &head_alias) = self
-                                .local_aliases
-                                .get_index(head_idx)
-                                .expect("valid cycle head index");
-                            ctx.add_error_str(
-                                &format!("cyclic `use` alias definition `{}`", head_alias.name),
-                                head_alias.span,
-                            );
-                        }
-                        // Recover from the cycle by resolving the raw path against `self.base`.
-                        alias.path.to_zngur(self.base)
-                    }
-                };
+                    // Recover from the cycle by resolving the raw path against `self.base`.
+                    alias.path.to_zngur(self.base)
+                }
             }
-
-            if let Some(expanded) = self
-                .parent_aliases
-                .iter()
-                .find_map(|parent| parent.expand(&alias.path))
-            {
-                return expanded;
-            }
+        } else if let Some(expanded) = self
+            // Try matching against a parent alias
+            .parent_aliases
+            .iter()
+            .find_map(|parent| parent.try_resolve(&alias.path))
+        {
+            expanded
+        } else {
+            // Otherwise, the alias is final (refers to the module itself)
+            alias.path.to_zngur(self.base)
         }
-
-        alias.path.to_zngur(self.base)
     }
 }
 
@@ -447,13 +398,17 @@ impl<'a> Scope<'a> {
     }
 
     fn has_alias(&self, path: &ParsedPath<'_>) -> bool {
-        self.aliases.iter().any(|alias| alias.matches(path))
+        self.aliases.iter().any(|alias| alias.path_uses_alias(path))
     }
 
     /// Resolve a path according to the current scope.
     fn resolve_path(&self, path: &ParsedPath<'_>) -> EntityPath {
         // Check to see if the path refers to an alias:
-        if let Some(expanded_alias) = self.aliases.iter().find_map(|alias| alias.expand(path)) {
+        if let Some(expanded_alias) = self
+            .aliases
+            .iter()
+            .find_map(|alias| alias.try_resolve(path))
+        {
             expanded_alias
         } else {
             path.to_zngur(&self.base)
@@ -531,16 +486,28 @@ impl<'a> Scope<'a> {
     }
 }
 
+/// A borrowed view of a non-empty [`ParsedPath`] with [`ParsedPathStart::Relative`].
+#[derive(Debug, Clone, Copy)]
+struct RelativePath<'p, 'a> {
+    base: &'a str,
+    rest: &'p [&'a str],
+}
+
+impl<'p, 'a> RelativePath<'p, 'a> {
+    /// Splits this relative path into its leading segment (`"foo"`) and any
+    /// trailing segments (`&["bar"]` for `foo::bar`).
+    fn split_base(self) -> (&'a str, &'p [&'a str]) {
+        (self.base, self.rest)
+    }
+}
+
 impl<'a> ParsedPath<'a> {
-    /// If `self` is a relative path (`foo` or `foo::bar`), splits it into its
-    /// leading segment (`"foo"`) and remaining segments (`&["bar"]`).
-    ///
-    /// Returns `None` for `::`, `crate::`, and `c++::` paths, which never match aliases.
-    fn split_relative_head(&self) -> Option<(&'a str, &[&'a str])> {
+    /// Returns `Some(RelativePath)` if `self` is a relative path (`foo` or `foo::bar`),
+    /// or `None` for `::`, `crate::`, and `c++::` paths (which never match aliases).
+    fn try_as_relative(&self) -> Option<RelativePath<'_, 'a>> {
         if self.start == ParsedPathStart::Relative {
-            self.segments
-                .split_first()
-                .map(|(&head, rest)| (head, rest))
+            let (&base, rest) = self.segments.split_first()?;
+            Some(RelativePath { base, rest })
         } else {
             None
         }
