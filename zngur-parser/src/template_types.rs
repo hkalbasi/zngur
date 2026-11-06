@@ -238,9 +238,6 @@ pub fn try_match_template(ty: &RustType, template: &ZngurType) -> Option<Templat
         constructor,
         variants,
         fields,
-        cpp_ref,
-        cpp_heap_allocated,
-        cpp_stack_owned,
     } = template;
     debug_assert_eq!(substitute_vars(template_ty, &mapping).unwrap(), *ty);
     let new_ty = ZngurType {
@@ -305,9 +302,6 @@ pub fn try_match_template(ty: &RustType, template: &ZngurType) -> Option<Templat
                 ),
             })
             .collect(),
-        cpp_heap_allocated: cpp_heap_allocated.clone(),
-        cpp_ref: cpp_ref.clone(),
-        cpp_stack_owned: cpp_stack_owned.clone(),
     };
     Some(TemplateMatch(new_ty))
 }

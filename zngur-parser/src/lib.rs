@@ -11,12 +11,11 @@ use indexmap::IndexMap;
 use itertools::{Either, Itertools};
 
 use zngur_def::{
-    AdditionalIncludes, ConflictSource, ConvertPanicToException, CppHeapAllocated, CppRef,
-    CppStackOwned, Import, LayoutPolicy, Merge, MergeFailure, ModuleImport, Mutability,
-    PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurConstructor,
-    ZngurExternCppFn, ZngurExternCppImpl, ZngurField, ZngurFn, ZngurMethod, ZngurMethodDetails,
-    ZngurMethodReceiver, ZngurSpec, ZngurTrait, ZngurType, ZngurVariant, ZngurWellknownTrait,
-    cpp_handle_field_name, cpp_handle_keyword,
+    AdditionalIncludes, ConflictSource, ConvertPanicToException, Import, LayoutPolicy, Merge,
+    MergeFailure, ModuleImport, Mutability, PrimitiveRustType, RustPathAndGenerics, RustTrait,
+    RustType, TypeVar, ZngurConstructor, ZngurExternCppFn, ZngurExternCppImpl, ZngurField, ZngurFn,
+    ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver, ZngurSpec, ZngurTrait, ZngurType,
+    ZngurVariant, ZngurWellknownTrait, cpp_handle_field_name, cpp_handle_keyword,
 };
 
 pub type Span = SimpleSpan<usize>;
@@ -653,24 +652,11 @@ enum ParsedTypeItem<'a> {
         deref: Option<ParsedRustType<'a>>,
         cpp_name: Option<&'a str>,
     },
-    CppValue {
-        field: &'a str,
-        cpp_type: &'a str,
-    },
-    // For the `#cpp_*` directives, `cpp_type` is `None` if the C++ type name is omitted, which is
-    // allowed for `c++::` types: the name is the type's path.
-    CppHeapAllocated {
-        cpp_type: Option<&'a str>,
-    },
-    CppRef {
-        cpp_type: Option<&'a str>,
-    },
-    CppStackOwned {
-        cpp_type: Option<&'a str>,
-        props: Option<Vec<(Spanned<&'a str>, usize)>>,
-    },
     /// `#trivially_relocatable`.
     TriviallyRelocatable,
+    RemovedCppDirective {
+        name: &'a str,
+    },
     MatchOnCfg(Condition<CfgConditional<'a>, ParsedTypeItem<'a>, NItems>),
 }
 
@@ -717,27 +703,6 @@ impl ParsedMethod<'_> {
 struct MergeContext {
     outer_ty: RustType,
     variant: Option<String>,
-}
-
-/// The C++ type name of a `#cpp_heap_allocated`, `#cpp_ref` or `#cpp_stack_owned` directive on
-/// `ty`: the explicit one if given, otherwise the path of a `c++::` type (`c++::a::B` is `::a::B`).
-fn cpp_type_name(
-    explicit: Option<&str>,
-    ty: &RustType,
-    span: Span,
-    ctx: &mut ParseContext,
-) -> Option<String> {
-    match (explicit, ty.cpp_spelling()) {
-        (Some(name), _) => Some(name.to_owned()),
-        (None, Some(name)) => Some(name),
-        (None, None) => {
-            ctx.add_error_str(
-                "the C++ type name can only be omitted for `c++::` types, whose path is the name",
-                span,
-            );
-            None
-        }
-    }
 }
 
 fn checked_merge<T, U>(
@@ -1011,9 +976,6 @@ impl ProcessedItem<'_> {
                 let mut layout = None;
                 let mut layout_span = None;
                 let mut exhaustive = true;
-                let mut cpp_heap_allocated = None;
-                let mut cpp_ref = None;
-                let mut cpp_stack_owned = None;
                 let mut trivially_relocatable = false;
                 let mut to_process = items;
                 to_process.reverse(); // create a stack of items to process
@@ -1046,6 +1008,7 @@ impl ProcessedItem<'_> {
                     }
                 };
                 let rust_ty = ty.inner.to_zngur(scope, ctx);
+                let mut has_removed_cpp_directive = false;
                 while let Some(item) = to_process.pop() {
                     let item_span = item.span;
                     let item = item.inner;
@@ -1239,99 +1202,48 @@ impl ProcessedItem<'_> {
                             );
                             methods.push(method);
                         }
-                        ParsedTypeItem::CppValue { field: _, cpp_type } => {
-                            ctx.add_warning_str(
-                                "#cpp_value is deprecated; use #cpp_heap_allocated instead",
-                                item_span,
-                            );
-                            let cpp = CppHeapAllocated(cpp_type.to_owned());
-                            ctx.record_span(
-                                &cpp.into_span_key_with(rust_ty.clone()),
-                                item_span.into_range(),
-                            );
-                            cpp_heap_allocated = Some(cpp);
-                        }
-                        ParsedTypeItem::CppHeapAllocated { cpp_type } => {
-                            let Some(cpp_type) = cpp_type_name(cpp_type, &rust_ty, item_span, ctx)
-                            else {
-                                continue;
-                            };
-                            let cpp = CppHeapAllocated(cpp_type);
-                            ctx.record_span(
-                                &cpp.into_span_key_with(rust_ty.clone()),
-                                item_span.into_range(),
-                            );
-                            cpp_heap_allocated = Some(cpp);
-                        }
-                        ParsedTypeItem::CppRef { cpp_type } => {
-                            let Some(cpp_type) = cpp_type_name(cpp_type, &rust_ty, item_span, ctx)
-                            else {
-                                continue;
-                            };
-                            match layout_span {
-                                Some(span) => {
-                                    ctx.add_error_str("Duplicate layout policy found", span);
-                                    continue;
-                                }
-                                None => {
-                                    layout = Some(LayoutPolicy::ZERO_SIZED_TYPE);
-                                    layout_span = Some(item_span);
-                                }
-                            }
-                            let cpp = CppRef(cpp_type);
-                            ctx.record_span(
-                                &cpp.into_span_key_with(rust_ty.clone()),
-                                item_span.into_range(),
-                            );
-                            cpp_ref = Some(cpp);
-                        }
-                        ParsedTypeItem::CppStackOwned { cpp_type, props } => {
-                            let Some(cpp_type) = cpp_type_name(cpp_type, &rust_ty, item_span, ctx)
-                            else {
-                                continue;
-                            };
-                            let has_legacy_props = props.is_some();
-                            if let Some(props) = props {
-                                let size = props
-                                    .iter()
-                                    .find(|(k, _)| k.inner == "size")
-                                    .map(|(_, v)| v.to_string())
-                                    .unwrap_or_else(|| "X".to_string());
-                                let align = props
-                                    .iter()
-                                    .find(|(k, _)| k.inner == "align")
-                                    .map(|(_, v)| v.to_string())
-                                    .unwrap_or_else(|| "Y".to_string());
-                                let report_span = ctx.report_span_for_range(item_span.into_range());
-                                let report = Report::build(ReportKind::Error, report_span.clone())
-                                    .with_message("Old syntax `#cpp_stack_owned` with layout properties is no longer supported.")
-                                    .with_label(
-                                        Label::new(report_span)
-                                            .with_message("layout parameters no longer accepted here")
-                                            .with_color(Color::Red),
-                                    )
-                                    .with_help(format!(
-                                        "layout moved to its own directive: `#cpp_stack_owned \"{cpp_type}\"; #layout(size = {size}, align = {align});`"
-                                    ))
-                                    .finish();
-                                ctx.add_fatal_report(report);
-                            }
-                            let cpp = CppStackOwned(cpp_type);
-                            ctx.record_span(
-                                &cpp.into_span_key_with(rust_ty.clone()),
-                                item_span.into_range(),
-                            );
-                            cpp_stack_owned = Some(cpp);
-                            if has_legacy_props && layout.is_none() {
-                                layout = Some(LayoutPolicy::ZERO_SIZED_TYPE);
-                            }
-                        }
                         ParsedTypeItem::TriviallyRelocatable => {
                             ctx.record_span(
                                 &PartialSpanKey::TriviallyRelocatable(rust_ty.clone()),
                                 item_span.into_range(),
                             );
                             trivially_relocatable = true;
+                        }
+                        ParsedTypeItem::RemovedCppDirective { name } => {
+                            let help = match name {
+                                "cpp_heap_allocated" | "cpp_value" => {
+                                    "declare the type as `type c++::ns::T { #heap_allocated; }`"
+                                }
+                                "cpp_ref" => {
+                                    "declare the type as `type c++::ns::T { ... }` with no \
+                                     layout; Rust can then only refer to it"
+                                }
+                                "cpp_stack_owned" => {
+                                    "declare the type as `type c++::ns::T { #layout(size = X, \
+                                     align = Y); #trivially_relocatable; }`; Rust holds C++ types \
+                                     by value when they have a layout and are trivially \
+                                     relocatable"
+                                }
+                                _ => unreachable!("unexpected removed directive {name}"),
+                            };
+                            has_removed_cpp_directive = true;
+                            if !is_template {
+                                r.types_with_removed_cpp_directive.insert(rust_ty.clone());
+                            }
+                            let report_span = ctx.report_span_for_range(item_span.into_range());
+                            let report = Report::build(ReportKind::Error, report_span.clone())
+                                .with_message(format!(
+                                    "`#{name}` is no longer supported: C++ types are `c++::` \
+                                     types, whose C++ name is their path"
+                                ))
+                                .with_label(
+                                    Label::new(report_span)
+                                        .with_message("no longer supported")
+                                        .with_color(Color::Red),
+                                )
+                                .with_help(help)
+                                .finish();
+                            ctx.add_fatal_report(report);
                         }
                         ParsedTypeItem::MatchOnCfg(match_) => {
                             let result = match_.eval(ctx);
@@ -1383,9 +1295,6 @@ impl ProcessedItem<'_> {
                     constructor,
                     variants,
                     fields,
-                    cpp_heap_allocated,
-                    cpp_ref,
-                    cpp_stack_owned,
                     trivially_relocatable,
                 };
                 if is_template {
@@ -1393,6 +1302,7 @@ impl ProcessedItem<'_> {
                         ty: zngur_type,
                         source_id: ctx.source_id(),
                         span: ty.span,
+                        has_removed_cpp_directive,
                     });
                 } else {
                     ctx.record_span(&zngur_type, ty.span.into_range());
@@ -1724,15 +1634,6 @@ enum PartialSpanKey {
     /// a [`Constructor`](zngur_def::ZngurConstructor)
     /// outer_ty, constructor_sig?
     Constructor(RustType, Option<Vec<(String, RustType)>>),
-    /// a [`CppRef`](zngur_def::CppRef)
-    /// outer_ty
-    CppRef(RustType),
-    /// a [`CppHeapAllocated`](zngur_def::CppHeapAllocated)
-    /// outer_ty
-    CppHeapAllocated(RustType),
-    /// a [`CppStackOwned`](zngur_def::CppStackOwned)
-    /// outer_ty
-    CppStackOwned(RustType),
     /// a `#trivially_relocatable` directive
     /// outer_ty
     TriviallyRelocatable(RustType),
@@ -1836,11 +1737,6 @@ impl VariantQualifiedSpanKeyExt for zngur_def::ConflictSource {
             zngur_def::ConflictSource::Constructor(sig) => {
                 PartialSpanKey::Constructor(outer_ty, sig.clone())
             }
-            zngur_def::ConflictSource::CppRef => PartialSpanKey::CppRef(outer_ty),
-            zngur_def::ConflictSource::CppHeapAllocated => {
-                PartialSpanKey::CppHeapAllocated(outer_ty)
-            }
-            zngur_def::ConflictSource::CppStackOwned => PartialSpanKey::CppStackOwned(outer_ty),
             zngur_def::ConflictSource::Method(method) => {
                 PartialSpanKey::Method(outer_ty, method.clone())
             }
@@ -1870,24 +1766,6 @@ impl QualifiedSpanKeyExt for zngur_def::LayoutPolicy {
 impl QualifiedSpanKeyExt for zngur_def::ZngurMethod {
     fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
         PartialSpanKey::Method(outer_ty, self.clone())
-    }
-}
-
-impl QualifiedSpanKeyExt for zngur_def::CppHeapAllocated {
-    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
-        PartialSpanKey::CppHeapAllocated(outer_ty)
-    }
-}
-
-impl QualifiedSpanKeyExt for zngur_def::CppRef {
-    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
-        PartialSpanKey::CppRef(outer_ty)
-    }
-}
-
-impl QualifiedSpanKeyExt for zngur_def::CppStackOwned {
-    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
-        PartialSpanKey::CppStackOwned(outer_ty)
     }
 }
 
@@ -2184,6 +2062,7 @@ impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
 
     /// Records a non-fatal warning as an ariadne diagnostic pointing at `span`.
     /// Rendering is deferred until dispatch time (see `render_report`).
+    #[allow(dead_code)]
     fn add_warning_str(&mut self, warning: &str, span: Span) {
         let report = Report::build(
             ReportKind::Warning,
@@ -2890,12 +2769,15 @@ struct TemplateDef {
     ty: ZngurType,
     source_id: SourceId,
     span: Span,
+    has_removed_cpp_directive: bool,
 }
 
 #[derive(Default)]
 struct ZngurSpecBuilder {
     spec: ZngurSpec,
     templates: Vec<TemplateDef>,
+    /// Concrete types on which a removed `#cpp_*` directive was seen.
+    types_with_removed_cpp_directive: HashSet<RustType>,
     imports: Vec<Import>,
     /// The span of each entry of `spec.imported_modules`, in the file that imports it.
     module_import_spans: Vec<ReportSpan>,
@@ -2906,11 +2788,13 @@ impl ZngurSpecBuilder {
         let ZngurSpecBuilder {
             mut spec,
             templates,
+            types_with_removed_cpp_directive,
             imports: _,
             module_import_spans,
         } = self;
         for ty in &mut spec.types {
             let mut template_locations = Vec::new();
+            let mut template_has_removed_directive = false;
             for template in &templates {
                 if let Some(template_match) = try_match_template(&ty.ty, &template.ty) {
                     let location = (template.source_id, template.span.into_range());
@@ -2930,6 +2814,9 @@ impl ZngurSpecBuilder {
                             }
                         }
                     } else {
+                        if template.has_removed_cpp_directive {
+                            template_has_removed_directive = true;
+                        }
                         template_locations.push(location);
                     }
                 }
@@ -2998,54 +2885,8 @@ impl ZngurSpecBuilder {
             }) {
                 ty.wellknown_traits.push(ZngurWellknownTrait::Drop);
             }
-            let mut cpp_directives: Vec<(&str, PartialSpanKey)> = Vec::new();
-            if ty.cpp_stack_owned.is_some() {
-                cpp_directives.push((
-                    "#cpp_stack_owned",
-                    PartialSpanKey::CppStackOwned(ty.ty.clone()),
-                ));
-            }
-            if ty.cpp_ref.is_some() {
-                cpp_directives.push(("#cpp_ref", PartialSpanKey::CppRef(ty.ty.clone())));
-            }
-            if ty.cpp_heap_allocated.is_some() {
-                cpp_directives.push((
-                    "#cpp_heap_allocated",
-                    PartialSpanKey::CppHeapAllocated(ty.ty.clone()),
-                ));
-            }
-            if cpp_directives.len() > 1 {
-                let resolved: Vec<_> = cpp_directives
-                    .iter()
-                    .map(|(name, key)| {
-                        (*name, ctx.fetch_spans_global(key).last().copied().cloned())
-                    })
-                    .collect();
-                let (first_name, ref first_span) = resolved[0];
-                let (second_name, ref second_span) = resolved[1];
-                let report_span = second_span
-                    .clone()
-                    .or_else(|| first_span.clone())
-                    .unwrap_or((0, 0usize..0));
-                let mut report =
-                    Report::build(ReportKind::Error, report_span).with_message(format!(
-                        "`{first_name}` cannot be used with `{second_name}` for type {}.",
-                        ty.ty
-                    ));
-                for (dir_name, span) in resolved {
-                    if let Some(span) = span {
-                        report = report.with_label(
-                            Label::new(span)
-                                .with_message(format!("`{dir_name}` declared here"))
-                                .with_color(Color::Yellow),
-                        );
-                    }
-                }
-                ctx.add_fatal_report(report.finish());
-                continue;
-            }
             if ty.wellknown_traits.contains(&ZngurWellknownTrait::Unsized)
-                && (matches!(ty.ty, RustType::Cpp(_)) || !cpp_directives.is_empty())
+                && matches!(ty.ty, RustType::Cpp(_))
             {
                 let report_span = ctx.resolve_item_span(
                     &PartialSpanKey::WellknownTrait(ty.ty.clone(), ZngurWellknownTrait::Unsized),
@@ -3059,10 +2900,11 @@ impl ZngurSpecBuilder {
                 );
                 continue;
             }
-            let needs_layout = !matches!(ty.ty, RustType::Cpp(_))
-                || ty.cpp_stack_owned.is_some()
-                || ty.cpp_heap_allocated.is_some();
-            if ty.layout.is_none() && needs_layout {
+            if ty.layout.is_none()
+                && !matches!(ty.ty, RustType::Cpp(_))
+                && !template_has_removed_directive
+                && !types_with_removed_cpp_directive.contains(&ty.ty)
+            {
                 let spans = ctx.fetch_spans_global(ty);
                 let (first, rest) = {
                     let mut it = spans.into_iter();
@@ -3070,20 +2912,10 @@ impl ZngurSpecBuilder {
                     (first, it.collect::<Vec<_>>())
                 };
                 let mut report = Report::build(ReportKind::Error, (0, 0usize..0))
-                    .with_message(format!("No layout policy found for type {}.", ty.ty));
-                if ty.cpp_stack_owned.is_some() {
-                    report = report.with_note(
-                        "Type is declared with `#cpp_stack_owned` which requires `#layout(size = X, align = Y)`.",
-                    );
-                } else if ty.cpp_heap_allocated.is_some() && matches!(ty.ty, RustType::Cpp(_)) {
-                    report = report.with_note(
-                        "Type is declared with `#cpp_heap_allocated` which requires `#layout(size = 16, align = 8)` or `#heap_allocated`.",
-                    );
-                } else {
-                    report = report.with_note(
+                    .with_message(format!("No layout policy found for type {}.", ty.ty))
+                    .with_note(
                         "Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.",
                     );
-                }
 
                 if let Some(first) = first {
                     report.add_label(
@@ -3124,83 +2956,24 @@ impl ZngurSpecBuilder {
                 }
                 ctx.add_fatal_report(report.finish());
             }
-            if ty.cpp_stack_owned.is_some()
-                && matches!(
-                    ty.layout,
-                    Some(
-                        LayoutPolicy::HeapAllocated
-                            | LayoutPolicy::OnlyByRef
-                            | LayoutPolicy::Conservative { .. }
-                    )
-                )
-            {
-                let stack_owned_spans =
-                    ctx.fetch_spans_global(&PartialSpanKey::CppStackOwned(ty.ty.clone()));
-                let layout_spans = ctx.fetch_spans_global(&PartialSpanKey::Layout(ty.ty.clone()));
-                let report_span = stack_owned_spans
-                    .last()
-                    .copied()
-                    .cloned()
-                    .or_else(|| layout_spans.last().copied().cloned())
-                    .unwrap_or((0, 0usize..0));
-
-                let layout_name = match ty.layout {
-                    Some(LayoutPolicy::HeapAllocated) => "#heap_allocated",
-                    Some(LayoutPolicy::OnlyByRef) => "#only_by_ref",
-                    Some(LayoutPolicy::Conservative { .. }) => "#layout_conservative",
-                    _ => unreachable!(),
+            if matches!(ty.ty, RustType::Cpp(_)) {
+                let msg = match ty.layout {
+                    Some(LayoutPolicy::Conservative { .. }) => Some(
+                        "`#layout_conservative` cannot be used on `c++::` types; use `#layout(size = X, align = Y)` instead",
+                    ),
+                    Some(LayoutPolicy::OnlyByRef) => Some(
+                        "`#only_by_ref` is for Rust types; a `c++::` type without a layout is already reference-only",
+                    ),
+                    _ => None,
                 };
-
-                let mut report = Report::build(ReportKind::Error, report_span)
-                    .with_message(format!(
-                        "`#cpp_stack_owned` cannot be used with `{layout_name}` for type {}.",
-                        ty.ty
-                    ))
-                    .with_note("`#cpp_stack_owned` types must use `#layout(size = X, align = Y)`.");
-
-                if let Some(span) = stack_owned_spans.last() {
-                    report = report.with_label(
-                        Label::new((*span).clone())
-                            .with_message("`#cpp_stack_owned` declared here")
-                            .with_color(Color::Yellow),
+                if let Some(msg) = msg {
+                    let report_span = ctx.resolve_item_span(
+                        &PartialSpanKey::Layout(ty.ty.clone()),
+                        &template_locations,
+                        ty,
                     );
+                    ctx.add_fatal_error_at_span(report_span, msg);
                 }
-                if let Some(span) = layout_spans.last() {
-                    report = report.with_label(
-                        Label::new((*span).clone())
-                            .with_message(format!("`{layout_name}` declared here"))
-                            .with_color(Color::Yellow),
-                    );
-                }
-
-                ctx.add_fatal_report(report.finish());
-            } else if matches!(ty.ty, RustType::Cpp(_))
-                && matches!(ty.layout, Some(LayoutPolicy::Conservative { .. }))
-            {
-                let report_span = ctx.resolve_item_span(
-                    &PartialSpanKey::Layout(ty.ty.clone()),
-                    &template_locations,
-                    ty,
-                );
-                ctx.add_fatal_error_at_span(
-                    report_span,
-                    "`#layout_conservative` cannot be used on `c++::` types; use `#layout(size = X, align = Y)` instead",
-                );
-            } else if matches!(ty.ty, RustType::Cpp(_))
-                && (matches!(ty.layout, Some(LayoutPolicy::OnlyByRef))
-                    || (matches!(ty.layout, Some(LayoutPolicy::HeapAllocated))
-                        && ty.cpp_heap_allocated.is_none()))
-            {
-                let report_span = ctx.resolve_item_span(
-                    &PartialSpanKey::Layout(ty.ty.clone()),
-                    &template_locations,
-                    ty,
-                );
-                ctx.add_fatal_error_at_span(
-                    report_span,
-                    "`#heap_allocated` and `#only_by_ref` are for Rust types; a `c++::` \
-                     type without a layout is already reference-only",
-                );
             }
             if ty.trivially_relocatable {
                 let tr_span = ctx.resolve_item_span(
@@ -3214,27 +2987,6 @@ impl ZngurSpecBuilder {
                         "`#trivially_relocatable` is only for `c++::` types (Rust types \
                          are always trivially relocatable)",
                     );
-                } else if !cpp_directives.is_empty() {
-                    let msg = "`#trivially_relocatable` cannot be combined with \
-                               `#cpp_stack_owned`, `#cpp_ref`, or `#cpp_heap_allocated`";
-                    let mut report = Report::build(ReportKind::Error, tr_span.clone())
-                        .with_message(msg)
-                        .with_label(
-                            Label::new(tr_span)
-                                .with_message("`#trivially_relocatable` declared here")
-                                .with_color(Color::Red),
-                        );
-                    for (dir_name, dir_key) in &cpp_directives {
-                        if let Some(span) = ctx.fetch_spans_global(dir_key).into_iter().next_back()
-                        {
-                            report = report.with_label(
-                                Label::new(span.clone())
-                                    .with_message(format!("`{dir_name}` declared here"))
-                                    .with_color(Color::Yellow),
-                            );
-                        }
-                    }
-                    ctx.add_fatal_report(report.finish());
                 } else if ty.cpp_by_value_layout().is_none() {
                     ctx.add_fatal_error_at_span(
                         tr_span,
@@ -4052,54 +3804,29 @@ fn inner_type_item<'a>()
         )
         .map(|(name, (offset, ty))| ParsedTypeItem::Field { name, ty, offset }),
     );
-    let cpp_value = just(Token::Sharp)
-        .then(just(Token::Ident("cpp_value")))
+    // The `#cpp_*` directives were removed: a `c++::` type's C++ name is its path, and whether
+    // Rust can hold it by value follows from `#layout` + `#trivially_relocatable`. They're still
+    // parsed, to explain the new syntax.
+    let removed_cpp_directive = just(Token::Sharp)
         .ignore_then(select! {
-            Token::Str(c) => c,
+            Token::Ident(c) if matches!(c, "cpp_value" | "cpp_heap_allocated" | "cpp_ref" | "cpp_stack_owned") => c,
         })
-        .then(select! {
-            Token::Str(c) => c,
-        })
-        .map(|x| ParsedTypeItem::CppValue {
-            field: x.0,
-            cpp_type: x.1,
-        });
-    let cpp_heap_allocated = just(Token::Sharp)
-        .then(just(Token::Ident("cpp_heap_allocated")))
-        .ignore_then(
+        .then_ignore(
             select! {
-                Token::Str(c) => c,
+                Token::Str(_) => (),
+                Token::RawStr(_, _) => (),
             }
-            .or_not(),
+            .repeated(),
         )
-        .map(|cpp_type| ParsedTypeItem::CppHeapAllocated { cpp_type });
-    let cpp_ref = just(Token::Sharp)
-        .then(just(Token::Ident("cpp_ref")))
-        .ignore_then(
-            select! {
-                Token::Str(c) => c,
-            }
-            .or_not(),
-        )
-        .map(|x| ParsedTypeItem::CppRef { cpp_type: x });
-    let cpp_stack_owned = just(Token::Sharp)
-        .then(just(Token::Ident("cpp_stack_owned")))
-        .ignore_then(
-            select! {
-                Token::Str(c) => c,
-            }
-            .or_not(),
-        )
-        .then(
+        .then_ignore(
             property_item
                 .clone()
                 .separated_by(just(Token::Comma))
                 .collect::<Vec<_>>()
                 .delimited_by(just(Token::ParenOpen), just(Token::ParenClose))
-                .or_not()
-                .boxed(),
+                .or_not(),
         )
-        .map(|(cpp_type, props)| ParsedTypeItem::CppStackOwned { cpp_type, props });
+        .map(|name| ParsedTypeItem::RemovedCppDirective { name });
     let trivially_relocatable = just([Token::Sharp, Token::Ident("trivially_relocatable")])
         .to(ParsedTypeItem::TriviallyRelocatable);
 
@@ -4122,10 +3849,7 @@ fn inner_type_item<'a>()
             non_exhaustive.boxed(),
             constructor.boxed(),
             field.boxed(),
-            cpp_value.boxed(),
-            cpp_heap_allocated.boxed(),
-            cpp_ref.boxed(),
-            cpp_stack_owned.boxed(),
+            removed_cpp_directive.boxed(),
             trivially_relocatable.boxed(),
             method()
                 .then(

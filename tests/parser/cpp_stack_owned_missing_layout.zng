@@ -1,4 +1,0 @@
-//@ fail
-type crate::Way {
-    #cpp_stack_owned "::osmium::Way";
-}

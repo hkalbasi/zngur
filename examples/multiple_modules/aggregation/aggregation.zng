@@ -1,17 +1,18 @@
 import "packet.zng";
 
+#crate aggregation
+
 #cpp_additional_includes "
 #include <stats.h>
 "
 
-type crate::StatsAccumulator {
-    #layout(size = 16, align = 8);
-    #cpp_heap_allocated "::cpp_stats::StatsAccumulator";
+type c++::cpp_stats::StatsAccumulator {
+    #heap_allocated;
 }
 
 extern "C++" {
-    impl crate::StatsAccumulator {
-        safe fn create() -> crate::StatsAccumulator;
+    impl c++::cpp_stats::StatsAccumulator {
+        safe fn create() -> c++::cpp_stats::StatsAccumulator;
         safe fn add_packet(&mut self, packet::Packet);
         safe fn print_report(&self);
     }

@@ -287,20 +287,11 @@ pub struct ZngurMethodDetails {
     pub cpp_name: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CppHeapAllocated(pub String);
-
 #[derive(Debug)]
 pub struct CppHeapAllocatedData {
     pub bridge_fn: String,
     pub cpp_type: String,
 }
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CppRef(pub String);
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CppStackOwned(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CppStackOwnedData {
@@ -308,23 +299,12 @@ pub struct CppStackOwnedData {
     pub cpp_type: String,
 }
 
-impl Display for CppStackOwned {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Display for CppRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub struct ZngurType {
     pub ty: RustType,
     /// Required for Rust types. For C++ (`c++::`) types, Rust holds them by value if they have a
-    /// `StackAllocated` layout and are `trivially_relocatable`, and only refers to them otherwise.
+    /// `StackAllocated` layout and are `trivially_relocatable`, holds an owning pointer to a
+    /// heap-allocated C++ object if they are `HeapAllocated`, and only refers to them otherwise.
     pub layout: Option<LayoutPolicy>,
     /// `#trivially_relocatable`: the C++ type can be moved with `memcpy`, so Rust can hold it by
     /// value. The generated C++ code checks this with `rust::is_trivially_relocatable`.
@@ -335,36 +315,29 @@ pub struct ZngurType {
     pub constructor: Option<ZngurConstructor>,
     pub variants: Vec<ZngurVariant>,
     pub fields: Vec<ZngurField>,
-    pub cpp_heap_allocated: Option<CppHeapAllocated>,
-    pub cpp_ref: Option<CppRef>,
-    pub cpp_stack_owned: Option<CppStackOwned>,
 }
 
 impl ZngurType {
-    /// The C++ name of a C++ type, e.g. `::a::B` (or the explicit name from a legacy
-    /// `#cpp_stack_owned`, `#cpp_ref`, or `#cpp_heap_allocated` directive).
+    /// The C++ name of a C++ (`c++::`) type, e.g. `::a::B`.
     pub fn cpp_name(&self) -> Option<String> {
-        if let Some(c) = &self.cpp_stack_owned {
-            return Some(c.0.clone());
-        }
-        if let Some(c) = &self.cpp_ref {
-            return Some(c.0.clone());
-        }
-        if let Some(c) = &self.cpp_heap_allocated {
-            return Some(c.0.clone());
-        }
         self.ty.cpp_spelling()
+    }
+
+    /// Whether this is a `c++::` type declared with `#heap_allocated`, whose Rust wrapper holds an
+    /// owning pointer + destructor to a heap-allocated C++ object.
+    pub fn is_cpp_heap_allocated(&self) -> bool {
+        matches!(self.ty, RustType::Cpp(_))
+            && matches!(self.layout, Some(LayoutPolicy::HeapAllocated))
     }
 
     /// The size and alignment of a C++ type that Rust holds by value (see [`ZngurType::layout`]).
     pub fn cpp_by_value_layout(&self) -> Option<LayoutPolicy> {
-        let held_by_value = self.cpp_stack_owned.is_some()
-            || (matches!(self.ty, RustType::Cpp(_))
-                && self.trivially_relocatable
-                && self.cpp_ref.is_none()
-                && self.cpp_heap_allocated.is_none());
-        match self.layout {
-            Some(layout @ LayoutPolicy::StackAllocated { .. }) if held_by_value => Some(layout),
+        match (&self.ty, self.layout) {
+            (RustType::Cpp(_), Some(layout @ LayoutPolicy::StackAllocated { .. }))
+                if self.trivially_relocatable =>
+            {
+                Some(layout)
+            }
             _ => None,
         }
     }

@@ -2,8 +2,7 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 }
 
-use generated::Inventory;
-use generated::Item;
+use generated::cpp_inventory::{Inventory, Item};
 
 fn main() {
     let mut inventory = Inventory::new_empty(1000);

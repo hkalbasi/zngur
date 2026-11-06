@@ -378,6 +378,7 @@ namespace {{ self.namespace }} {
           }
 
           inline {{ name }}(::{{ self.namespace }}::ZngurCppOpaqueOwnedObject&& o) noexcept {
+              {{ alloc_heap }}
               {% if !is_copy %}
               this->drop_flag = true;
               {% endif %}

@@ -128,21 +128,19 @@ impl ZngurGenerator {
         for ty_def in zng.types {
             let ty = &ty_def.ty;
             // What Rust can do with a C++ (`c++::`) type: hold it by value if it has a layout and
-            // is trivially relocatable, and otherwise only refer to it.
+            // is trivially relocatable, own a heap-allocated C++ pointer if `#heap_allocated`,
+            // and otherwise only refer to it.
             let cpp_name = ty_def.cpp_name();
             let cpp_by_value_type = if ty_def.cpp_by_value_layout().is_some() {
                 cpp_name.clone()
             } else {
                 None
             };
-            let cpp_ref = if cpp_by_value_type.is_none() && ty_def.cpp_heap_allocated.is_none() {
-                cpp_name.map(|name| cpp::CppRef {
+            let is_cpp_heap_allocated = ty_def.is_cpp_heap_allocated();
+            let cpp_ref = if cpp_by_value_type.is_none() && !is_cpp_heap_allocated {
+                cpp_name.clone().map(|name| cpp::CppRef {
                     name,
-                    layout: if ty_def.cpp_ref.is_some() {
-                        None
-                    } else {
-                        ty_def.layout
-                    },
+                    layout: ty_def.layout,
                 })
             } else {
                 None
@@ -172,31 +170,22 @@ impl ZngurGenerator {
             if is_copy {
                 rust_file.add_static_is_copy_assert(&ty);
             }
-            let (type_name, is_cpp, module_path): (String, bool, Vec<String>) = match &ty {
-                RustType::Cpp(segs) => {
-                    let (name, path) = segs
-                        .split_last()
-                        .expect("Cpp path must have at least one segment");
-                    (name.clone(), true, path.to_vec())
-                }
-                _ => (
-                    ty.to_string().split("::").last().unwrap().to_string(),
-                    false,
-                    vec![],
-                ),
-            };
             let mut cpp_stack_owned_data = None;
-            if let Some(cpp_type) = cpp_by_value_type {
-                let mangled_name = rust_file.cpp_stack_owned_destructor_fn(&ty);
-                cpp_stack_owned_data = Some(CppStackOwnedData {
-                    destructor_fn: mangled_name.clone(),
-                    cpp_type,
-                });
-                let LayoutPolicy::StackAllocated { size, align } = layout else {
-                    unreachable!("Validation ensures cpp_stack_owned has StackAllocated layout");
-                };
-                let struct_def = format!(
-                    r#"
+            if let RustType::Cpp(segs) = ty {
+                let (type_name, module_path) = segs
+                    .split_last()
+                    .expect("Cpp path must have at least one segment");
+                if let Some(cpp_type) = cpp_by_value_type {
+                    let mangled_name = rust_file.cpp_stack_owned_destructor_fn(ty);
+                    cpp_stack_owned_data = Some(CppStackOwnedData {
+                        destructor_fn: mangled_name.clone(),
+                        cpp_type,
+                    });
+                    let LayoutPolicy::StackAllocated { size, align } = layout else {
+                        unreachable!("C++ types held by value have a size and alignment");
+                    };
+                    let struct_def = format!(
+                        r#"
     #[repr(C)]
     #[repr(align({align}))]
     pub struct {type_name} {{
@@ -228,22 +217,12 @@ impl ZngurGenerator {
         }}
     }}
 "#
-                );
-                if is_cpp {
-                    cpp_tree.insert(&module_path, &struct_def);
-                } else {
-                    rust_file.text.push_str(&struct_def);
-                    cpp_tree.insert(
-                        &["cpp".to_owned()],
-                        &format!(
-                            "\n#[allow(dead_code)]\n#[deprecated(note = \"use `{type_name}` directly instead of `cpp::{type_name}`\")]\npub type {type_name} = super::{type_name};\n"
-                        ),
                     );
+                    cpp_tree.insert(module_path, &struct_def);
                 }
-            }
-            if ty_def.cpp_heap_allocated.is_some() {
-                let struct_def = format!(
-                    r#"
+                if is_cpp_heap_allocated {
+                    let struct_def = format!(
+                        r#"
     #[repr(C)]
     pub struct {type_name} {{
         pub(crate) data: *mut u8,
@@ -256,35 +235,16 @@ impl ZngurGenerator {
         }}
     }}
 "#
-                );
-                if is_cpp {
-                    cpp_tree.insert(&module_path, &struct_def);
-                } else {
-                    rust_file.text.push_str(&struct_def);
-                    cpp_tree.insert(
-                        &["cpp".to_owned()],
-                        &format!(
-                            "\n#[allow(dead_code)]\n#[deprecated(note = \"use `{type_name}` directly instead of `cpp::{type_name}`\")]\npub type {type_name} = super::{type_name};\n"
-                        ),
                     );
+                    cpp_tree.insert(module_path, &struct_def);
                 }
-            }
-            if cpp_ref.is_some() {
-                let struct_def = format!(
-                    r#"
+                if cpp_ref.is_some() {
+                    let struct_def = format!(
+                        r#"
     pub struct {type_name}(());
 "#
-                );
-                if is_cpp {
-                    cpp_tree.insert(&module_path, &struct_def);
-                } else {
-                    rust_file.text.push_str(&struct_def);
-                    cpp_tree.insert(
-                        &["cpp".to_owned()],
-                        &format!(
-                            "\n#[allow(dead_code)]\n#[deprecated(note = \"use `{type_name}` directly instead of `cpp::{type_name}`\")]\npub type {type_name} = super::{type_name};\n"
-                        ),
                     );
+                    cpp_tree.insert(module_path, &struct_def);
                 }
             }
             let mut cpp_methods = vec![];
@@ -426,11 +386,9 @@ impl ZngurGenerator {
                 fields,
                 methods: cpp_methods,
                 wellknown_traits,
-                cpp_heap_allocated: ty_def.cpp_heap_allocated.map(|cpp_heap_allocated| {
-                    CppHeapAllocatedData {
-                        bridge_fn: rust_file.add_cpp_heap_allocated_bridge(&ty),
-                        cpp_type: cpp_heap_allocated.0,
-                    }
+                cpp_heap_allocated: is_cpp_heap_allocated.then(|| CppHeapAllocatedData {
+                    bridge_fn: rust_file.add_cpp_heap_allocated_bridge(ty),
+                    cpp_type: cpp_name.expect("is_cpp_heap_allocated implies RustType::Cpp"),
                 }),
                 cpp_ref,
                 cpp_stack_owned: cpp_stack_owned_data,
@@ -606,64 +564,16 @@ mod tests {
 
     use crate::ZngurGenerator;
 
-    fn minimal_heap_allocated_type(ty: RustType, cpp_path: &str) -> ZngurType {
+    fn minimal_heap_allocated_type(ty: RustType) -> ZngurType {
         ZngurType {
-            ty,
             layout: Some(LayoutPolicy::HeapAllocated),
             trivially_relocatable: false,
-            wellknown_traits: vec![],
-            exhaustive: true,
-            methods: vec![],
-            constructor: None,
-            variants: vec![],
-            fields: vec![],
-            cpp_heap_allocated: Some(CppHeapAllocated(cpp_path.to_owned())),
-            cpp_ref: None,
-            cpp_stack_owned: None,
-        }
-    }
-
-    fn minimal_stack_owned_type(
-        ty: RustType,
-        cpp_type: &str,
-        size: usize,
-        align: usize,
-    ) -> ZngurType {
-        ZngurType {
-            ty,
-            layout: Some(LayoutPolicy::StackAllocated { size, align }),
-            trivially_relocatable: false,
-            wellknown_traits: vec![],
-            exhaustive: true,
-            methods: vec![],
-            constructor: None,
-            variants: vec![],
-            fields: vec![],
-            cpp_heap_allocated: None,
-            cpp_ref: None,
-            cpp_stack_owned: Some(CppStackOwned(cpp_type.to_owned())),
-        }
-    }
-
-    fn minimal_ref_type(ty: RustType, cpp_type: &str) -> ZngurType {
-        ZngurType {
-            ty,
-            layout: Some(LayoutPolicy::ZERO_SIZED_TYPE),
-            trivially_relocatable: false,
-            wellknown_traits: vec![],
-            exhaustive: true,
-            methods: vec![],
-            constructor: None,
-            variants: vec![],
-            fields: vec![],
-            cpp_heap_allocated: None,
-            cpp_ref: Some(CppRef(cpp_type.to_owned())),
-            cpp_stack_owned: None,
+            ..minimal_stack_owned_type(ty, 0, 1)
         }
     }
 
     /// A `c++::` type that Rust holds by value via `#layout` + `#trivially_relocatable`.
-    fn minimal_by_value_cpp_type(ty: RustType, size: usize, align: usize) -> ZngurType {
+    fn minimal_stack_owned_type(ty: RustType, size: usize, align: usize) -> ZngurType {
         ZngurType {
             ty,
             layout: Some(LayoutPolicy::StackAllocated { size, align }),
@@ -674,18 +584,15 @@ mod tests {
             constructor: None,
             variants: vec![],
             fields: vec![],
-            cpp_heap_allocated: None,
-            cpp_ref: None,
-            cpp_stack_owned: None,
         }
     }
 
-    /// A `c++::` type without legacy directives that Rust only refers to.
-    fn minimal_opaque_cpp_type(ty: RustType) -> ZngurType {
+    /// A `c++::` type that Rust only refers to.
+    fn minimal_ref_type(ty: RustType) -> ZngurType {
         ZngurType {
             layout: None,
             trivially_relocatable: false,
-            ..minimal_by_value_cpp_type(ty, 0, 1)
+            ..minimal_stack_owned_type(ty, 0, 1)
         }
     }
 
@@ -702,146 +609,54 @@ mod tests {
     }
 
     #[test]
-    fn old_style_type_gets_top_level_struct_and_deprecated_shim() {
+    fn cpp_type_gets_nested_module() {
         let spec = ZngurSpec {
-            types: vec![minimal_heap_allocated_type(
-                adt(&["crate", "Way"]),
-                "::osmium::Way",
-            )],
+            types: vec![minimal_ref_type(cpp(&["a", "b", "Name"]))],
             ..Default::default()
         };
-        let (rust_code, _h, _cpp) =
-            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
-        // Primary struct at top level, not nested under `mod cpp`:
-        assert!(rust_code.contains("pub struct Way"));
-        let expected_shim = r#"
-pub mod cpp {
-
-#[allow(dead_code)]
-#[deprecated(note = "use `Way` directly instead of `cpp::Way`")]
-pub type Way = super::Way;
-
-}
-"#;
-        assert!(rust_code.contains(expected_shim));
-        // The heap-allocated bridge function must reference the bare
-        // top-level name, not the old `cpp::Way` path (which would now
-        // resolve to the deprecated shim and self-trigger a deprecation
-        // warning under `-D warnings`).
-        assert!(rust_code.contains("*mut Way"));
-        assert!(!rust_code.contains("*mut cpp::Way"));
-    }
-
-    #[test]
-    fn cpp_type_gets_nested_module_and_no_cpp_shim() {
-        let spec = ZngurSpec {
-            types: vec![minimal_heap_allocated_type(
-                cpp(&["a", "b", "Name"]),
-                "::x::Name",
-            )],
-            ..Default::default()
-        };
-        let (rust_code, _h, _cpp) =
+        let (rust_code, h, _cpp) =
             ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
         assert!(rust_code.contains("pub mod a {"));
         assert!(rust_code.contains("pub mod b {"));
-        assert!(rust_code.contains("pub struct Name"));
-        // No `cpp` compatibility module should be emitted when there are no old-style types:
+        assert!(rust_code.contains("pub struct Name(());"));
         assert!(!rust_code.contains("pub mod cpp {"));
-        // The heap-allocated bridge function must reference the correct
-        // nested path where the struct actually lives, not the old
-        // `cpp::Name` path (which doesn't exist for a `RustType::Cpp` type
-        // at all).
-        assert!(rust_code.contains("*mut a::b::Name"));
-        assert!(!rust_code.contains("*mut cpp::"));
+        assert!(!h.contains("sizeof(::a::b::Name)"));
+        assert!(h.contains("inline ::a::b::Name& cpp()"));
     }
 
     #[test]
     fn cpp_heap_allocated_bridge_references_correct_wrapper_path_for_cpp_type() {
-        // Regression test: add_cpp_heap_allocated_bridge (in rust.rs) used to
-        // hardcode `cpp::{type_name}` for the bridge function's return/cast
-        // type, which was only correct back when the wrapper struct
-        // physically lived inside `mod cpp { ... }`. For `RustType::Cpp`
-        // types there never was a `cpp::` home at all, so this was a
-        // straight compile error waiting to happen once such a type used
-        // #cpp_heap_allocated.
         let spec = ZngurSpec {
-            types: vec![minimal_heap_allocated_type(
-                cpp(&["a", "Name"]),
-                "::x::Name",
-            )],
+            types: vec![minimal_heap_allocated_type(cpp(&["a", "Name"]))],
             ..Default::default()
         };
-        let (rust_code, _h, _cpp) =
+        let (rust_code, h, _cpp) =
             ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
         assert!(rust_code.contains("*mut a::Name"));
         assert!(!rust_code.contains("*mut cpp::Name"));
         assert!(!rust_code.contains("*mut cpp::a::Name"));
-    }
-
-    #[test]
-    fn mixed_old_and_new_style_types_both_placed_correctly() {
-        let spec = ZngurSpec {
-            types: vec![
-                minimal_heap_allocated_type(adt(&["crate", "Way"]), "::osmium::Way"),
-                minimal_heap_allocated_type(cpp(&["a", "Name"]), "::x::Name"),
-            ],
-            ..Default::default()
-        };
-        let (rust_code, _h, _cpp) =
-            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
-        assert!(rust_code.contains("pub struct Way"));
-        assert!(rust_code.contains("pub mod cpp {"));
-        assert!(rust_code.contains("pub type Way = super::Way;"));
-        assert!(rust_code.contains("pub mod a {"));
-        assert!(rust_code.contains("pub struct Name"));
-        // The `RustType::Cpp` type must NOT get a deprecated alias:
-        assert!(!rust_code.contains("pub type Name = super::Name;"));
-    }
-
-    #[test]
-    fn cpp_stack_owned_old_and_new_style_placed_correctly() {
-        let spec = ZngurSpec {
-            types: vec![
-                minimal_stack_owned_type(adt(&["crate", "Box2d"]), "::geos::Box2d", 16, 8),
-                minimal_stack_owned_type(cpp(&["geo", "Point"]), "::geos::Point", 16, 8),
-            ],
-            ..Default::default()
-        };
-        let (rust_code, _h, _cpp) =
-            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
-        // Old-style: top-level struct + deprecated shim.
-        assert!(rust_code.contains("pub struct Box2d"));
-        let expected_shim = r#"
-pub mod cpp {
-
-#[allow(dead_code)]
-#[deprecated(note = "use `Box2d` directly instead of `cpp::Box2d`")]
-pub type Box2d = super::Box2d;
-
-}
-"#;
-        assert!(rust_code.contains(expected_shim));
-        // New-style: nested module, no shim.
-        assert!(rust_code.contains("pub mod geo {"));
-        assert!(rust_code.contains("pub struct Point"));
-        assert!(!rust_code.contains("pub type Point = super::Point;"));
+        assert!(h.contains("inline ::a::Name& cpp()"));
+        let (_, after_ctor) = h
+            .split_once("inline Name(::rust::ZngurCppOpaqueOwnedObject&& o) noexcept {")
+            .expect("missing ZngurCppOpaqueOwnedObject constructor");
+        let (ctor_body, _) = after_ctor.split_once('}').unwrap();
+        assert!(ctor_body.contains("__zngur_data ="));
     }
 
     #[test]
     fn cpp_stack_owned_destructor_names_match_and_are_unique() {
         let cases = [
             (cpp(&["a", "Point"]), "::a::Point"),
-            (cpp(&["b", "Point"]), "::b::Point<int>"),
+            (cpp(&["b", "Point"]), "::b::Point"),
             (cpp(&["a", "b", "Point"]), "::a::b::Point"),
             (cpp(&["a__b", "Point"]), "::a__b::Point"),
-            (adt(&["crate", "Point"]), "::crate_ns::Point"),
-            (cpp(&["crate__Point"]), "::std::pair<int, int>"),
+            (cpp(&["crate", "Point"]), "::crate::Point"),
+            (cpp(&["crate__Point"]), "::crate__Point"),
         ];
         let spec = ZngurSpec {
             types: cases
                 .iter()
-                .map(|(ty, cpp_ty)| minimal_stack_owned_type(ty.clone(), cpp_ty, 16, 8))
+                .map(|(ty, _)| minimal_stack_owned_type(ty.clone(), 16, 8))
                 .collect(),
             mangling_base: "my_base".to_owned(),
             ..Default::default()
@@ -891,40 +706,11 @@ pub type Box2d = super::Box2d;
     }
 
     #[test]
-    fn cpp_ref_old_and_new_style_placed_correctly() {
-        let spec = ZngurSpec {
-            types: vec![
-                minimal_ref_type(adt(&["crate", "Handle"]), "::osmium::Handle"),
-                minimal_ref_type(cpp(&["h", "Handle"]), "::x::Handle"),
-            ],
-            ..Default::default()
-        };
-        let (rust_code, _h, _cpp) =
-            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
-        // Old-style: top-level struct + deprecated shim.
-        assert!(rust_code.contains("pub struct Handle(());"));
-        let expected_shim = r#"
-pub mod cpp {
-
-#[allow(dead_code)]
-#[deprecated(note = "use `Handle` directly instead of `cpp::Handle`")]
-pub type Handle = super::Handle;
-
-}
-"#;
-        assert!(rust_code.contains(expected_shim));
-        // New-style: nested module, and only a single deprecated shim exists
-        // overall (i.e. the `RustType::Cpp` variant did not also get one).
-        assert!(rust_code.contains("pub mod h {"));
-        assert_eq!(rust_code.matches("#[deprecated").count(), 1);
-    }
-
-    #[test]
     fn cpp_types_sharing_a_prefix_merge_into_a_single_module() {
         let spec = ZngurSpec {
             types: vec![
-                minimal_heap_allocated_type(cpp(&["a", "Foo"]), "::x::Foo"),
-                minimal_heap_allocated_type(cpp(&["a", "Bar"]), "::x::Bar"),
+                minimal_ref_type(cpp(&["a", "Foo"])),
+                minimal_ref_type(cpp(&["a", "Bar"])),
             ],
             ..Default::default()
         };
@@ -939,27 +725,6 @@ pub type Handle = super::Handle;
         assert!(rust_code.contains("pub struct Foo"));
         assert!(rust_code.contains("pub struct Bar"));
         assert!(!rust_code.contains("pub mod cpp {"));
-    }
-
-    #[test]
-    fn old_style_type_and_cpp_module_named_cpp_merge_into_single_mod_cpp() {
-        let spec = ZngurSpec {
-            types: vec![
-                minimal_heap_allocated_type(adt(&["crate", "Old"]), "::x::Old"),
-                minimal_heap_allocated_type(cpp(&["cpp", "New"]), "::x::New"),
-            ],
-            ..Default::default()
-        };
-        let (rust_code, _h, _cpp) =
-            ZngurGenerator::build_from_zng(spec, "test_crate".to_owned()).render(false);
-        assert_eq!(
-            rust_code.matches("pub mod cpp {").count(),
-            1,
-            "expected a single merged `pub mod cpp {{` block in:\n{rust_code}"
-        );
-        assert!(rust_code.contains("pub struct Old"));
-        assert!(rust_code.contains("pub type Old = super::Old;"));
-        assert!(rust_code.contains("pub struct New"));
     }
 
     #[test]
@@ -986,8 +751,8 @@ pub type Handle = super::Handle;
         );
         let spec = ZngurSpec {
             types: vec![
-                minimal_stack_owned_type(cpp(&["std", "String"]), "::std::string", 16, 8),
-                minimal_stack_owned_type(cpp(&["core", "Widget"]), "::core::Widget", 16, 8),
+                minimal_stack_owned_type(cpp(&["std", "String"]), 16, 8),
+                minimal_stack_owned_type(cpp(&["core", "Widget"]), 16, 8),
                 ZngurType {
                     ty: RustType::Boxed(Box::new(RustType::Dyn(my_trait.clone(), vec![]))),
                     layout: Some(LayoutPolicy::StackAllocated { size: 16, align: 8 }),
@@ -998,9 +763,6 @@ pub type Handle = super::Handle;
                     constructor: None,
                     variants: vec![],
                     fields: vec![],
-                    cpp_heap_allocated: None,
-                    cpp_ref: None,
-                    cpp_stack_owned: None,
                 },
                 ZngurType {
                     ty: RustType::Ref(Mutability::Not, Box::new(RustType::Dyn(my_trait, vec![]))),
@@ -1012,9 +774,6 @@ pub type Handle = super::Handle;
                     constructor: None,
                     variants: vec![],
                     fields: vec![],
-                    cpp_heap_allocated: None,
-                    cpp_ref: None,
-                    cpp_stack_owned: None,
                 },
                 ZngurType {
                     ty: RustType::Boxed(Box::new(RustType::Dyn(
@@ -1033,9 +792,6 @@ pub type Handle = super::Handle;
                     constructor: None,
                     variants: vec![],
                     fields: vec![],
-                    cpp_heap_allocated: None,
-                    cpp_ref: None,
-                    cpp_stack_owned: None,
                 },
                 ZngurType {
                     ty: adt(&["crate", "MyEnum"]),
@@ -1055,9 +811,6 @@ pub type Handle = super::Handle;
                         exhaustive: true,
                     }],
                     fields: vec![],
-                    cpp_heap_allocated: None,
-                    cpp_ref: None,
-                    cpp_stack_owned: None,
                 },
             ],
             traits,
@@ -1091,24 +844,11 @@ pub type Handle = super::Handle;
     #[test]
     fn cpp_type_wrappers_live_in_rust_cpp_namespace_and_do_not_collide_with_rust_std() {
         let rust_string = ZngurType {
-            ty: adt(&["std", "string", "String"]),
-            layout: Some(LayoutPolicy::StackAllocated { size: 24, align: 8 }),
             trivially_relocatable: false,
-            wellknown_traits: vec![],
-            exhaustive: true,
-            methods: vec![],
-            constructor: None,
-            variants: vec![],
-            fields: vec![],
-            cpp_heap_allocated: None,
-            cpp_ref: None,
-            cpp_stack_owned: None,
+            ..minimal_stack_owned_type(adt(&["std", "string", "String"]), 24, 8)
         };
         let spec = ZngurSpec {
-            types: vec![
-                rust_string,
-                minimal_ref_type(cpp(&["std", "string"]), "::std::string"),
-            ],
+            types: vec![rust_string, minimal_ref_type(cpp(&["std", "string"]))],
             ..Default::default()
         };
         let (_rust_code, h, _cpp) =
@@ -1126,7 +866,7 @@ pub type Handle = super::Handle;
     #[test]
     fn cpp_type_with_layout_and_trivially_relocatable_is_held_by_value() {
         let spec = ZngurSpec {
-            types: vec![minimal_by_value_cpp_type(cpp(&["geo", "Point"]), 16, 8)],
+            types: vec![minimal_stack_owned_type(cpp(&["geo", "Point"]), 16, 8)],
             ..Default::default()
         };
         let (rust_code, h, _cpp) =
@@ -1145,7 +885,7 @@ pub type Handle = super::Handle;
         let spec = ZngurSpec {
             types: vec![ZngurType {
                 trivially_relocatable: false,
-                ..minimal_by_value_cpp_type(cpp(&["geo", "Point"]), 16, 8)
+                ..minimal_stack_owned_type(cpp(&["geo", "Point"]), 16, 8)
             }],
             ..Default::default()
         };
@@ -1174,7 +914,7 @@ pub type Handle = super::Handle;
             // module) must emit each `pub use` only once.
             imported_modules: vec![bar_import.clone(), bar_import],
             // A local `c++::` type in the same namespace shares the module.
-            types: vec![minimal_opaque_cpp_type(cpp(&["ns", "Local"]))],
+            types: vec![minimal_ref_type(cpp(&["ns", "Local"]))],
             ..Default::default()
         };
         let (rust_code, h, _cpp) =
@@ -1203,7 +943,7 @@ pub type Handle = super::Handle;
     #[test]
     fn cpp_type_without_layout_is_reference_only_and_has_no_layout_checks() {
         let spec = ZngurSpec {
-            types: vec![minimal_opaque_cpp_type(cpp(&["geo", "Point"]))],
+            types: vec![minimal_ref_type(cpp(&["geo", "Point"]))],
             ..Default::default()
         };
         let (rust_code, h, _cpp) =

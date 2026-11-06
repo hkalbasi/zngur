@@ -5,11 +5,12 @@ is the C++ type `::osmium::Way`. Multiple declarations sharing a prefix can also
 `mod c++::osmium { type Way { ... } }`. What Rust can do with such a type follows from what the
 `.zng` file says about it:
 
-| Declaration                                | Rust can                                        |
-| ------------------------------------------ | ----------------------------------------------- |
-| no layout                                  | only refer to it (`&T`, `&mut T`)               |
-| a layout, without `#trivially_relocatable` | only refer to it (the layout is checked in C++) |
-| a layout and `#trivially_relocatable`      | hold it by value, like a Rust value             |
+| Declaration                                | Rust can                                                 |
+| ------------------------------------------ | -------------------------------------------------------- |
+| no layout                                  | only refer to it (`&T`, `&mut T`)                        |
+| a layout, without `#trivially_relocatable` | only refer to it (the layout is checked in C++)          |
+| a layout and `#trivially_relocatable`      | hold it by value, like a Rust value                      |
+| `#heap_allocated`                          | own a heap-allocated C++ object via pointer + destructor |
 
 > **NOTE**: In C++, the Rust wrapper of a `c++::a::B` type is `rust::cpp::a::B`, apart from the
 > wrappers of Rust types (`rust::crate::...`, `rust::std::...`, ...). In Rust, its wrapper is at
@@ -187,8 +188,22 @@ template <> struct is_trivially_relocatable<CppType> : std::true_type {};
 In a future where `std::is_trivially_relocatable` exists in the standard, we can specialize it for
 all types.
 
-## Legacy `#cpp_*` Directives
+## Heap-Allocated C++ Types
 
-For backwards compatibility, `#cpp_ref`, `#cpp_stack_owned`, and `#cpp_heap_allocated` remain
-supported (with `#cpp_value` as a deprecated alias for `#cpp_heap_allocated`). On `c++::` types,
-their C++ type name argument may be omitted and defaults to the `c++::` path.
+If a C++ type is not trivially relocatable, Rust can own a heap-allocated instance of it with
+`#heap_allocated`:
+
+```zng
+type c++::cpp_inventory::Inventory {
+    #heap_allocated;
+}
+```
+
+In C++, `rust::cpp::cpp_inventory::Inventory::build(args...)` allocates a `::cpp_inventory::Inventory`
+on the C++ heap via `rust::ZngurCppOpaqueOwnedObject::build<...>(args...)`, and `.cpp()` accesses the
+underlying C++ reference. See
+[`examples/tutorial_cpp`](https://github.com/HKalbasi/zngur/blob/main/examples/tutorial_cpp) for a
+complete working example.
+
+> **NOTE**: `#cpp_stack_owned`, `#cpp_ref`, `#cpp_heap_allocated` and `#cpp_value` were removed.
+> zngur explains how to replace them when it finds them.

@@ -393,23 +393,21 @@ In the same directory, create a `main.zng` file with the following content:
 //     #include "inventory.h"
 // "#
 
-type c++::Inventory {
-    #layout(size = 16, align = 8);
-
-    #cpp_heap_allocated "::cpp_inventory::Inventory";
+type c++::cpp_inventory::Inventory {
+    #heap_allocated;
 }
 
-type c++::Item {
-    #layout(size = 16, align = 8);
-
-    #cpp_heap_allocated "::cpp_inventory::Item";
+type c++::cpp_inventory::Item {
+    #heap_allocated;
 }
 ```
 
-The `c++::` prefix tells Zngur to generate Rust wrapper structs directly inside the `generated`
-module (`generated::Inventory` and `generated::Item`, or nested submodules like `generated::ns::Foo`
-for `c++::ns::Foo`, which can also be grouped with `mod c++::ns { ... }`) and corresponding C++
-wrappers in the `rust::cpp` namespace (`rust::cpp::Inventory` and `rust::cpp::Item`).
+The `c++::` prefix names C++ types by their C++ path: Zngur generates Rust wrapper structs at the
+matching module path inside `generated` (`generated::cpp_inventory::Inventory` and
+`generated::cpp_inventory::Item`, which can also be grouped with `mod c++::cpp_inventory { ... }`)
+and corresponding C++ wrappers in the `rust::cpp` namespace
+(`rust::cpp::cpp_inventory::Inventory` and `rust::cpp::cpp_inventory::Item`). `#heap_allocated`
+tells Zngur to store a heap-allocated C++ object via a pointer and destructor.
 
 And add these to the `main.rs` file:
 
@@ -466,7 +464,7 @@ fn main() {
 }
 ```
 
-Now we have a `c++::Inventory` and a `c++::Item` that can contain their C++ counterparts.
+Now we have `c++::cpp_inventory::Inventory` and `c++::cpp_inventory::Item` that can contain their C++ counterparts.
 But there is no way to use them in Rust.
 In Zngur, the Rust side can't access C++ opaque objects.
 So to make these types useful in Rust, we can add `impl` blocks for these types in C++.
@@ -481,14 +479,14 @@ type str {
 }
 
 extern "C++" {
-    impl c++::Inventory {
-        safe fn new_empty(u32) -> c++::Inventory;
+    impl c++::cpp_inventory::Inventory {
+        safe fn new_empty(u32) -> c++::cpp_inventory::Inventory;
         safe fn add_banana(&mut self, u32);
-        safe fn add_item(&mut self, c++::Item);
+        safe fn add_item(&mut self, c++::cpp_inventory::Item);
     }
 
-    impl c++::Item {
-        safe fn new(&str, u32) -> c++::Item;
+    impl c++::cpp_inventory::Item {
+        safe fn new(&str, u32) -> c++::cpp_inventory::Item;
     }
 }
 ```
@@ -502,8 +500,8 @@ Create a file named `impls.cpp` with this content:
 
 namespace rust {
 
-using cpp::Inventory;
-using cpp::Item;
+using cpp::cpp_inventory::Inventory;
+using cpp::cpp_inventory::Item;
 
 Inventory Impl<Inventory>::new_empty(uint32_t space) {
   return Inventory::build(space);
@@ -549,7 +547,7 @@ In Zngur, that code is the wrapper, which lives in the C++ so it can do whatever
 
 In the Rust to C++ side, we used `zngur_dbg` macro to see the result.
 We will do the same here with the `dbg!` macro.
-To do that, we need to implement the `Debug` trait for `c++::Inventory`.
+To do that, we need to implement the `Debug` trait for `c++::cpp_inventory::Inventory`.
 Add this to the `main.zng`:
 
 ```
@@ -580,7 +578,7 @@ type ::std::fmt::Formatter {
 extern "C++" {
     // ...
 
-    impl std::fmt::Debug for c++::Inventory {
+    impl std::fmt::Debug for c++::cpp_inventory::Inventory {
         safe fn fmt(&self, &mut ::std::fmt::Formatter) -> ::std::fmt::Result;
     }
 }
@@ -627,8 +625,7 @@ Result Impl<Inventory, Debug>::fmt(Ref<Inventory> self, RefMut<Formatter> f) {
 So now we can write the main function:
 
 ```Rust
-use generated::Inventory;
-use generated::Item;
+use generated::cpp_inventory::{Inventory, Item};
 
 fn main() {
     let mut inventory = Inventory::new_empty(1000);
@@ -641,7 +638,7 @@ fn main() {
 and run it:
 
 ```
-[examples/tutorial_cpp/src/main.rs:12] inventory = Inventory { remaining_space: 974, items: [Item { name: "banana", size: 7 }, Item { name: "banana", size: 7 }, Item { name: "banana", size: 7 }, Item { name: "apple", size: 5 }] }
+[examples/tutorial_cpp/src/main.rs:11] inventory = Inventory { remaining_space: 974, items: [Item { name: "banana", size: 7 }, Item { name: "banana", size: 7 }, Item { name: "banana", size: 7 }, Item { name: "apple", size: 5 }] }
 ```
 
 You can see the full code at [`examples/tutorial_cpp`](https://github.com/HKalbasi/zngur/blob/main/examples/tutorial_cpp)

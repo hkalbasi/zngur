@@ -7,8 +7,8 @@ using std::ffi::CStr;
 using std::fmt::Debug;
 using std::fmt::Formatter;
 using std::fmt::Result;
-using cpp::Inventory;
-using cpp::Item;
+using cpp::cpp_inventory::Inventory;
+using cpp::cpp_inventory::Item;
 
 static Ref<Str> rust_str_from_c_str(const char* input) {
   return CStr::from_ptr(reinterpret_cast<const int8_t*>(input)).to_str().expect("invalid_utf8"_rs);

@@ -1,7 +1,7 @@
 #[rustfmt::skip]
 #[path = "aggregation.zng.rs"]
-mod generated;
+pub mod generated;
 
 pub use packet::Packet;
 
-pub use generated::StatsAccumulator;
+pub use generated::cpp_stats::StatsAccumulator;
