@@ -6,7 +6,8 @@ use std::{
 use indexmap::IndexMap;
 use itertools::Itertools;
 use zngur_def::{
-    CppHeapAllocatedData, CppRef, CppStackOwned, RustTrait, ZngurFieldData, ZngurMethodReceiver,
+    CppHeapAllocatedData, CppStackOwnedData, LayoutPolicy, RustTrait, ZngurFieldData,
+    ZngurMethodReceiver,
 };
 
 use crate::{
@@ -425,6 +426,16 @@ impl CppTraitDefinition {
     }
 }
 
+fn format_cpp_layout_checks(cpp_type: &str, layout: LayoutPolicy) -> String {
+    match layout {
+        LayoutPolicy::StackAllocated { size, align } => format!(
+            "static_assert(sizeof({cpp_type}) == {size}, \"Size mismatch\");\n    \
+             static_assert(alignof({cpp_type}) == {align}, \"Alignment mismatch\");"
+        ),
+        _ => String::new(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CppLayoutPolicy {
     StackAllocated {
@@ -466,9 +477,12 @@ impl CppLayoutPolicy {
 
     pub fn layout_checks(&self, cpp_type: &str) -> String {
         match self {
-            CppLayoutPolicy::StackAllocated { size, align } => format!(
-                "static_assert(sizeof({cpp_type}) == {size}, \"Size mismatch\");\n          \
-                 static_assert(alignof({cpp_type}) == {align}, \"Alignment mismatch\");"
+            CppLayoutPolicy::StackAllocated { size, align } => format_cpp_layout_checks(
+                cpp_type,
+                LayoutPolicy::StackAllocated {
+                    size: *size,
+                    align: *align,
+                },
             ),
             _ => String::new(),
         }
@@ -526,6 +540,26 @@ impl CppLayoutPolicy {
     }
 }
 
+/// A C++ type that Rust only refers to: its Rust wrapper is zero-sized, and Rust references to it
+/// are C++ pointers.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct CppRef {
+    /// The C++ name.
+    pub name: String,
+    /// The layout from the `.zng` file, if any. It's only checked in C++.
+    pub layout: Option<LayoutPolicy>,
+}
+
+impl CppRef {
+    /// `static_assert`s that check the declared layout, if any.
+    pub fn layout_checks(&self) -> String {
+        match self.layout {
+            Some(layout) => format_cpp_layout_checks(&self.name, layout),
+            None => String::new(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CppTypeDefinition {
     pub ty: CppType,
@@ -540,22 +574,10 @@ pub struct CppTypeDefinition {
     pub wellknown_traits: Vec<ZngurWellknownTraitData>,
     pub cpp_heap_allocated: Option<CppHeapAllocatedData>,
     pub cpp_ref: Option<CppRef>,
-    pub cpp_stack_owned: Option<CppStackOwned>,
+    pub cpp_stack_owned: Option<CppStackOwnedData>,
 }
 
 impl CppTypeDefinition {
-    pub fn rust_short_name(&self) -> String {
-        self.ty.to_string().split("::").last().unwrap().to_string()
-    }
-
-    pub fn cpp_short_name(&self) -> String {
-        if let Some(c) = &self.cpp_stack_owned {
-            c.0.split("::").last().unwrap().to_string()
-        } else {
-            "".to_string()
-        }
-    }
-
     pub fn has_unsized(&self) -> bool {
         self.wellknown_traits
             .iter()
@@ -739,7 +761,12 @@ impl CppFile {
         *is_really_needed = !self.trait_defs.is_empty()
             || !self.exported_fn_defs.is_empty()
             || !self.exported_impls.is_empty()
-            || self.coro_support.is_some();
+            || self.coro_support.is_some()
+            // Rust calls the destructors of C++ types that it holds by value, which are defined here.
+            || self
+                .type_defs
+                .iter()
+                .any(|td| td.cpp_stack_owned.is_some());
 
         Ok(())
     }

@@ -1,1 +1,1 @@
-[examples/tutorial_cpp/src/main.rs:12:5] inventory = Inventory { remaining_space: 974, items: [Item { name: "banana", size: 7 }, Item { name: "banana", size: 7 }, Item { name: "banana", size: 7 }, Item { name: "apple", size: 5 }] }
+[examples/tutorial_cpp/src/main.rs:11:5] inventory = Inventory { remaining_space: 974, items: [Item { name: "banana", size: 7 }, Item { name: "banana", size: 7 }, Item { name: "banana", size: 7 }, Item { name: "apple", size: 5 }] }

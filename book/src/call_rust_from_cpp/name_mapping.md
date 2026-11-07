@@ -10,6 +10,7 @@ so Zngur uses a name mapping that is explained in this table:
 | `bool`                                   | `rust::Bool`                                   |
 | `char`                                   | `rust::Char`                                   |
 | `some_crate::some_mod::SomeAdt<A, B, C>` | `rust::some_crate::some_mod::SomeAdt<A, B, C>` |
+| `c++::some_ns::SomeCppType`              | `rust::cpp::some_ns::SomeCppType`              |
 | `&T`                                     | `rust::Ref<T>`                                 |
 | `&mut T`                                 | `rust::RefMut<T>`                              |
 | `*const T`                               | `rust::Raw<T>` or `const T*` (depends on `T`)  |

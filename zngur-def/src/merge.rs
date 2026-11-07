@@ -1,7 +1,7 @@
 use crate::{
-    AdditionalIncludes, ConvertPanicToException, CppHeapAllocated, CppRef, CppStackOwned,
-    LayoutPolicy, RustType, ZngurConstructor, ZngurExternCppFn, ZngurExternCppImpl, ZngurField,
-    ZngurFn, ZngurMethod, ZngurMethodDetails, ZngurSpec, ZngurTrait, ZngurType, ZngurVariant,
+    AdditionalIncludes, ConvertPanicToException, RustType, ZngurConstructor, ZngurExternCppFn,
+    ZngurExternCppImpl, ZngurField, ZngurFn, ZngurMethod, ZngurMethodDetails, ZngurSpec,
+    ZngurTrait, ZngurType, ZngurVariant,
 };
 
 /// Trait for types with a partial union operation.
@@ -43,9 +43,6 @@ pub enum MergeFailure {
 pub enum ConflictSource {
     Layout,
     Constructor(Option<Vec<(String, RustType)>>),
-    CppRef,
-    CppHeapAllocated,
-    CppStackOwned,
     Method(ZngurMethod),
     Field(String),
 }
@@ -155,18 +152,7 @@ impl Merge for ZngurType {
             into.layout = into.layout.or(self.layout);
         }
 
-        // TODO: We need to improve the architecture around checking parsing, semantic, and other types of errors.
-        if self.cpp_ref.is_some() && into.layout != Some(LayoutPolicy::ZERO_SIZED_TYPE) {
-            return Err(MergeFailure::Conflict(
-                "cpp_ref implies a zero sized stack allocated type".to_string(),
-                (ConflictSource::CppRef, ConflictSource::Layout),
-            ));
-        }
-
-        self.cpp_heap_allocated
-            .merge(&mut into.cpp_heap_allocated)?;
-        self.cpp_ref.merge(&mut into.cpp_ref)?;
-        self.cpp_stack_owned.merge(&mut into.cpp_stack_owned)?;
+        into.trivially_relocatable |= self.trivially_relocatable;
 
         inplace_union(self.wellknown_traits, &mut into.wellknown_traits);
         merge_by_identity(self.methods, &mut into.methods, |a, b| {
@@ -209,53 +195,6 @@ impl Merge for ZngurTrait {
 
         inplace_union(self.methods, &mut into.methods);
 
-        Ok(())
-    }
-}
-
-impl Merge for CppHeapAllocated {
-    /// Writes the partial union of `self` and `into` to the latter.
-    ///
-    /// There is no meaningful way to merge different CppHeapAllocated values, but we
-    /// allow merging the same CppHeapAllocated value from different sources.
-    fn merge(self, into: &mut Self) -> MergeResult {
-        if self != *into {
-            return Err(MergeFailure::Conflict(
-                "Cpp heap allocated mismatch".to_string(),
-                (
-                    ConflictSource::CppHeapAllocated,
-                    ConflictSource::CppHeapAllocated,
-                ),
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl Merge for CppRef {
-    /// Writes the partial union of `self` and `into` to the latter.
-    ///
-    /// There is no meaningful way to merge different CppRefs, but we allow
-    /// merging the same CppRef from different sources.
-    fn merge(self, into: &mut Self) -> MergeResult {
-        if self != *into {
-            return Err(MergeFailure::Conflict(
-                "Cpp ref mismatch".to_string(),
-                (ConflictSource::CppRef, ConflictSource::CppRef),
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl Merge for CppStackOwned {
-    fn merge(self, into: &mut Self) -> MergeResult {
-        if self != *into {
-            return Err(MergeFailure::Conflict(
-                "Cpp stack owned mismatch".to_string(),
-                (ConflictSource::CppStackOwned, ConflictSource::CppStackOwned),
-            ));
-        }
         Ok(())
     }
 }

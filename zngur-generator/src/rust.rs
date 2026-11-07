@@ -122,6 +122,16 @@ impl IntoCpp for RustType {
                 tail: None,
             },
             RustType::Adt(pg) => pg.into_cpp(namespace, crate_name),
+            // The C++ wrappers of `c++::` types are in `rust::cpp`, apart from those of Rust types
+            // (`rust::crate`, `rust::std`, ...): `c++::a::B` is `rust::cpp::a::B`.
+            RustType::Cpp(segs) => RustPathAndGenerics {
+                path: std::iter::once("cpp".to_owned())
+                    .chain(segs.iter().cloned())
+                    .collect(),
+                generics: vec![],
+                named_generics: vec![],
+            }
+            .into_cpp(namespace, crate_name),
             RustType::Tuple(v) => {
                 if v.is_empty() {
                     return CppType::from(&*format!("{namespace}::Unit"));
@@ -565,6 +575,18 @@ impl RustFile {
         mangle_name(name, &self.mangling_base)
     }
 
+    /// Mangled C symbol for the destructor bridge of a stack-owned C++ type.
+    ///
+    /// Includes the mangling base and position-encodes `c++::` / module boundaries / generics
+    /// without colliding across modules or emitting a public Rust wrapper.
+    pub(crate) fn cpp_stack_owned_destructor_fn(&self, ty: &RustType) -> String {
+        let destructor_key = match ty {
+            RustType::Cpp(_) => format!("_c++::{ty}=cpp_stack_owned_destructor"),
+            _ => format!("_{ty}=cpp_stack_owned_destructor"),
+        };
+        self.mangle_name(&destructor_key)
+    }
+
     fn call_cpp_function(&mut self, name: &str, inputs: usize) {
         for n in 0..inputs {
             wln!(self, "let mut i{n} = ::core::mem::MaybeUninit::new(i{n});")
@@ -717,7 +739,7 @@ pub extern "C" fn {mangled_name}(
             destructor,
         }};
         let r: Box<dyn {trait_name}> = Box::new(this);
-        std::ptr::write(o as *mut _, r)
+        ::std::ptr::write(o as *mut _, r)
     }}
 }}"#
         );
@@ -776,7 +798,7 @@ pub extern "C" fn {mangled_name}(
     unsafe {{ 
         let this = data as *mut Wrapper;
         let r: &dyn {trait_name} = &*this;
-        std::ptr::write(o as *mut _, r)
+        ::std::ptr::write(o as *mut _, r)
     }}
 }}"#
         );
@@ -832,7 +854,7 @@ pub extern "C" fn {mangled_name}(
             self,
             r#"
     }});
-    unsafe {{ std::ptr::write(o as *mut _, r) }}
+    unsafe {{ ::std::ptr::write(o as *mut _, r) }}
 }}"#
         );
         mangled_name
@@ -991,7 +1013,7 @@ pub extern "C" fn {mn}(i: *const u8) -> usize {{ unsafe {{
         {owner}::{variant} {{ {name}: f, .. }} => {{
             (f as *const _ as usize) - (base as *const _ as usize)
         }}
-        _ => std::hint::unreachable_unchecked(),
+        _ => ::std::hint::unreachable_unchecked(),
     }}
 }} }}
             "#
@@ -1109,15 +1131,18 @@ pub {}fn {rust_name}("#,
     }
 
     pub fn add_cpp_heap_allocated_bridge(&mut self, ty: &RustType) -> String {
-        let type_name = ty.to_string().split("::").last().unwrap().to_string();
+        let wrapper_ref = match ty {
+            RustType::Cpp(_) => ty.to_string(),
+            _ => ty.to_string().split("::").last().unwrap().to_string(),
+        };
         let mangled_name = self.mangle_name(&format!("{ty}_cpp_heap_allocated"));
         w!(
             self,
             r#"
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
-pub extern "C" fn {mangled_name}(d: *mut u8) -> *mut cpp::{type_name} {{
-    d as *mut cpp::{type_name}
+pub extern "C" fn {mangled_name}(d: *mut u8) -> *mut {wrapper_ref} {{
+    d as *mut {wrapper_ref}
 }}"#
         );
         mangled_name
@@ -1130,7 +1155,7 @@ pub extern "C" fn {mangled_name}(d: *mut u8) -> *mut cpp::{type_name} {{
         inputs: &[RustType],
         output: &RustType,
         is_safe: Option<bool>,
-        use_path: Option<Vec<String>>,
+        use_path: Option<String>,
         deref: Option<(RustType, Mutability)>,
         namespace: &str,
         crate_name: &str,
@@ -1169,11 +1194,7 @@ pub extern "C" fn {mangled_name}(d: *mut u8) -> *mut cpp::{type_name} {{
         wln!(self, "o: *mut u8) {{");
         self.wrap_in_catch_unwind(|this| {
             if let Some(use_path) = use_path {
-                if use_path.first().is_some_and(|x| x == "crate") {
-                    wln!(this, "    use {};", use_path.iter().join("::"));
-                } else {
-                    wln!(this, "    use ::{};", use_path.iter().join("::"));
-                }
+                wln!(this, "    use {use_path};");
             }
 
             for (n, ty) in inputs.iter().enumerate() {
@@ -1483,5 +1504,17 @@ pub extern "C" fn {make_coro_future_fn}(handle: *mut u8, out: *mut u8) {{
             }
             LayoutPolicy::OnlyByRef => CppLayoutPolicy::OnlyByRef,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cpp_into_cpp() {
+        let cpp = RustType::Cpp(vec!["a".to_owned(), "Name".to_owned()]);
+        let cpp_type = cpp.into_cpp("rust", "my_crate");
+        assert_eq!(cpp_type.to_string(), "::rust::cpp::a::Name");
     }
 }

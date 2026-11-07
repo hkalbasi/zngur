@@ -1,7 +1,5 @@
 use std::io::Write;
 
-use itertools::Itertools;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IDLItem {
     Function,
@@ -203,6 +201,7 @@ impl WriteIDL for crate::RustType {
             }
             Self::Adt(pg) => p.write_idl(pg),
             Self::TypeVar(var) => p.write_idl(var),
+            Self::Cpp(segs) => write!(p, "c++::{}", segs.join("::")),
         }
     }
 }
@@ -283,8 +282,14 @@ impl WriteIDL for crate::ZngurSpec {
         if self.convert_panic_to_exception.0 {
             writeln!(p, "#convert_panic_to_exception")?;
         }
-        if !self.types.is_empty() {
+        if let Some(crate_name) = &self.crate_name {
             if self.convert_panic_to_exception.0 {
+                writeln!(p)?;
+            }
+            writeln!(p, "#crate {crate_name}")?;
+        }
+        if !self.types.is_empty() {
+            if self.convert_panic_to_exception.0 || self.crate_name.is_some() {
                 writeln!(p)?;
             }
             for (i, ty) in self.types.iter().enumerate() {
@@ -296,7 +301,10 @@ impl WriteIDL for crate::ZngurSpec {
             }
         }
         if !self.funcs.is_empty() {
-            if !self.types.is_empty() || self.convert_panic_to_exception.0 {
+            if !self.types.is_empty()
+                || self.convert_panic_to_exception.0
+                || self.crate_name.is_some()
+            {
                 writeln!(p)?;
             }
             for func in &self.funcs {
@@ -304,7 +312,10 @@ impl WriteIDL for crate::ZngurSpec {
             }
         }
         if !self.traits.is_empty() {
-            if !self.funcs.is_empty() || !self.types.is_empty() || self.convert_panic_to_exception.0
+            if !self.funcs.is_empty()
+                || !self.types.is_empty()
+                || self.convert_panic_to_exception.0
+                || self.crate_name.is_some()
             {
                 writeln!(p)?;
             }
@@ -320,6 +331,7 @@ impl WriteIDL for crate::ZngurSpec {
                 || !self.funcs.is_empty()
                 || !self.types.is_empty()
                 || self.convert_panic_to_exception.0
+                || self.crate_name.is_some()
             {
                 writeln!(p)?;
             }
@@ -382,22 +394,13 @@ impl WriteIDL for crate::ZngurType {
             writeln!(p, " {{")?;
             p.indent();
 
-            // don't duplicate layout info
-            if self.cpp_ref.is_none() {
+            if self.layout.is_some() {
                 p.write_indent()?;
                 p.write_idl(&self.layout)?;
             }
-            if self.cpp_heap_allocated.is_some() {
+            if self.trivially_relocatable {
                 p.write_indent()?;
-                p.write_idl(&self.cpp_heap_allocated)?;
-            }
-            if self.cpp_ref.is_some() {
-                p.write_indent()?;
-                p.write_idl(&self.cpp_ref)?;
-            }
-            if self.cpp_stack_owned.is_some() {
-                p.write_indent()?;
-                p.write_idl(&self.cpp_stack_owned)?;
+                writeln!(p, "#trivially_relocatable;")?;
             }
 
             if p.enabled(&IDLItem::TypeWellknownTrait) {
@@ -552,34 +555,6 @@ impl WriteIDL for crate::LayoutPolicy {
     }
 }
 
-impl WriteIDL for crate::CppStackOwned {
-    fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
-        if p.enabled(&IDLItem::TypeLayout) {
-            let ty = &self.0;
-            writeln!(p, r#"#cpp_stack_owned "{ty}";"#)?;
-        }
-        Ok(())
-    }
-}
-impl WriteIDL for crate::CppHeapAllocated {
-    fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
-        if p.enabled(&IDLItem::TypeLayout) {
-            let ty = &self.0;
-            writeln!(p, r#"#cpp_heap_allocated "{ty}";"#)?;
-        }
-        Ok(())
-    }
-}
-impl WriteIDL for crate::CppRef {
-    fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
-        if p.enabled(&IDLItem::TypeLayout) {
-            let ty = &self.0;
-            writeln!(p, r#"#cpp_ref "{ty}";"#)?;
-        }
-        Ok(())
-    }
-}
-
 impl WriteIDL for crate::ZngurWellknownTrait {
     fn write_idl<W: Write>(&self, p: &mut IDLPrinter<W>) -> std::io::Result<()> {
         match self {
@@ -676,12 +651,8 @@ impl WriteIDL for crate::ZngurMethodDetails {
             write!(p, "{safety}")?;
             p.write_idl(&self.data)?;
             if let Some(use_path) = &self.use_path {
-                let path = use_path.iter().join("::");
-                let path = if use_path.first().is_some_and(|p| p == "crate") {
-                    path
-                } else {
-                    format!("::{path}")
-                };
+                // `use_path` is already a Rust path (`crate::...` or `::...`).
+                let path = use_path;
                 write!(p, " use {path}")?;
             }
             if let Some((ty, _)) = &self.deref {
@@ -781,9 +752,7 @@ fn print_spec() {
                 deref: None,
                 cpp_name: Some("fooBar".into()),
             }],
-            cpp_heap_allocated: None,
-            cpp_ref: None,
-            cpp_stack_owned: None,
+            trivially_relocatable: false,
         }],
         traits: indexmap::IndexMap::default(),
         funcs: vec![crate::ZngurFn {
@@ -830,6 +799,69 @@ fn print_spec() {
 }
 
 safe fn crate::do_w_example(&crate::Example) -> bool;
+",
+        idl
+    );
+}
+
+#[test]
+fn test_write_cpp_type_idl() {
+    let spec = crate::ZngurSpec {
+        types: vec![
+            crate::ZngurType {
+                ty: crate::RustType::Cpp(vec!["Way".into()]),
+                layout: None,
+                wellknown_traits: vec![],
+                exhaustive: true,
+                constructor: None,
+                variants: vec![],
+                fields: vec![],
+                methods: vec![],
+                trivially_relocatable: false,
+            },
+            crate::ZngurType {
+                ty: crate::RustType::Cpp(vec!["a".into(), "b".into(), "Name".into()]),
+                layout: Some(crate::LayoutPolicy::StackAllocated { size: 16, align: 8 }),
+                wellknown_traits: vec![],
+                exhaustive: true,
+                constructor: None,
+                variants: vec![],
+                fields: vec![],
+                methods: vec![crate::ZngurMethodDetails {
+                    data: crate::ZngurMethod {
+                        name: "deref".into(),
+                        generics: vec![],
+                        receiver: crate::ZngurMethodReceiver::Ref(crate::Mutability::Not),
+                        inputs: vec![],
+                        output: crate::RustType::UNIT,
+                        is_safe: None,
+                    },
+                    use_path: Some("::core::ops::Deref".into()),
+                    deref: None,
+                    cpp_name: None,
+                }],
+                trivially_relocatable: true,
+            },
+        ],
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    crate::printing::IDLPrinter::new(&mut buf)
+        .write_idl(&spec)
+        .expect("write error");
+    let idl = String::from_utf8(buf).expect("utf8 error");
+
+    assert_eq!(
+        "type c++::Way {
+}
+
+type c++::a::b::Name {
+    #layout(size = 16, align = 8);
+    #trivially_relocatable;
+
+    fn deref(&self) use ::core::ops::Deref;
+}
 ",
         idl
     );

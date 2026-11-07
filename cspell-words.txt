@@ -24,6 +24,7 @@ CXXFLAGS
 decltype
 delem
 deinit
+deleter
 depfile
 digset
 discontiguous
@@ -42,6 +43,7 @@ impls
 indexmap
 inplace
 itertools
+libc
 libexample
 LIBPATH
 libyourcrate
@@ -78,6 +80,7 @@ rustyline
 Rustyline
 scrutinee
 scrutinees
+segs
 serde
 SIGSEGV
 sptl

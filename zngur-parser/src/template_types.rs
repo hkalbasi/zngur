@@ -86,6 +86,7 @@ fn matches_template<'a, 'b>(
         }
         (RustType::Tuple(tys1), RustType::Tuple(tys2)) => match_lists(tys1, tys2, mapping),
         (RustType::Adt(adt1), RustType::Adt(adt2)) => match_generics(adt1, adt2, mapping),
+        (RustType::Cpp(a), RustType::Cpp(b)) => a == b,
         (_, _) => false,
     }
 }
@@ -172,6 +173,7 @@ fn substitute_vars<'a>(
             RustType::Adt(path_and_generics) => {
                 RustType::Adt(substitute_generics(path_and_generics, mapping)?)
             }
+            c @ RustType::Cpp(_) => c.clone(),
         };
         Ok(ty)
     }
@@ -229,20 +231,19 @@ pub fn try_match_template(ty: &RustType, template: &ZngurType) -> Option<Templat
     let ZngurType {
         ty: template_ty,
         layout,
+        trivially_relocatable,
         wellknown_traits,
         exhaustive,
         methods,
         constructor,
         variants,
         fields,
-        cpp_ref,
-        cpp_heap_allocated,
-        cpp_stack_owned,
     } = template;
     debug_assert_eq!(substitute_vars(template_ty, &mapping).unwrap(), *ty);
     let new_ty = ZngurType {
         ty: ty.clone(),
         layout: *layout,
+        trivially_relocatable: *trivially_relocatable,
         wellknown_traits: wellknown_traits.clone(),
         exhaustive: *exhaustive,
         methods: methods
@@ -301,9 +302,6 @@ pub fn try_match_template(ty: &RustType, template: &ZngurType) -> Option<Templat
                 ),
             })
             .collect(),
-        cpp_heap_allocated: cpp_heap_allocated.clone(),
-        cpp_ref: cpp_ref.clone(),
-        cpp_stack_owned: cpp_stack_owned.clone(),
     };
     Some(TemplateMatch(new_ty))
 }

@@ -121,7 +121,9 @@ enum Command {
 
         /// Set the crate name to be used in the generated code where `crate` appears.
         ///
-        /// If not provided, it tries to read `CARGO_PKG_NAME` and defaults to `crate` if unset.
+        /// Must match `#crate <name>` in the `.zng` file if both are provided (hyphens and
+        /// underscores are treated as equivalent). If not provided, falls back to `#crate <name>`,
+        /// then `CARGO_PKG_NAME`, and defaults to `crate` if unset.
         #[arg(long)]
         crate_name: Option<String>,
     },

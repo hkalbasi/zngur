@@ -11,6 +11,7 @@
 #include <iostream>
 #include <functional>
 #include <math.h>
+#include <memory>
 #include <type_traits>
 
 {% if self.panic_to_exception %}
@@ -168,7 +169,12 @@ namespace {{ self.cpp_namespace }} {
   struct is_trivially_relocatable : ::std::false_type {};
 
   template <typename T>
-  struct is_trivially_relocatable<T, typename std::enable_if<std::is_trivially_copyable<T>::value>::type> : std::true_type {};
+  struct is_trivially_relocatable<T, typename ::std::enable_if<::std::is_trivially_copyable<T>::value>::type> : ::std::true_type {};
+
+  // A `std::unique_ptr` with the default deleter is just a pointer, which is trivially relocatable
+  // in libstdc++, libc++ and the MSVC standard library.
+  template <typename T>
+  struct is_trivially_relocatable< ::std::unique_ptr<T, ::std::default_delete<T> > > : ::std::true_type {};
 
   namespace zngur_detail {
     // ::std::conjunction analog for c++11 support

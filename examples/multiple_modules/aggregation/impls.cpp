@@ -2,7 +2,7 @@
 #include <packet.zng.h>
 #include <stats.h>
 
-using rust::aggregation::StatsAccumulator;
+using rust::cpp::cpp_stats::StatsAccumulator;
 using rust::packet::Packet;
 
 // We need to implement the methods declared in aggregation.zng

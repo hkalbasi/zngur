@@ -7,15 +7,15 @@ use std::{
 
 use ariadne::{Color, Label, Report, ReportKind};
 use chumsky::{input::MapExtra, prelude::*};
+use indexmap::IndexMap;
 use itertools::{Either, Itertools};
 
 use zngur_def::{
-    AdditionalIncludes, ConflictSource, ConvertPanicToException, CppHeapAllocated, CppRef,
-    CppStackOwned, Import, LayoutPolicy, Merge, MergeFailure, ModuleImport, Mutability,
-    PrimitiveRustType, RustPathAndGenerics, RustTrait, RustType, TypeVar, ZngurConstructor,
-    ZngurExternCppFn, ZngurExternCppImpl, ZngurField, ZngurFn, ZngurMethod, ZngurMethodDetails,
-    ZngurMethodReceiver, ZngurSpec, ZngurTrait, ZngurType, ZngurVariant, ZngurWellknownTrait,
-    cpp_handle_field_name, cpp_handle_keyword,
+    AdditionalIncludes, ConflictSource, ConvertPanicToException, Import, LayoutPolicy, Merge,
+    MergeFailure, ModuleImport, Mutability, PrimitiveRustType, RustPathAndGenerics, RustTrait,
+    RustType, TypeVar, ZngurConstructor, ZngurExternCppFn, ZngurExternCppImpl, ZngurField, ZngurFn,
+    ZngurMethod, ZngurMethodDetails, ZngurMethodReceiver, ZngurSpec, ZngurTrait, ZngurType,
+    ZngurVariant, ZngurWellknownTrait, cpp_handle_field_name, cpp_handle_keyword,
 };
 
 pub type Span = SimpleSpan<usize>;
@@ -38,6 +38,7 @@ mod tests;
 
 pub mod cfg;
 mod conditional;
+mod dfs;
 mod template_types;
 
 use crate::{
@@ -104,6 +105,7 @@ enum ParsedPathStart {
     Absolute,
     Relative,
     Crate,
+    Cpp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,30 +115,299 @@ struct ParsedPath<'a> {
     span: Span,
 }
 
+/// A path to some named entity in either the Rust or C++ universe -- today
+/// always a namespace/module path, but named generally since a scope's base
+/// may need to refer to other kinds of entities (e.g. structs) later.
+#[derive(Debug, Clone)]
+enum EntityPath {
+    /// If initial element is "crate", interpreted as crate relative.
+    /// Otherwise, understood to be a global path.
+    Rust(Vec<String>),
+    Cpp(Vec<String>),
+}
+
+impl EntityPath {
+    /// Creates a Rust entity path from its segments (either crate-relative if
+    /// the first segment is `"crate"`, or globally rooted otherwise).
+    fn rust<'s>(segments: impl IntoIterator<Item = &'s str>) -> EntityPath {
+        EntityPath::Rust(segments.into_iter().map(str::to_owned).collect())
+    }
+
+    /// Creates a `c++::` entity path from its segments (excluding the `c++::` prefix).
+    fn cpp<'s>(segments: impl IntoIterator<Item = &'s str>) -> EntityPath {
+        EntityPath::Cpp(segments.into_iter().map(str::to_owned).collect())
+    }
+
+    /// Creates a crate-relative Rust entity path (`crate::<segments>`).
+    fn crate_relative<'s>(segments: impl IntoIterator<Item = &'s str>) -> EntityPath {
+        EntityPath::rust(["crate"].into_iter().chain(segments))
+    }
+
+    /// Returns a new path with `name` appended as a single trailing segment,
+    /// preserving whether this path lives in the Rust or C++ universe.
+    fn child(&self, name: &str) -> EntityPath {
+        let mut child = self.clone();
+        match &mut child {
+            EntityPath::Rust(v) | EntityPath::Cpp(v) => v.push(name.to_owned()),
+        }
+        child
+    }
+
+    /// Returns a new path with `extra` segments appended to `self`,
+    /// preserving whether this path lives in the Rust or C++ universe.
+    fn join<'s>(&self, extra: impl IntoIterator<Item = &'s str>) -> EntityPath {
+        let mut joined = self.clone();
+        match &mut joined {
+            EntityPath::Rust(v) | EntityPath::Cpp(v) => {
+                v.extend(extra.into_iter().map(str::to_owned))
+            }
+        }
+        joined
+    }
+
+    /// Return Rust source text that references a Rust `target` path.
+    /// `EntityPath::Cpp` targets and the empty root `EntityPath::Rust` cannot be referenced here.
+    fn rust_reference(&self) -> Option<String> {
+        match self {
+            EntityPath::Rust(v) if v.is_empty() => None,
+            EntityPath::Rust(v) => {
+                if v.first().is_some_and(|s| s == "crate") {
+                    Some(v.join("::"))
+                } else {
+                    Some(format!("::{}", v.join("::")))
+                }
+            }
+            EntityPath::Cpp(_) => None,
+        }
+    }
+}
+
+/// A `use <path> as <name>;` alias whose target path has been resolved against
+/// the lexical scope (base module path and enclosing aliases) of its declaring module.
+///
+/// Storing the already-resolved `EntityPath` ensures that when an alias is inherited
+/// into a nested `mod`, it continues to refer to the entity from its declaring module
+/// rather than being re-evaluated against the nested module's base path.
+#[derive(Debug, Clone)]
+struct ResolvedAlias<'a> {
+    /// The short identifier introduced by `use ... as <name>;`.
+    name: &'a str,
+    /// The fully resolved Rust or C++ entity path that `name` expands to.
+    target: EntityPath,
+}
+
+impl ResolvedAlias<'_> {
+    /// Returns `true` if `path` is a relative path whose first segment equals `self.name`.
+    ///
+    /// Root-prefixed (`::...`), `crate::`, and `c++::` paths never match an alias.
+    fn path_uses_alias(&self, path: &ParsedPath<'_>) -> bool {
+        path.try_as_relative()
+            .map(RelativePath::split_base)
+            .is_some_and(|(head, _)| head == self.name)
+    }
+
+    /// If `path` uses this alias, replaces that leading segment with `self.target`
+    /// and appends any remaining segments from `path` (e.g., resolving `sub::Foo` via
+    /// `use c++::a::b as sub;` produces `c++::a::b::Foo`).
+    fn try_resolve(&self, path: &ParsedPath<'_>) -> Option<EntityPath> {
+        let (head, rest) = path.try_as_relative().map(RelativePath::split_base)?;
+        (head == self.name).then(|| self.target.join(rest.iter().copied()))
+    }
+}
+
+/// Resolves the `use <path> as <name>;` aliases declared directly within a single module.
+///
+/// Aliases in the same module are order-independent (an earlier `use` may reference an
+/// alias defined later in the same module) and shadow `parent_aliases` inherited from
+/// enclosing modules. Cycles among same-module aliases are detected via
+/// [`dfs::DfsCycleDetector`].
+struct ModuleAliasResolver<'a, 'b> {
+    /// Deduplicated local aliases in declaration order, keyed by alias name.
+    local_aliases: &'b IndexMap<&'a str, &'b ParsedAlias<'a>>,
+    /// Base path of the module in which `local_aliases` were declared.
+    base: &'b EntityPath,
+    /// Already-resolved aliases inherited from enclosing modules (innermost first).
+    parent_aliases: &'b [ResolvedAlias<'a>],
+}
+
+impl<'a, 'b> ModuleAliasResolver<'a, 'b> {
+    /// Resolves every local alias in declaration order.
+    fn resolve_all(&self, ctx: &mut ParseContext) -> Vec<ResolvedAlias<'a>> {
+        let mut dfs = dfs::DfsCycleDetector::default();
+        (0..self.local_aliases.len())
+            .map(|idx| {
+                let (&name, _) = self
+                    .local_aliases
+                    .get_index(idx)
+                    .expect("valid local alias index");
+                let target = dfs
+                    .with_node(idx, |dfs| self.resolve_alias_at(idx, dfs, ctx))
+                    .expect("initial node on an empty DFS stack cannot form a cycle");
+                ResolvedAlias { name, target }
+            })
+            .collect()
+    }
+
+    /// Resolves the target path of `self.local_aliases[idx]` using three precedence rules:
+    /// 1. **Same-module alias**: If the path is relative and its leading segment names
+    ///    another alias in `self.local_aliases`, recursively resolve that local alias
+    ///    (or report a cycle error if it is already on the active DFS stack) and append
+    ///    any trailing segments.
+    /// 2. **Inherited parent alias**: Otherwise, if the path matches an alias in
+    ///    `self.parent_aliases`, resolve it via that parent alias.
+    /// 3. **Module base path**: Otherwise, resolve the path directly against `self.base`.
+    fn resolve_alias_at(
+        &self,
+        idx: usize,
+        dfs: &mut dfs::DfsCycleDetector,
+        ctx: &mut ParseContext,
+    ) -> EntityPath {
+        let (_, &alias) = self
+            .local_aliases
+            .get_index(idx)
+            .expect("valid local alias index");
+
+        // If alias path matches another alias locally...
+        if let Some((head, rest)) = alias.path.try_as_relative().map(RelativePath::split_base)
+            && let Some(target_idx) = self.local_aliases.get_index_of(head)
+        {
+            match dfs.with_node(target_idx, |dfs| {
+                self.resolve_alias_at(target_idx, dfs, ctx)
+            }) {
+                Ok(prefix) => prefix.join(rest.iter().copied()),
+                Err(dfs::DfsCycle {
+                    newly_detected_head,
+                }) => {
+                    if let Some(head_idx) = newly_detected_head {
+                        let (_, &head_alias) = self
+                            .local_aliases
+                            .get_index(head_idx)
+                            .expect("valid cycle head index");
+                        ctx.add_error_str(
+                            &format!("cyclic `use` alias definition `{}`", head_alias.name),
+                            head_alias.span,
+                        );
+                    }
+                    // The cycle above will trigger an error. Resolve against self.base just to
+                    // allow collecting all errors in the module for better diagnostics.
+                    alias.path.to_zngur(self.base)
+                }
+            }
+        } else if let Some(expanded) = self
+            // Try matching against a parent alias
+            .parent_aliases
+            .iter()
+            .find_map(|parent| parent.try_resolve(&alias.path))
+        {
+            expanded
+        } else {
+            // Otherwise, the alias is final (refers to the module itself)
+            alias.path.to_zngur(self.base)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Scope<'a> {
-    aliases: Vec<ParsedAlias<'a>>,
-    base: Vec<String>,
+    aliases: Vec<ResolvedAlias<'a>>,
+    base: EntityPath,
     type_vars: HashSet<ParsedTypeVar<'a>>,
 }
 
 impl<'a> Scope<'a> {
     /// Create a new root scope containing the specified aliases.
-    fn new_root(aliases: Vec<ParsedAlias<'a>>) -> Scope<'a> {
+    fn new_root(aliases: Vec<ParsedAlias<'a>>, ctx: &mut ParseContext) -> Scope<'a> {
+        let base = EntityPath::Rust(Default::default());
+        let resolved_aliases = Self::resolve_aliases(&aliases, &base, &[], ctx);
         Scope {
-            aliases,
-            base: Default::default(),
+            aliases: resolved_aliases,
+            base,
             type_vars: Default::default(),
         }
     }
 
+    /// Resolves `new_aliases` declared in a module with `base` path and combines them
+    /// with `parent_aliases` inherited from enclosing modules.
+    ///
+    /// Local aliases precede `parent_aliases` in the returned `Vec` so that inner
+    /// module aliases shadow outer ones during [`Scope::resolve_path`].
+    fn resolve_aliases(
+        new_aliases: &[ParsedAlias<'a>],
+        base: &EntityPath,
+        parent_aliases: &[ResolvedAlias<'a>],
+        ctx: &mut ParseContext,
+    ) -> Vec<ResolvedAlias<'a>> {
+        let unique_aliases = Self::dedup_module_aliases(new_aliases, ctx);
+        let resolver = ModuleAliasResolver {
+            local_aliases: &unique_aliases,
+            base,
+            parent_aliases,
+        };
+        let mut resolved = resolver.resolve_all(ctx);
+        resolved.extend_from_slice(parent_aliases);
+        resolved
+    }
+
+    /// Collects the aliases declared in a single module into an order-preserving map
+    /// keyed by alias name, emitting an error whenever two `use` items in the same
+    /// module define the same alias name.
+    fn dedup_module_aliases<'b>(
+        aliases: &'b [ParsedAlias<'a>],
+        ctx: &mut ParseContext,
+    ) -> IndexMap<&'a str, &'b ParsedAlias<'a>> {
+        let mut unique = IndexMap::with_capacity(aliases.len());
+        for alias in aliases {
+            match unique.entry(alias.name) {
+                indexmap::map::Entry::Vacant(vacant) => {
+                    vacant.insert(alias);
+                }
+                indexmap::map::Entry::Occupied(first) => {
+                    Self::report_duplicate_alias(alias, first.get(), ctx);
+                }
+            }
+        }
+        unique
+    }
+
+    /// Reports a diagnostic when `duplicate` redefines `first` in the same module.
+    fn report_duplicate_alias(
+        duplicate: &ParsedAlias<'_>,
+        first: &ParsedAlias<'_>,
+        ctx: &mut ParseContext,
+    ) {
+        let dup_span = ctx.report_span_for_range(duplicate.span.into_range());
+        let prev_span = ctx.report_span_for_range(first.span.into_range());
+        let msg = format!(
+            "duplicate `use` alias `{}` in the same module",
+            duplicate.name
+        );
+        let report = Report::build(ReportKind::Error, dup_span.clone())
+            .with_message(&msg)
+            .with_label(
+                Label::new(dup_span)
+                    .with_message(&msg)
+                    .with_color(Color::Red),
+            )
+            .with_label(
+                Label::new(prev_span)
+                    .with_message("previously defined here")
+                    .with_color(Color::Blue),
+            )
+            .finish();
+        ctx.add_fatal_report(report);
+    }
+
+    fn has_alias(&self, path: &ParsedPath<'_>) -> bool {
+        self.aliases.iter().any(|alias| alias.path_uses_alias(path))
+    }
+
     /// Resolve a path according to the current scope.
-    fn resolve_path(&self, path: ParsedPath<'a>) -> Vec<String> {
+    fn resolve_path(&self, path: &ParsedPath<'_>) -> EntityPath {
         // Check to see if the path refers to an alias:
         if let Some(expanded_alias) = self
             .aliases
             .iter()
-            .find_map(|alias| alias.expand(&path, &self.base))
+            .find_map(|alias| alias.try_resolve(path))
         {
             expanded_alias
         } else {
@@ -144,19 +415,38 @@ impl<'a> Scope<'a> {
         }
     }
 
-    /// Create a fully-qualified path relative to this scope's base path.
-    fn simple_relative_path(&self, relative_item_name: &str) -> Vec<String> {
-        self.base
-            .iter()
-            .cloned()
-            .chain(Some(relative_item_name.to_string()))
-            .collect()
+    fn report_invalid_cpp_path(
+        &self,
+        ctx: &mut ParseContext,
+        path: &ParsedPath<'_>,
+        message: &str,
+        rust_kind_plural: &str,
+    ) {
+        let is_bare_relative = path.start == ParsedPathStart::Relative && !self.has_alias(path);
+        let report_span = ctx.report_span_for_range(path.span.into_range());
+        let mut report = Report::build(ReportKind::Error, report_span.clone())
+            .with_message(message)
+            .with_label(
+                Label::new(report_span)
+                    .with_message(message)
+                    .with_color(Color::Red),
+            );
+        if is_bare_relative && matches!(self.base, EntityPath::Cpp(_)) {
+            report = report.with_help(format!(
+                "inside a `c++::` module, prefix Rust {rust_kind_plural} with `::` or `crate::`"
+            ));
+        }
+        ctx.add_fatal_report(report.finish());
     }
 
-    fn sub_scope(&self, new_aliases: &[ParsedAlias<'a>], nested_path: ParsedPath<'a>) -> Scope<'_> {
+    fn sub_scope(
+        &self,
+        new_aliases: &[ParsedAlias<'a>],
+        nested_path: &ParsedPath<'_>,
+        ctx: &mut ParseContext,
+    ) -> Scope<'_> {
         let base = nested_path.to_zngur(&self.base);
-        let mut mod_aliases = new_aliases.to_vec();
-        mod_aliases.extend_from_slice(&self.aliases);
+        let mod_aliases = Self::resolve_aliases(new_aliases, &base, &self.aliases, ctx);
 
         Scope {
             aliases: mod_aliases,
@@ -196,31 +486,40 @@ impl<'a> Scope<'a> {
     }
 }
 
-impl ParsedPath<'_> {
-    fn to_zngur(self, base: &[String]) -> Vec<String> {
-        match self.start {
-            ParsedPathStart::Absolute => self.segments.into_iter().map(|x| x.to_owned()).collect(),
-            ParsedPathStart::Relative => base
-                .iter()
-                .map(|x| x.as_str())
-                .chain(self.segments)
-                .map(|x| x.to_owned())
-                .collect(),
-            ParsedPathStart::Crate => ["crate"]
-                .into_iter()
-                .chain(self.segments)
-                .map(|x| x.to_owned())
-                .collect(),
+/// A borrowed view of a non-empty [`ParsedPath`] with [`ParsedPathStart::Relative`].
+#[derive(Debug, Clone, Copy)]
+struct RelativePath<'p, 'a> {
+    base: &'a str,
+    rest: &'p [&'a str],
+}
+
+impl<'p, 'a> RelativePath<'p, 'a> {
+    /// Splits this relative path into its leading segment (`"foo"`) and any
+    /// trailing segments (`&["bar"]` for `foo::bar`).
+    fn split_base(self) -> (&'a str, &'p [&'a str]) {
+        (self.base, self.rest)
+    }
+}
+
+impl<'a> ParsedPath<'a> {
+    /// Returns `Some(RelativePath)` if `self` is a relative path (`foo` or `foo::bar`),
+    /// or `None` for `::`, `crate::`, and `c++::` paths (which never match aliases).
+    fn try_as_relative(&self) -> Option<RelativePath<'_, 'a>> {
+        if self.start == ParsedPathStart::Relative {
+            let (&base, rest) = self.segments.split_first()?;
+            Some(RelativePath { base, rest })
+        } else {
+            None
         }
     }
 
-    fn matches_alias(&self, alias: &ParsedAlias<'_>) -> bool {
+    fn to_zngur(&self, base: &EntityPath) -> EntityPath {
+        let segments = self.segments.iter().copied();
         match self.start {
-            ParsedPathStart::Absolute | ParsedPathStart::Crate => false,
-            ParsedPathStart::Relative => self
-                .segments
-                .first()
-                .is_some_and(|part| *part == alias.name),
+            ParsedPathStart::Absolute => EntityPath::rust(segments),
+            ParsedPathStart::Relative => base.join(segments),
+            ParsedPathStart::Crate => EntityPath::crate_relative(segments),
+            ParsedPathStart::Cpp => EntityPath::cpp(segments),
         }
     }
 }
@@ -232,41 +531,6 @@ pub struct ParsedAlias<'a> {
     span: Span,
 }
 
-impl ParsedAlias<'_> {
-    fn expand(&self, path: &ParsedPath<'_>, base: &[String]) -> Option<Vec<String>> {
-        if path.matches_alias(self) {
-            match self.path.start {
-                ParsedPathStart::Absolute => Some(
-                    self.path
-                        .segments
-                        .iter()
-                        .chain(path.segments.iter().skip(1))
-                        .map(|seg| (*seg).to_owned())
-                        .collect(),
-                ),
-                ParsedPathStart::Crate => Some(
-                    ["crate"]
-                        .into_iter()
-                        .chain(self.path.segments.iter().cloned())
-                        .chain(path.segments.iter().skip(1).cloned())
-                        .map(|seg| (*seg).to_owned())
-                        .collect(),
-                ),
-                ParsedPathStart::Relative => Some(
-                    base.iter()
-                        .map(|x| x.as_str())
-                        .chain(self.path.segments.iter().cloned())
-                        .chain(path.segments.iter().skip(1).cloned())
-                        .map(|seg| (*seg).to_owned())
-                        .collect(),
-                ),
-            }
-        } else {
-            None
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedImportPath {
     path: std::path::PathBuf,
@@ -276,6 +540,7 @@ struct ParsedImportPath {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ParsedItem<'a> {
     ConvertPanicToException(Span),
+    CrateName(&'a str, Span),
     CppAdditionalInclude(&'a str),
     UnstableFeature(&'a str),
     Mod {
@@ -308,6 +573,7 @@ enum ParsedItem<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProcessedItem<'a> {
     ConvertPanicToException(Span),
+    CrateName(&'a str, Span),
     CppAdditionalInclude(&'a str),
     Mod {
         path: ParsedPath<'a>,
@@ -386,19 +652,10 @@ enum ParsedTypeItem<'a> {
         deref: Option<ParsedRustType<'a>>,
         cpp_name: Option<&'a str>,
     },
-    CppValue {
-        field: &'a str,
-        cpp_type: &'a str,
-    },
-    CppHeapAllocated {
-        cpp_type: &'a str,
-    },
-    CppRef {
-        cpp_type: &'a str,
-    },
-    CppStackOwned {
-        cpp_type: &'a str,
-        props: Option<Vec<(Spanned<&'a str>, usize)>>,
+    /// `#trivially_relocatable`.
+    TriviallyRelocatable,
+    RemovedCppDirective {
+        name: &'a str,
     },
     MatchOnCfg(Condition<CfgConditional<'a>, ParsedTypeItem<'a>, NItems>),
 }
@@ -423,17 +680,21 @@ struct ParsedFunction<'a> {
 }
 
 impl ParsedMethod<'_> {
-    fn to_zngur(self, scope: &Scope<'_>) -> ZngurMethod {
+    fn to_zngur(self, scope: &Scope<'_>, ctx: &mut ParseContext) -> ZngurMethod {
         ZngurMethod {
             name: self.name.to_owned(),
             generics: self
                 .generics
                 .into_iter()
-                .map(|x| x.to_zngur(scope))
+                .map(|x| x.to_zngur(scope, ctx))
                 .collect(),
             receiver: self.receiver,
-            inputs: self.inputs.into_iter().map(|x| x.to_zngur(scope)).collect(),
-            output: self.output.to_zngur(scope),
+            inputs: self
+                .inputs
+                .into_iter()
+                .map(|x| x.to_zngur(scope, ctx))
+                .collect(),
+            output: self.output.to_zngur(scope, ctx),
             is_safe: self.is_safe,
         }
     }
@@ -628,9 +889,32 @@ impl ProcessedItem<'_> {
                 items,
                 aliases,
             } => {
-                let sub_scope = scope.sub_scope(&aliases, path);
-                for item in items {
-                    item.add_to_zngur_spec(r, &sub_scope, ctx);
+                let is_root = matches!(scope.base, EntityPath::Rust(ref v) if v.is_empty());
+                // Only a relative mod path composes onto the enclosing module;
+                // every anchored start (`c++::`, `crate::`, `::`) discards it,
+                // so nesting one silently ignores the surrounding module. Allow
+                // anchored paths only at the file root and require nested mods
+                // to be relative.
+                let anchor = match path.start {
+                    ParsedPathStart::Cpp => Some("c++::"),
+                    ParsedPathStart::Crate => Some("crate::"),
+                    ParsedPathStart::Absolute => Some("::"),
+                    ParsedPathStart::Relative => None,
+                };
+                if let Some(anchor) = anchor
+                    && !is_root
+                {
+                    ctx.add_error_str(
+                        &format!(
+                            "`{anchor}` modules can only appear at the top level of a file, not nested inside another module"
+                        ),
+                        path.span,
+                    );
+                } else {
+                    let sub_scope = scope.sub_scope(&aliases, &path, ctx);
+                    for item in items {
+                        item.add_to_zngur_spec(r, &sub_scope, ctx);
+                    }
                 }
             }
             ProcessedItem::Import(path) => {
@@ -649,10 +933,22 @@ impl ProcessedItem<'_> {
                     ),
                 }
             }
-            ProcessedItem::ModuleImport { path, span: _ } => {
-                r.spec
-                    .imported_modules
-                    .push(ModuleImport { path: path.clone() });
+            ProcessedItem::ModuleImport { path, span } => {
+                let resolved_path = if ctx.depth > 0
+                    && let Some((root_dir, current_dir)) =
+                        ctx.module_root_dir.as_deref().zip(ctx.path.parent())
+                {
+                    rebase_relative_import_path(root_dir, current_dir, &path)
+                } else {
+                    path
+                };
+                r.spec.imported_modules.push(ModuleImport {
+                    path: resolved_path,
+                    crate_name: None,
+                    cpp_types: vec![],
+                });
+                r.module_import_spans
+                    .push(ctx.report_span_for_range(span.into_range()));
             }
             ProcessedItem::Type {
                 ty,
@@ -680,9 +976,7 @@ impl ProcessedItem<'_> {
                 let mut layout = None;
                 let mut layout_span = None;
                 let mut exhaustive = true;
-                let mut cpp_heap_allocated = None;
-                let mut cpp_ref = None;
-                let mut cpp_stack_owned = None;
+                let mut trivially_relocatable = false;
                 let mut to_process = items;
                 to_process.reverse(); // create a stack of items to process
                 let check_size_align = |props: Vec<(Spanned<&str>, usize)>| {
@@ -713,7 +1007,8 @@ impl ProcessedItem<'_> {
                         Err(errors)
                     }
                 };
-                let rust_ty = ty.inner.to_zngur(scope);
+                let rust_ty = ty.inner.to_zngur(scope, ctx);
+                let mut has_removed_cpp_directive = false;
                 while let Some(item) = to_process.pop() {
                     let item_span = item.span;
                     let item = item.inner;
@@ -763,6 +1058,12 @@ impl ProcessedItem<'_> {
                             }
                         }
                         ParsedTypeItem::Traits(tr) => {
+                            for t in &tr {
+                                ctx.record_span(
+                                    &PartialSpanKey::WellknownTrait(rust_ty.clone(), t.inner),
+                                    t.span.into_range(),
+                                );
+                            }
                             wellknown_traits.extend(tr);
                         }
                         ParsedTypeItem::NonExhaustive => {
@@ -784,11 +1085,11 @@ impl ProcessedItem<'_> {
                                     ParsedConstructorArgs::Tuple(t) => t
                                         .into_iter()
                                         .enumerate()
-                                        .map(|(i, t)| (i.to_string(), t.to_zngur(scope)))
+                                        .map(|(i, t)| (i.to_string(), t.to_zngur(scope, ctx)))
                                         .collect(),
                                     ParsedConstructorArgs::Named(t) => t
                                         .into_iter()
-                                        .map(|(i, t)| (i.to_owned(), t.to_zngur(scope)))
+                                        .map(|(i, t)| (i.to_owned(), t.to_zngur(scope, ctx)))
                                         .collect(),
                                 },
                             };
@@ -821,7 +1122,7 @@ impl ProcessedItem<'_> {
                                         }
                                         let field = ZngurField {
                                             name: name.to_owned(),
-                                            ty: ty.to_zngur(scope),
+                                            ty: ty.to_zngur(scope, ctx),
                                             offset,
                                         };
                                         ctx.record_span(
@@ -845,7 +1146,7 @@ impl ProcessedItem<'_> {
                         ParsedTypeItem::Field { name, ty, offset } => {
                             let field = ZngurField {
                                 name: name.to_owned(),
-                                ty: ty.to_zngur(scope),
+                                ty: ty.to_zngur(scope, ctx),
                                 offset,
                             };
                             ctx.record_span(
@@ -861,7 +1162,7 @@ impl ProcessedItem<'_> {
                             cpp_name,
                         } => {
                             let deref = deref.and_then(|x| {
-                                let deref_type = x.to_zngur(scope);
+                                let deref_type = x.to_zngur(scope, ctx);
                                 let receiver_mutability = match data.receiver {
                                     ZngurMethodReceiver::Ref(mutability) => mutability,
                                     ZngurMethodReceiver::Static | ZngurMethodReceiver::Move => {
@@ -874,9 +1175,24 @@ impl ProcessedItem<'_> {
                                 };
                                 Some((deref_type, receiver_mutability))
                             });
+                            let use_path = use_path.and_then(|x| {
+                                let target = scope.resolve_path(&x);
+                                match target.rust_reference() {
+                                    Some(reference) => Some(reference),
+                                    None => {
+                                        scope.report_invalid_cpp_path(
+                                            ctx,
+                                            &x,
+                                            "`c++::` paths cannot be used in a method's `use` path",
+                                            "paths",
+                                        );
+                                        None
+                                    }
+                                }
+                            });
                             let method = ZngurMethodDetails {
-                                data: data.to_zngur(scope),
-                                use_path: use_path.map(|x| scope.resolve_path(x)),
+                                data: data.to_zngur(scope, ctx),
+                                use_path,
                                 deref,
                                 cpp_name: cpp_name.map(|s| s.to_owned()),
                             };
@@ -886,80 +1202,48 @@ impl ProcessedItem<'_> {
                             );
                             methods.push(method);
                         }
-                        ParsedTypeItem::CppValue { field: _, cpp_type } => {
-                            ctx.add_warning_str(
-                                "#cpp_value is deprecated; use #cpp_heap_allocated instead",
-                                item_span,
-                            );
-                            let cpp = CppHeapAllocated(cpp_type.to_owned());
+                        ParsedTypeItem::TriviallyRelocatable => {
                             ctx.record_span(
-                                &cpp.into_span_key_with(rust_ty.clone()),
+                                &PartialSpanKey::TriviallyRelocatable(rust_ty.clone()),
                                 item_span.into_range(),
                             );
-                            cpp_heap_allocated = Some(cpp);
+                            trivially_relocatable = true;
                         }
-                        ParsedTypeItem::CppHeapAllocated { cpp_type } => {
-                            let cpp = CppHeapAllocated(cpp_type.to_owned());
-                            ctx.record_span(
-                                &cpp.into_span_key_with(rust_ty.clone()),
-                                item_span.into_range(),
-                            );
-                            cpp_heap_allocated = Some(cpp);
-                        }
-                        ParsedTypeItem::CppRef { cpp_type } => {
-                            match layout_span {
-                                Some(span) => {
-                                    ctx.add_error_str("Duplicate layout policy found", span);
-                                    continue;
+                        ParsedTypeItem::RemovedCppDirective { name } => {
+                            let help = match name {
+                                "cpp_heap_allocated" | "cpp_value" => {
+                                    "declare the type as `type c++::ns::T { #heap_allocated; }`"
                                 }
-                                None => {
-                                    layout = Some(LayoutPolicy::ZERO_SIZED_TYPE);
-                                    layout_span = Some(item_span);
+                                "cpp_ref" => {
+                                    "declare the type as `type c++::ns::T { ... }` with no \
+                                     layout; Rust can then only refer to it"
                                 }
+                                "cpp_stack_owned" => {
+                                    "declare the type as `type c++::ns::T { #layout(size = X, \
+                                     align = Y); #trivially_relocatable; }`; Rust holds C++ types \
+                                     by value when they have a layout and are trivially \
+                                     relocatable"
+                                }
+                                _ => unreachable!("unexpected removed directive {name}"),
+                            };
+                            has_removed_cpp_directive = true;
+                            if !is_template {
+                                r.types_with_removed_cpp_directive.insert(rust_ty.clone());
                             }
-                            let cpp = CppRef(cpp_type.to_owned());
-                            ctx.record_span(
-                                &cpp.into_span_key_with(rust_ty.clone()),
-                                item_span.into_range(),
-                            );
-                            cpp_ref = Some(cpp);
-                        }
-                        ParsedTypeItem::CppStackOwned { cpp_type, props } => {
-                            let has_legacy_props = props.is_some();
-                            if let Some(props) = props {
-                                let size = props
-                                    .iter()
-                                    .find(|(k, _)| k.inner == "size")
-                                    .map(|(_, v)| v.to_string())
-                                    .unwrap_or_else(|| "X".to_string());
-                                let align = props
-                                    .iter()
-                                    .find(|(k, _)| k.inner == "align")
-                                    .map(|(_, v)| v.to_string())
-                                    .unwrap_or_else(|| "Y".to_string());
-                                let report_span = ctx.report_span_for_range(item_span.into_range());
-                                let report = Report::build(ReportKind::Error, report_span.clone())
-                                    .with_message("Old syntax `#cpp_stack_owned` with layout properties is no longer supported.")
-                                    .with_label(
-                                        Label::new(report_span)
-                                            .with_message("layout parameters no longer accepted here")
-                                            .with_color(Color::Red),
-                                    )
-                                    .with_help(format!(
-                                        "layout moved to its own directive: `#cpp_stack_owned \"{cpp_type}\"; #layout(size = {size}, align = {align});`"
-                                    ))
-                                    .finish();
-                                ctx.add_fatal_report(report);
-                            }
-                            let cpp = CppStackOwned(cpp_type.to_owned());
-                            ctx.record_span(
-                                &cpp.into_span_key_with(rust_ty.clone()),
-                                item_span.into_range(),
-                            );
-                            cpp_stack_owned = Some(cpp);
-                            if has_legacy_props && layout.is_none() {
-                                layout = Some(LayoutPolicy::ZERO_SIZED_TYPE);
-                            }
+                            let report_span = ctx.report_span_for_range(item_span.into_range());
+                            let report = Report::build(ReportKind::Error, report_span.clone())
+                                .with_message(format!(
+                                    "`#{name}` is no longer supported: C++ types are `c++::` \
+                                     types, whose C++ name is their path"
+                                ))
+                                .with_label(
+                                    Label::new(report_span)
+                                        .with_message("no longer supported")
+                                        .with_color(Color::Red),
+                                )
+                                .with_help(help)
+                                .finish();
+                            ctx.add_fatal_report(report);
                         }
                         ParsedTypeItem::MatchOnCfg(match_) => {
                             let result = match_.eval(ctx);
@@ -1011,15 +1295,14 @@ impl ProcessedItem<'_> {
                     constructor,
                     variants,
                     fields,
-                    cpp_heap_allocated,
-                    cpp_ref,
-                    cpp_stack_owned,
+                    trivially_relocatable,
                 };
                 if is_template {
                     r.templates.push(TemplateDef {
                         ty: zngur_type,
                         source_id: ctx.source_id(),
                         span: ty.span,
+                        has_removed_cpp_directive,
                     });
                 } else {
                     ctx.record_span(&zngur_type, ty.span.into_range());
@@ -1037,8 +1320,11 @@ impl ProcessedItem<'_> {
             }
             ProcessedItem::Trait { tr, methods } => {
                 let trt = ZngurTrait {
-                    tr: tr.inner.to_zngur(scope),
-                    methods: methods.into_iter().map(|m| m.to_zngur(scope)).collect(),
+                    tr: tr.inner.to_zngur(scope, ctx),
+                    methods: methods
+                        .into_iter()
+                        .map(|m| m.to_zngur(scope, ctx))
+                        .collect(),
                 };
                 ctx.record_span(&trt, tr.span.into_range());
                 checked_merge(trt, &mut r.spec, tr.span, ctx, None);
@@ -1048,16 +1334,27 @@ impl ProcessedItem<'_> {
                 function: f,
             } => {
                 let function = f.inner;
-                let method = function.signature.to_zngur(scope);
+                let method = function.signature.to_zngur(scope, ctx);
+                let target = if function.path.start == ParsedPathStart::Relative
+                    && function.path.segments.len() == 1
+                {
+                    scope.base.child(function.path.segments[0])
+                } else {
+                    scope.resolve_path(&function.path)
+                };
+                let path = match target {
+                    EntityPath::Rust(v) => v,
+                    EntityPath::Cpp(_) => {
+                        ctx.add_error_str(
+                            "a free function cannot be declared inside a c++:: scope",
+                            f.span,
+                        );
+                        return;
+                    }
+                };
                 let func = ZngurFn {
                     path: RustPathAndGenerics {
-                        path: if function.path.start == ParsedPathStart::Relative
-                            && function.path.segments.len() == 1
-                        {
-                            scope.simple_relative_path(function.path.segments[0])
-                        } else {
-                            scope.resolve_path(function.path)
-                        },
+                        path,
                         generics: method.generics,
                         named_generics: vec![],
                     },
@@ -1073,7 +1370,7 @@ impl ProcessedItem<'_> {
                     match item {
                         ParsedExternCppItem::Function { is_safe, method } => {
                             let span = method.span;
-                            let method = method.inner.to_zngur(scope);
+                            let method = method.inner.to_zngur(scope, ctx);
                             checked_merge(
                                 ZngurExternCppFn {
                                     name: method.name.to_string(),
@@ -1090,12 +1387,12 @@ impl ProcessedItem<'_> {
                         ParsedExternCppItem::Impl { tr, ty, methods } => {
                             checked_merge(
                                 ZngurExternCppImpl {
-                                    tr: tr.map(|x| x.to_zngur(scope)),
-                                    ty: ty.inner.to_zngur(scope),
+                                    tr: tr.map(|x| x.to_zngur(scope, ctx)),
+                                    ty: ty.inner.to_zngur(scope, ctx),
                                     methods: methods
                                         .into_iter()
                                         .map(|(is_safe, x)| {
-                                            let mut m = x.to_zngur(scope);
+                                            let mut m = x.to_zngur(scope, ctx);
                                             m.is_safe = Some(is_safe);
                                             m
                                         })
@@ -1133,6 +1430,33 @@ impl ProcessedItem<'_> {
                     }
                 }
             }
+            ProcessedItem::CrateName(name, span) => {
+                if !matches!(&scope.base, EntityPath::Rust(v) if v.is_empty()) {
+                    ctx.add_error_str(
+                        "`#crate` can only be used at the top level of a file, not inside a `mod` block",
+                        span,
+                    );
+                    return;
+                }
+                if ctx.depth > 0 {
+                    ctx.add_error_str(
+                        "`#crate` can only be used in the top-level file of a zngur module, not in merged files",
+                        span,
+                    );
+                    return;
+                }
+                if is_reserved_crate_name(name) {
+                    ctx.add_error_str(&format!("`{name}` cannot be used as a `#crate` name"), span);
+                    return;
+                }
+                match &r.spec.crate_name {
+                    Some(existing) if existing != name => ctx.add_error_str(
+                        &format!("conflicting `#crate`: already set to `{existing}`"),
+                        span,
+                    ),
+                    _ => r.spec.crate_name = Some(name.to_owned()),
+                }
+            }
         }
     }
 }
@@ -1151,27 +1475,43 @@ enum ParsedRustType<'a> {
 }
 
 impl ParsedRustType<'_> {
-    fn to_zngur(self, scope: &Scope<'_>) -> RustType {
+    fn to_zngur(self, scope: &Scope<'_>, ctx: &mut ParseContext) -> RustType {
         match self {
             ParsedRustType::Primitive(s) => RustType::Primitive(s),
-            ParsedRustType::Ref(m, s) => RustType::Ref(m, Box::new(s.to_zngur(scope))),
-            ParsedRustType::Raw(m, s) => RustType::Raw(m, Box::new(s.to_zngur(scope))),
-            ParsedRustType::Boxed(s) => RustType::Boxed(Box::new(s.to_zngur(scope))),
-            ParsedRustType::Slice(s) => RustType::Slice(Box::new(s.to_zngur(scope))),
+            ParsedRustType::Ref(m, s) => RustType::Ref(m, Box::new(s.to_zngur(scope, ctx))),
+            ParsedRustType::Raw(m, s) => RustType::Raw(m, Box::new(s.to_zngur(scope, ctx))),
+            ParsedRustType::Boxed(s) => RustType::Boxed(Box::new(s.to_zngur(scope, ctx))),
+            ParsedRustType::Slice(s) => RustType::Slice(Box::new(s.to_zngur(scope, ctx))),
             ParsedRustType::Dyn(tr, bounds) => RustType::Dyn(
-                tr.to_zngur(scope),
+                tr.to_zngur(scope, ctx),
                 bounds.into_iter().map(|x| x.to_owned()).collect(),
             ),
             ParsedRustType::Impl(tr, bounds) => RustType::Impl(
-                tr.to_zngur(scope),
+                tr.to_zngur(scope, ctx),
                 bounds.into_iter().map(|x| x.to_owned()).collect(),
             ),
             ParsedRustType::Tuple(v) => {
-                RustType::Tuple(v.into_iter().map(|s| s.to_zngur(scope)).collect())
+                RustType::Tuple(v.into_iter().map(|s| s.to_zngur(scope, ctx)).collect())
             }
             ParsedRustType::Adt(s) => match scope.as_type_var(&s) {
                 Some(v) => RustType::TypeVar(v),
-                None => RustType::Adt(s.to_zngur(scope)),
+                None => match scope.resolve_path(&s.path) {
+                    EntityPath::Cpp(segs) => {
+                        if !s.generics.is_empty() || !s.named_generics.is_empty() {
+                            scope.report_invalid_cpp_path(
+                                ctx,
+                                &s.path,
+                                "`c++::` paths do not support generic arguments",
+                                "paths",
+                            );
+                        }
+                        let _ = s.resolve_generics(scope, ctx);
+                        RustType::Cpp(segs)
+                    }
+                    EntityPath::Rust(path) => {
+                        RustType::Adt(s.into_rust_path_and_generics(path, scope, ctx))
+                    }
+                },
             },
         }
     }
@@ -1188,17 +1528,31 @@ enum ParsedRustTrait<'a> {
 }
 
 impl ParsedRustTrait<'_> {
-    fn to_zngur(self, scope: &Scope<'_>) -> RustTrait {
+    fn to_zngur(self, scope: &Scope<'_>, ctx: &mut ParseContext) -> RustTrait {
         match self {
-            ParsedRustTrait::Normal(s) => RustTrait::Normal(s.to_zngur(scope)),
+            ParsedRustTrait::Normal(s) => {
+                let path = match scope.resolve_path(&s.path) {
+                    EntityPath::Rust(v) => v,
+                    EntityPath::Cpp(segs) => {
+                        scope.report_invalid_cpp_path(
+                            ctx,
+                            &s.path,
+                            "`c++::` paths cannot be used as a trait",
+                            "traits",
+                        );
+                        segs
+                    }
+                };
+                RustTrait::Normal(s.into_rust_path_and_generics(path, scope, ctx))
+            }
             ParsedRustTrait::Fn {
                 name,
                 inputs,
                 output,
             } => RustTrait::Fn {
                 name: name.to_owned(),
-                inputs: inputs.into_iter().map(|s| s.to_zngur(scope)).collect(),
-                output: Box::new(output.to_zngur(scope)),
+                inputs: inputs.into_iter().map(|s| s.to_zngur(scope, ctx)).collect(),
+                output: Box::new(output.to_zngur(scope, ctx)),
             },
         }
     }
@@ -1212,19 +1566,35 @@ struct ParsedRustPathAndGenerics<'a> {
 }
 
 impl ParsedRustPathAndGenerics<'_> {
-    fn to_zngur(self, scope: &Scope<'_>) -> RustPathAndGenerics {
+    fn resolve_generics(
+        self,
+        scope: &Scope<'_>,
+        ctx: &mut ParseContext,
+    ) -> (Vec<RustType>, Vec<(String, RustType)>) {
+        let generics = self
+            .generics
+            .into_iter()
+            .map(|x| x.to_zngur(scope, ctx))
+            .collect();
+        let named_generics = self
+            .named_generics
+            .into_iter()
+            .map(|(name, x)| (name.to_owned(), x.to_zngur(scope, ctx)))
+            .collect();
+        (generics, named_generics)
+    }
+
+    fn into_rust_path_and_generics(
+        self,
+        path: Vec<String>,
+        scope: &Scope<'_>,
+        ctx: &mut ParseContext,
+    ) -> RustPathAndGenerics {
+        let (generics, named_generics) = self.resolve_generics(scope, ctx);
         RustPathAndGenerics {
-            path: scope.resolve_path(self.path),
-            generics: self
-                .generics
-                .into_iter()
-                .map(|x| x.to_zngur(scope))
-                .collect(),
-            named_generics: self
-                .named_generics
-                .into_iter()
-                .map(|(name, x)| (name.to_owned(), x.to_zngur(scope)))
-                .collect(),
+            path,
+            generics,
+            named_generics,
         }
     }
 }
@@ -1264,15 +1634,12 @@ enum PartialSpanKey {
     /// a [`Constructor`](zngur_def::ZngurConstructor)
     /// outer_ty, constructor_sig?
     Constructor(RustType, Option<Vec<(String, RustType)>>),
-    /// a [`CppRef`](zngur_def::CppRef)
+    /// a `#trivially_relocatable` directive
     /// outer_ty
-    CppRef(RustType),
-    /// a [`CppHeapAllocated`](zngur_def::CppHeapAllocated)
-    /// outer_ty
-    CppHeapAllocated(RustType),
-    /// a [`CppStackOwned`](zngur_def::CppStackOwned)
-    /// outer_ty
-    CppStackOwned(RustType),
+    TriviallyRelocatable(RustType),
+    /// a [`ZngurWellknownTrait`](zngur_def::ZngurWellknownTrait)
+    /// outer_ty, trait
+    WellknownTrait(RustType, ZngurWellknownTrait),
     /// a [`Method`](zngur_def::ZngurMethod) on a
     /// [`Type`](zngur_def::ZngurType) or [`Trait`](zngur_def::ZngurTrait)
     /// outer_ty, method
@@ -1370,11 +1737,6 @@ impl VariantQualifiedSpanKeyExt for zngur_def::ConflictSource {
             zngur_def::ConflictSource::Constructor(sig) => {
                 PartialSpanKey::Constructor(outer_ty, sig.clone())
             }
-            zngur_def::ConflictSource::CppRef => PartialSpanKey::CppRef(outer_ty),
-            zngur_def::ConflictSource::CppHeapAllocated => {
-                PartialSpanKey::CppHeapAllocated(outer_ty)
-            }
-            zngur_def::ConflictSource::CppStackOwned => PartialSpanKey::CppStackOwned(outer_ty),
             zngur_def::ConflictSource::Method(method) => {
                 PartialSpanKey::Method(outer_ty, method.clone())
             }
@@ -1404,24 +1766,6 @@ impl QualifiedSpanKeyExt for zngur_def::LayoutPolicy {
 impl QualifiedSpanKeyExt for zngur_def::ZngurMethod {
     fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
         PartialSpanKey::Method(outer_ty, self.clone())
-    }
-}
-
-impl QualifiedSpanKeyExt for zngur_def::CppHeapAllocated {
-    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
-        PartialSpanKey::CppHeapAllocated(outer_ty)
-    }
-}
-
-impl QualifiedSpanKeyExt for zngur_def::CppRef {
-    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
-        PartialSpanKey::CppRef(outer_ty)
-    }
-}
-
-impl QualifiedSpanKeyExt for zngur_def::CppStackOwned {
-    fn into_span_key_with(&self, outer_ty: RustType) -> PartialSpanKey {
-        PartialSpanKey::CppStackOwned(outer_ty)
     }
 }
 
@@ -1524,6 +1868,23 @@ impl<'a, T: Clone> OwnedRefMut<'a, T> {
     }
 }
 
+/// Lexically normalizes `.` and `..` components in `path` without touching the filesystem.
+pub(crate) fn normalize_lexical_path(path: &std::path::Path) -> std::path::PathBuf {
+    let out: std::path::PathBuf = normalize_lexical_components(path).into_iter().collect();
+    if out.as_os_str().is_empty() {
+        std::path::PathBuf::from(".")
+    } else {
+        out
+    }
+}
+
+#[derive(Clone)]
+struct CachedImportedModule {
+    crate_name: Option<String>,
+    cpp_types: Vec<Vec<String>>,
+    had_errors: bool,
+}
+
 #[derive(Debug, Default)]
 struct ReportCounter {
     pub errors: usize,
@@ -1535,9 +1896,15 @@ struct ReportCounter {
 /// and [report sink](ReportSink) used for this parse.
 struct ParseContext<'this, 'source, 'cfg> {
     path: &'source std::path::Path,
+    /// Parent directory of the top-level `.zng` file of the module currently being parsed.
+    /// Relative `import` paths inside nested `merge` files are rebased onto this directory.
+    module_root_dir: Option<std::path::PathBuf>,
     source: &'source str,
     source_id: SourceId,
     depth: usize,
+    /// Whether `import`ed modules are parsed (to find their `#crate` and `c++::` types). Only
+    /// for the module being generated, not for the imported modules themselves.
+    resolve_module_imports: bool,
     cfg_provider: &'cfg dyn RustCfgProvider,
     report_sink: &'cfg mut dyn ReportSink,
     /// All .zng files processed during parsing (main file + imports)
@@ -1545,6 +1912,10 @@ struct ParseContext<'this, 'source, 'cfg> {
     report_counter: OwnedRefMut<'this, ReportCounter>,
     sources: OwnedRefMut<'this, indexmap::IndexMap<std::path::PathBuf, ariadne::Source<String>>>,
     recorded_spans: OwnedRefMut<'this, indexmap::IndexMap<SpanKey, Vec<ReportSpan>>>,
+    /// Already-parsed `import`ed modules, keyed by normalized path, so multiple `merge`d files
+    /// importing the same module parse and record it at most once.
+    parsed_module_cache:
+        OwnedRefMut<'this, std::collections::HashMap<std::path::PathBuf, CachedImportedModule>>,
 }
 
 impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
@@ -1562,15 +1933,18 @@ impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
         );
         Self {
             path,
+            module_root_dir: path.parent().map(std::path::Path::to_path_buf),
             source_id,
             source,
             depth: 0,
+            resolve_module_imports: true,
             cfg_provider: cfg,
             report_sink,
             processed_files,
             report_counter: Default::default(),
             sources,
             recorded_spans: Default::default(),
+            parsed_module_cache: Default::default(),
         }
     }
 
@@ -1588,16 +1962,35 @@ impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
         self.processed_files.push(path.to_path_buf());
         ParseContext {
             path,
+            module_root_dir: self.module_root_dir.clone(),
             source_id,
             source,
             depth: self.depth + 1,
+            resolve_module_imports: self.resolve_module_imports,
             cfg_provider: self.cfg_provider,
             report_sink: self.report_sink,
             processed_files: self.processed_files.into_borrowed(),
             report_counter: self.report_counter.into_borrowed(),
             sources: self.sources.into_borrowed(),
             recorded_spans: self.recorded_spans.into_borrowed(),
+            parsed_module_cache: self.parsed_module_cache.into_borrowed(),
         }
+    }
+
+    /// Build a parse context for the top-level file of an `import`ed module, which is parsed
+    /// into its own spec (it is the top level of that module with its own isolated span table,
+    /// and its own `import`s aren't parsed).
+    fn nested_module<'borrowed, 'src>(
+        &'borrowed mut self,
+        path: &'src std::path::Path,
+        source: &'src str,
+    ) -> ParseContext<'borrowed, 'src, 'borrowed> {
+        let mut ctx = self.nested(path, source);
+        ctx.module_root_dir = path.parent().map(std::path::Path::to_path_buf);
+        ctx.depth = 0;
+        ctx.resolve_module_imports = false;
+        ctx.recorded_spans = OwnedRefMut::Owned(Default::default());
+        ctx
     }
 
     /// the [`SourceId`] of the current source which can be fetched from the cache
@@ -1669,6 +2062,7 @@ impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
 
     /// Records a non-fatal warning as an ariadne diagnostic pointing at `span`.
     /// Rendering is deferred until dispatch time (see `render_report`).
+    #[allow(dead_code)]
     fn add_warning_str(&mut self, warning: &str, span: Span) {
         let report = Report::build(
             ReportKind::Warning,
@@ -1773,6 +2167,34 @@ impl<'this, 'source, 'cfg> ParseContext<'this, 'source, 'cfg> {
             )
             .flatten()
             .collect()
+    }
+
+    /// Resolves the best diagnostic [`ReportSpan`] for an item `key` inside `ty`, falling back
+    /// to `template_locations` (if instantiated from a template), `ty`'s first declaration span,
+    /// or `(0, 0..0)`.
+    fn resolve_item_span(
+        &self,
+        key: &PartialSpanKey,
+        template_locations: &[ReportSpan],
+        ty: &ZngurType,
+    ) -> ReportSpan {
+        self.fetch_spans_global(key)
+            .into_iter()
+            .next_back()
+            .cloned()
+            .or_else(|| template_locations.last().cloned())
+            .or_else(|| self.fetch_spans_global(ty).into_iter().next().cloned())
+            .unwrap_or((0, 0usize..0))
+    }
+
+    /// Records a single-span fatal error [`Report`] at `span` whose message and red label match.
+    fn add_fatal_error_at_span(&mut self, span: ReportSpan, msg: &str) {
+        self.add_fatal_report(
+            Report::build(ReportKind::Error, span.clone())
+                .with_message(msg)
+                .with_label(Label::new(span).with_message(msg).with_color(Color::Red))
+                .finish(),
+        );
     }
 }
 
@@ -1879,7 +2301,220 @@ impl<const ERRORS: bool, const WARNINGS: bool> ReportSink for StdErrReportSink<E
     }
 }
 
+fn is_reserved_crate_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Self"
+            | "abstract"
+            | "as"
+            | "async"
+            | "await"
+            | "become"
+            | "box"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "do"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "final"
+            | "fn"
+            | "for"
+            | "gen"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "macro"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "override"
+            | "priv"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "try"
+            | "type"
+            | "typeof"
+            | "unsafe"
+            | "unsized"
+            | "use"
+            | "virtual"
+            | "where"
+            | "while"
+            | "yield"
+    )
+}
+
+fn normalize_lexical_components(path: &std::path::Path) -> Vec<Component<'_>> {
+    let mut out = Vec::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => match out.last() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir) => {}
+                _ => out.push(Component::ParentDir),
+            },
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Rebases a `./`- or `../`-prefixed `import` path written inside a `merge`d file (`current_dir`)
+/// so that it is relative to the top-level `.zng` file's directory (`module_root_dir`). Bare
+/// C++ include-search paths (like `"packet.zng"`) are returned unchanged.
+fn rebase_relative_import_path(
+    module_root_dir: &std::path::Path,
+    current_dir: &std::path::Path,
+    import_path: &std::path::Path,
+) -> std::path::PathBuf {
+    use std::path::{Path, PathBuf};
+    if !matches!(
+        import_path.components().next(),
+        Some(Component::CurDir | Component::ParentDir)
+    ) {
+        return import_path.to_path_buf();
+    }
+    let joined = current_dir.join(import_path);
+    let root_comps = normalize_lexical_components(module_root_dir);
+    let joined_comps = normalize_lexical_components(&joined);
+    let common = root_comps
+        .iter()
+        .zip(&joined_comps)
+        .take_while(|(a, b)| a == b)
+        .count();
+    if !root_comps[common..]
+        .iter()
+        .all(|c| matches!(c, Component::Normal(_)))
+    {
+        return joined;
+    }
+    let up_count = root_comps[common..].len();
+    if let Some(tail_utf8) = joined_comps[common..]
+        .iter()
+        .map(|comp| comp.as_os_str().to_str())
+        .collect::<Option<Vec<&str>>>()
+    {
+        let mut parts: Vec<&str> = Vec::with_capacity(up_count + tail_utf8.len());
+        parts.extend(std::iter::repeat_n("..", up_count));
+        parts.extend(tail_utf8);
+        return if parts.is_empty() {
+            PathBuf::from(".")
+        } else if parts[0] == ".." {
+            PathBuf::from(parts.join("/"))
+        } else {
+            PathBuf::from(format!("./{}", parts.join("/")))
+        };
+    }
+    let mut out = PathBuf::new();
+    for _ in 0..up_count {
+        out.push("..");
+    }
+    for comp in &joined_comps[common..] {
+        out.push(comp.as_os_str());
+    }
+    if matches!(out.components().next(), Some(Component::ParentDir)) {
+        out
+    } else {
+        Path::new(".").join(out)
+    }
+}
+
 impl<'a> ParsedZngFile<'a> {
+    /// Parses the modules that the current file `import`s (from `first` on), to find their
+    /// `#crate` and the `c++::` types they declare, which this module can then refer to.
+    fn resolve_module_imports(
+        zngur: &mut ZngurSpecBuilder,
+        first: usize,
+        ctx: &mut ParseContext,
+        resolver: &impl ImportResolver,
+    ) {
+        let Some(base_dir) = ctx
+            .module_root_dir
+            .clone()
+            .or_else(|| ctx.path.parent().map(std::path::Path::to_path_buf))
+        else {
+            return;
+        };
+        for index in first..zngur.spec.imported_modules.len() {
+            let import_path = zngur.spec.imported_modules[index].path.clone();
+            let report_span = zngur.module_import_spans[index].clone();
+            let path = base_dir.join(&import_path);
+            let norm_path = normalize_lexical_path(&path);
+            let cached = if let Some(cached) = ctx.parsed_module_cache.get(&norm_path).cloned() {
+                cached
+            } else {
+                let Ok(text) = resolver.resolve_import(&base_dir, &import_path) else {
+                    // Not an error: an `import` only has to name the generated header (found via
+                    // the C++ include path), so the `.zng` file may not be at this relative path.
+                    // Its `c++::` types just can't be referred to from this module then.
+                    continue;
+                };
+                let errors_before = ctx.reports().errors;
+                let imported = {
+                    let mut module_ctx = ctx.nested_module(&path, &text);
+                    let mut module = ZngurSpecBuilder::default();
+                    Self::parse_into(&mut module, &mut module_ctx, resolver);
+                    module.to_zngur(&mut module_ctx)
+                };
+                let had_errors = ctx.reports().errors > errors_before;
+                let cpp_types: Vec<Vec<String>> = imported
+                    .types
+                    .iter()
+                    .filter_map(|ty| match &ty.ty {
+                        RustType::Cpp(segs) => Some(segs.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let cached = CachedImportedModule {
+                    crate_name: imported.crate_name,
+                    cpp_types,
+                    had_errors,
+                };
+                ctx.parsed_module_cache.insert(norm_path, cached.clone());
+                cached
+            };
+            if !cached.had_errors && !cached.cpp_types.is_empty() && cached.crate_name.is_none() {
+                let msg = format!(
+                    "imported module `{}` declares `c++::` types, so it needs a `#crate <name>` \
+                     directive for this module to find their Rust wrappers \
+                     (at `::<name>::generated::...`)",
+                    import_path.display()
+                );
+                ctx.add_fatal_report(
+                    Report::build(ReportKind::Error, report_span.clone())
+                        .with_message(&msg)
+                        .with_label(
+                            Label::new(report_span)
+                                .with_message(&msg)
+                                .with_color(Color::Red),
+                        )
+                        .finish(),
+                );
+            }
+            let module_import = &mut zngur.spec.imported_modules[index];
+            module_import.crate_name = cached.crate_name;
+            module_import.cpp_types = cached.cpp_types;
+        }
+    }
+
     fn parse_into(
         zngur: &mut ZngurSpecBuilder,
         ctx: &mut ParseContext,
@@ -1909,9 +2544,14 @@ impl<'a> ParsedZngFile<'a> {
                 .into_iter()
                 .map(|item| process_parsed_item(item, ctx)),
         );
+        let errors_before = ctx.reports().errors;
+        let first_new_module_import = zngur.spec.imported_modules.len();
         ProcessedZngFile::new(aliases, items).into_zngur_spec(zngur, ctx);
-        if ctx.reports().errors > 0 {
+        if ctx.reports().errors > errors_before {
             return;
+        }
+        if ctx.resolve_module_imports {
+            Self::resolve_module_imports(zngur, first_new_module_import, ctx, resolver);
         }
 
         if let Some(dirname) = ctx.path.to_owned().parent() {
@@ -2044,6 +2684,7 @@ fn process_parsed_item<'a>(
         ParsedItem::ConvertPanicToException(span) => {
             Ret::Processed(ProcessedItem::ConvertPanicToException(span))
         }
+        ParsedItem::CrateName(name, span) => Ret::Processed(ProcessedItem::CrateName(name, span)),
         ParsedItem::UnstableFeature(_) => {
             // ignore
             Ret::Ignore
@@ -2116,7 +2757,7 @@ impl<'a> ProcessedZngFile<'a> {
     }
 
     fn into_zngur_spec(self, zngur: &mut ZngurSpecBuilder, ctx: &mut ParseContext) {
-        let root_scope = Scope::new_root(self.aliases);
+        let root_scope = Scope::new_root(self.aliases, ctx);
 
         for item in self.items {
             item.add_to_zngur_spec(zngur, &root_scope, ctx);
@@ -2128,13 +2769,18 @@ struct TemplateDef {
     ty: ZngurType,
     source_id: SourceId,
     span: Span,
+    has_removed_cpp_directive: bool,
 }
 
 #[derive(Default)]
 struct ZngurSpecBuilder {
     spec: ZngurSpec,
     templates: Vec<TemplateDef>,
+    /// Concrete types on which a removed `#cpp_*` directive was seen.
+    types_with_removed_cpp_directive: HashSet<RustType>,
     imports: Vec<Import>,
+    /// The span of each entry of `spec.imported_modules`, in the file that imports it.
+    module_import_spans: Vec<ReportSpan>,
 }
 
 impl ZngurSpecBuilder {
@@ -2142,10 +2788,13 @@ impl ZngurSpecBuilder {
         let ZngurSpecBuilder {
             mut spec,
             templates,
+            types_with_removed_cpp_directive,
             imports: _,
+            module_import_spans,
         } = self;
         for ty in &mut spec.types {
             let mut template_locations = Vec::new();
+            let mut template_has_removed_directive = false;
             for template in &templates {
                 if let Some(template_match) = try_match_template(&ty.ty, &template.ty) {
                     let location = (template.source_id, template.span.into_range());
@@ -2165,6 +2814,9 @@ impl ZngurSpecBuilder {
                             }
                         }
                     } else {
+                        if template.has_removed_cpp_directive {
+                            template_has_removed_directive = true;
+                        }
                         template_locations.push(location);
                     }
                 }
@@ -2233,53 +2885,26 @@ impl ZngurSpecBuilder {
             }) {
                 ty.wellknown_traits.push(ZngurWellknownTrait::Drop);
             }
-            let mut cpp_directives: Vec<(&str, PartialSpanKey)> = Vec::new();
-            if ty.cpp_stack_owned.is_some() {
-                cpp_directives.push((
-                    "#cpp_stack_owned",
-                    PartialSpanKey::CppStackOwned(ty.ty.clone()),
-                ));
-            }
-            if ty.cpp_ref.is_some() {
-                cpp_directives.push(("#cpp_ref", PartialSpanKey::CppRef(ty.ty.clone())));
-            }
-            if ty.cpp_heap_allocated.is_some() {
-                cpp_directives.push((
-                    "#cpp_heap_allocated",
-                    PartialSpanKey::CppHeapAllocated(ty.ty.clone()),
-                ));
-            }
-            if cpp_directives.len() > 1 {
-                let resolved: Vec<_> = cpp_directives
-                    .iter()
-                    .map(|(name, key)| {
-                        (*name, ctx.fetch_spans_global(key).last().copied().cloned())
-                    })
-                    .collect();
-                let (first_name, ref first_span) = resolved[0];
-                let (second_name, ref second_span) = resolved[1];
-                let report_span = second_span
-                    .clone()
-                    .or_else(|| first_span.clone())
-                    .unwrap_or((0, 0usize..0));
-                let mut report =
-                    Report::build(ReportKind::Error, report_span).with_message(format!(
-                        "`{first_name}` cannot be used with `{second_name}` for type {}.",
-                        ty.ty
-                    ));
-                for (dir_name, span) in resolved {
-                    if let Some(span) = span {
-                        report = report.with_label(
-                            Label::new(span)
-                                .with_message(format!("`{dir_name}` declared here"))
-                                .with_color(Color::Yellow),
-                        );
-                    }
-                }
-                ctx.add_fatal_report(report.finish());
+            if ty.wellknown_traits.contains(&ZngurWellknownTrait::Unsized)
+                && matches!(ty.ty, RustType::Cpp(_))
+            {
+                let report_span = ctx.resolve_item_span(
+                    &PartialSpanKey::WellknownTrait(ty.ty.clone(), ZngurWellknownTrait::Unsized),
+                    &template_locations,
+                    ty,
+                );
+                ctx.add_fatal_error_at_span(
+                    report_span,
+                    "`?Sized` is not supported on C++ types; a `c++::` type without a \
+                     layout is already reference-only",
+                );
                 continue;
             }
-            if ty.layout.is_none() {
+            if ty.layout.is_none()
+                && !matches!(ty.ty, RustType::Cpp(_))
+                && !template_has_removed_directive
+                && !types_with_removed_cpp_directive.contains(&ty.ty)
+            {
                 let spans = ctx.fetch_spans_global(ty);
                 let (first, rest) = {
                     let mut it = spans.into_iter();
@@ -2287,16 +2912,10 @@ impl ZngurSpecBuilder {
                     (first, it.collect::<Vec<_>>())
                 };
                 let mut report = Report::build(ReportKind::Error, (0, 0usize..0))
-                    .with_message(format!("No layout policy found for type {}.", ty.ty));
-                if ty.cpp_stack_owned.is_some() {
-                    report = report.with_note(
-                        "Type is declared with `#cpp_stack_owned` which requires `#layout(size = X, align = Y)`.",
-                    );
-                } else {
-                    report = report.with_note(
+                    .with_message(format!("No layout policy found for type {}.", ty.ty))
+                    .with_note(
                         "Use one of `#layout(size = X, align = Y)`, `#heap_allocated` or `#only_by_ref`.",
                     );
-                }
 
                 if let Some(first) = first {
                     report.add_label(
@@ -2321,7 +2940,7 @@ impl ZngurSpecBuilder {
                     }
                 }
                 let t_count = template_locations.len();
-                for (i, location) in template_locations.into_iter().enumerate() {
+                for (i, location) in template_locations.iter().cloned().enumerate() {
                     report = report.with_label(
                         Label::new(location)
                             .with_message("Matching template defined here")
@@ -2337,56 +2956,135 @@ impl ZngurSpecBuilder {
                 }
                 ctx.add_fatal_report(report.finish());
             }
-            if ty.cpp_stack_owned.is_some()
-                && matches!(
-                    ty.layout,
-                    Some(
-                        LayoutPolicy::HeapAllocated
-                            | LayoutPolicy::OnlyByRef
-                            | LayoutPolicy::Conservative { .. }
-                    )
-                )
-            {
-                let stack_owned_spans =
-                    ctx.fetch_spans_global(&PartialSpanKey::CppStackOwned(ty.ty.clone()));
-                let layout_spans = ctx.fetch_spans_global(&PartialSpanKey::Layout(ty.ty.clone()));
-                let report_span = stack_owned_spans
-                    .last()
-                    .copied()
-                    .cloned()
-                    .or_else(|| layout_spans.last().copied().cloned())
-                    .unwrap_or((0, 0usize..0));
-
-                let layout_name = match ty.layout {
-                    Some(LayoutPolicy::HeapAllocated) => "#heap_allocated",
-                    Some(LayoutPolicy::OnlyByRef) => "#only_by_ref",
-                    Some(LayoutPolicy::Conservative { .. }) => "#layout_conservative",
-                    _ => unreachable!(),
+            if matches!(ty.ty, RustType::Cpp(_)) {
+                let msg = match ty.layout {
+                    Some(LayoutPolicy::Conservative { .. }) => Some(
+                        "`#layout_conservative` cannot be used on `c++::` types; use `#layout(size = X, align = Y)` instead",
+                    ),
+                    Some(LayoutPolicy::OnlyByRef) => Some(
+                        "`#only_by_ref` is for Rust types; a `c++::` type without a layout is already reference-only",
+                    ),
+                    _ => None,
                 };
-
-                let mut report = Report::build(ReportKind::Error, report_span)
-                    .with_message(format!(
-                        "`#cpp_stack_owned` cannot be used with `{layout_name}` for type {}.",
-                        ty.ty
-                    ))
-                    .with_note("`#cpp_stack_owned` types must use `#layout(size = X, align = Y)`.");
-
-                if let Some(span) = stack_owned_spans.last() {
-                    report = report.with_label(
-                        Label::new((*span).clone())
-                            .with_message("`#cpp_stack_owned` declared here")
-                            .with_color(Color::Yellow),
+                if let Some(msg) = msg {
+                    let report_span = ctx.resolve_item_span(
+                        &PartialSpanKey::Layout(ty.ty.clone()),
+                        &template_locations,
+                        ty,
+                    );
+                    ctx.add_fatal_error_at_span(report_span, msg);
+                }
+            }
+            if ty.trivially_relocatable {
+                let tr_span = ctx.resolve_item_span(
+                    &PartialSpanKey::TriviallyRelocatable(ty.ty.clone()),
+                    &template_locations,
+                    ty,
+                );
+                if !matches!(ty.ty, RustType::Cpp(_)) {
+                    ctx.add_fatal_error_at_span(
+                        tr_span,
+                        "`#trivially_relocatable` is only for `c++::` types (Rust types \
+                         are always trivially relocatable)",
+                    );
+                } else if ty.cpp_by_value_layout().is_none() {
+                    ctx.add_fatal_error_at_span(
+                        tr_span,
+                        "`#trivially_relocatable` needs `#layout(size = X, align = Y)`, \
+                         which Rust needs to hold the C++ type by value",
                     );
                 }
-                if let Some(span) = layout_spans.last() {
-                    report = report.with_label(
-                        Label::new((*span).clone())
-                            .with_message(format!("`{layout_name}` declared here"))
-                            .with_color(Color::Yellow),
-                    );
+            }
+        }
+        // Check that imported `c++::` types do not collide with local `c++::` declarations or
+        // with `c++::` types imported from a different crate.
+        let mut seen_reexports: HashSet<(String, Vec<String>)> = HashSet::new();
+        let mut imported_owners: std::collections::HashMap<Vec<String>, (String, ReportSpan)> =
+            std::collections::HashMap::new();
+        for (module, import_span) in spec.imported_modules.iter().zip(&module_import_spans) {
+            let Some(crate_name) = &module.crate_name else {
+                continue;
+            };
+            let norm_crate = crate_name.replace('-', "_");
+            if let Some(own_crate) = &spec.crate_name
+                && own_crate.replace('-', "_") == norm_crate
+            {
+                let msg = format!(
+                    "imported module `{}` has the same `#crate` (`{crate_name}`) as this module; \
+                     use `merge \"{}\";` to split `.zng` files within a single crate",
+                    module.path.display(),
+                    module.path.display(),
+                );
+                ctx.add_fatal_report(
+                    Report::build(ReportKind::Error, import_span.clone())
+                        .with_message(&msg)
+                        .with_label(
+                            Label::new(import_span.clone())
+                                .with_message(&msg)
+                                .with_color(Color::Red),
+                        )
+                        .finish(),
+                );
+                continue;
+            }
+            for segs in &module.cpp_types {
+                if !seen_reexports.insert((norm_crate.clone(), segs.clone())) {
+                    continue;
                 }
-
-                ctx.add_fatal_report(report.finish());
+                let local_ty = RustType::Cpp(segs.clone());
+                if spec.types.iter().any(|t| t.ty == local_ty) {
+                    let local_span = ctx
+                        .fetch_spans_global(&local_ty)
+                        .first()
+                        .copied()
+                        .cloned()
+                        .unwrap_or_else(|| import_span.clone());
+                    let msg = format!(
+                        "`c++::{}` is already imported from `{}` (`#crate {crate_name}`), and \
+                         cannot also be declared in this module",
+                        segs.join("::"),
+                        module.path.display(),
+                    );
+                    let report = Report::build(ReportKind::Error, local_span.clone())
+                        .with_message(&msg)
+                        .with_label(
+                            Label::new(local_span)
+                                .with_message("declared locally here")
+                                .with_color(Color::Red),
+                        )
+                        .with_label(
+                            Label::new(import_span.clone())
+                                .with_message(format!(
+                                    "imported from `{}` (`#crate {crate_name}`) here",
+                                    module.path.display()
+                                ))
+                                .with_color(Color::Yellow),
+                        )
+                        .finish();
+                    ctx.add_fatal_report(report);
+                } else if let Some((prev_crate, prev_span)) = imported_owners.get(segs) {
+                    let msg = format!(
+                        "`c++::{}` is imported from multiple crates (`{prev_crate}` and \
+                         `{norm_crate}`)",
+                        segs.join("::")
+                    );
+                    let report = Report::build(ReportKind::Error, import_span.clone())
+                        .with_message(&msg)
+                        .with_label(
+                            Label::new(import_span.clone())
+                                .with_message(format!("also imported from `{norm_crate}` here"))
+                                .with_color(Color::Red),
+                        )
+                        .with_label(
+                            Label::new(prev_span.clone())
+                                .with_message(format!("first imported from `{prev_crate}` here"))
+                                .with_color(Color::Yellow),
+                        )
+                        .finish();
+                    ctx.add_fatal_report(report);
+                } else {
+                    imported_owners.insert(segs.clone(), (norm_crate.clone(), import_span.clone()));
+                }
             }
         }
         spec
@@ -2440,6 +3138,7 @@ enum Token<'a> {
     KwMatch,
     KwSafe,
     KwUnsafe,
+    CppPathStart,
     Ident(&'a str),
     Str(&'a str),
     RawStr(usize, &'a str),
@@ -2473,10 +3172,68 @@ impl<'a> Token<'a> {
             x => Token::Ident(x),
         }
     }
+
+    fn as_word(&self) -> Option<&'a str> {
+        match self {
+            Token::Ident(x) => Some(x),
+            Token::KwAs => Some("as"),
+            Token::KwAsync => Some("async"),
+            Token::KwDyn => Some("dyn"),
+            Token::KwUse => Some("use"),
+            Token::KwFor => Some("for"),
+            Token::KwMod => Some("mod"),
+            Token::KwCrate => Some("crate"),
+            Token::KwType => Some("type"),
+            Token::KwTrait => Some("trait"),
+            Token::KwFn => Some("fn"),
+            Token::KwMut => Some("mut"),
+            Token::KwConst => Some("const"),
+            Token::KwExtern => Some("extern"),
+            Token::KwImpl => Some("impl"),
+            Token::KwImport => Some("import"),
+            Token::KwMerge => Some("merge"),
+            Token::KwIf => Some("if"),
+            Token::KwElse => Some("else"),
+            Token::KwMatch => Some("match"),
+            Token::KwSafe => Some("safe"),
+            Token::KwUnsafe => Some("unsafe"),
+            Token::Arrow
+            | Token::ArrowArm
+            | Token::AngleOpen
+            | Token::AngleClose
+            | Token::BracketOpen
+            | Token::BracketClose
+            | Token::Colon
+            | Token::ColonColon
+            | Token::ParenOpen
+            | Token::ParenClose
+            | Token::BraceOpen
+            | Token::BraceClose
+            | Token::And
+            | Token::Star
+            | Token::Sharp
+            | Token::Plus
+            | Token::Eq
+            | Token::Question
+            | Token::Comma
+            | Token::Semicolon
+            | Token::Pipe
+            | Token::Underscore
+            | Token::Dot
+            | Token::Bang
+            | Token::CppPathStart
+            | Token::Str(_)
+            | Token::RawStr(_, _)
+            | Token::Number(_) => None,
+        }
+    }
 }
 
 impl Display for Token<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(word) = self.as_word() {
+            return write!(f, "{word}");
+        }
         match self {
             Token::Arrow => write!(f, "->"),
             Token::ArrowArm => write!(f, "=>"),
@@ -2502,34 +3259,35 @@ impl Display for Token<'_> {
             Token::Underscore => write!(f, "_"),
             Token::Dot => write!(f, "."),
             Token::Bang => write!(f, "!"),
-            Token::KwAs => write!(f, "as"),
-            Token::KwAsync => write!(f, "async"),
-            Token::KwDyn => write!(f, "dyn"),
-            Token::KwUse => write!(f, "use"),
-            Token::KwFor => write!(f, "for"),
-            Token::KwMod => write!(f, "mod"),
-            Token::KwCrate => write!(f, "crate"),
-            Token::KwType => write!(f, "type"),
-            Token::KwTrait => write!(f, "trait"),
-            Token::KwFn => write!(f, "fn"),
-            Token::KwMut => write!(f, "mut"),
-            Token::KwConst => write!(f, "const"),
-            Token::KwExtern => write!(f, "extern"),
-            Token::KwImpl => write!(f, "impl"),
-            Token::KwImport => write!(f, "import"),
-            Token::KwMerge => write!(f, "merge"),
-            Token::KwIf => write!(f, "if"),
-            Token::KwElse => write!(f, "else"),
-            Token::KwMatch => write!(f, "match"),
-            Token::KwSafe => write!(f, "safe"),
-            Token::KwUnsafe => write!(f, "unsafe"),
-            Token::Ident(i) => write!(f, "{i}"),
+            Token::CppPathStart => write!(f, "c++"),
             Token::Number(n) => write!(f, "{n}"),
             Token::Str(s) => write!(f, r#""{s}""#),
             Token::RawStr(hashes, s) => {
                 let h = "#".repeat(*hashes);
                 write!(f, r#"r{h}"{s}"{h}"#)
             }
+            Token::Ident(_)
+            | Token::KwAs
+            | Token::KwAsync
+            | Token::KwDyn
+            | Token::KwUse
+            | Token::KwFor
+            | Token::KwMod
+            | Token::KwCrate
+            | Token::KwType
+            | Token::KwTrait
+            | Token::KwFn
+            | Token::KwMut
+            | Token::KwConst
+            | Token::KwExtern
+            | Token::KwImpl
+            | Token::KwImport
+            | Token::KwMerge
+            | Token::KwIf
+            | Token::KwElse
+            | Token::KwMatch
+            | Token::KwSafe
+            | Token::KwUnsafe => unreachable!(),
         }
     }
 }
@@ -2558,6 +3316,7 @@ fn lexer<'src>()
     let token = choice((
         raw_string,
         plain_string,
+        just("c++").to(Token::CppPathStart),
         text::ident()
             .filter(|ident: &&str| *ident != "_")
             .map(Token::ident_or_kw),
@@ -3045,45 +3804,31 @@ fn inner_type_item<'a>()
         )
         .map(|(name, (offset, ty))| ParsedTypeItem::Field { name, ty, offset }),
     );
-    let cpp_value = just(Token::Sharp)
-        .then(just(Token::Ident("cpp_value")))
+    // The `#cpp_*` directives were removed: a `c++::` type's C++ name is its path, and whether
+    // Rust can hold it by value follows from `#layout` + `#trivially_relocatable`. They're still
+    // parsed, to explain the new syntax.
+    let removed_cpp_directive = just(Token::Sharp)
         .ignore_then(select! {
-            Token::Str(c) => c,
+            Token::Ident(c) if matches!(c, "cpp_value" | "cpp_heap_allocated" | "cpp_ref" | "cpp_stack_owned") => c,
         })
-        .then(select! {
-            Token::Str(c) => c,
-        })
-        .map(|x| ParsedTypeItem::CppValue {
-            field: x.0,
-            cpp_type: x.1,
-        });
-    let cpp_heap_allocated = just(Token::Sharp)
-        .then(just(Token::Ident("cpp_heap_allocated")))
-        .ignore_then(select! {
-            Token::Str(c) => c,
-        })
-        .map(|cpp_type| ParsedTypeItem::CppHeapAllocated { cpp_type });
-    let cpp_ref = just(Token::Sharp)
-        .then(just(Token::Ident("cpp_ref")))
-        .ignore_then(select! {
-            Token::Str(c) => c,
-        })
-        .map(|x| ParsedTypeItem::CppRef { cpp_type: x });
-    let cpp_stack_owned = just(Token::Sharp)
-        .then(just(Token::Ident("cpp_stack_owned")))
-        .ignore_then(select! {
-            Token::Str(c) => c,
-        })
-        .then(
+        .then_ignore(
+            select! {
+                Token::Str(_) => (),
+                Token::RawStr(_, _) => (),
+            }
+            .repeated(),
+        )
+        .then_ignore(
             property_item
                 .clone()
                 .separated_by(just(Token::Comma))
                 .collect::<Vec<_>>()
                 .delimited_by(just(Token::ParenOpen), just(Token::ParenClose))
-                .or_not()
-                .boxed(),
+                .or_not(),
         )
-        .map(|(cpp_type, props)| ParsedTypeItem::CppStackOwned { cpp_type, props });
+        .map(|name| ParsedTypeItem::RemovedCppDirective { name });
+    let trivially_relocatable = just([Token::Sharp, Token::Ident("trivially_relocatable")])
+        .to(ParsedTypeItem::TriviallyRelocatable);
 
     let variant = just(Token::Ident("variant"))
         .ignore_then(select! { Token::Ident(c) => c })
@@ -3104,10 +3849,8 @@ fn inner_type_item<'a>()
             non_exhaustive.boxed(),
             constructor.boxed(),
             field.boxed(),
-            cpp_value.boxed(),
-            cpp_heap_allocated.boxed(),
-            cpp_ref.boxed(),
-            cpp_stack_owned.boxed(),
+            removed_cpp_directive.boxed(),
+            trivially_relocatable.boxed(),
             method()
                 .then(
                     just(Token::KwUse)
@@ -3215,6 +3958,12 @@ fn fn_item<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedItem<'a>, ZngParserEx
     .boxed()
 }
 
+fn word_token<'a>() -> impl Parser<'a, ParserInput<'a>, &'a str, ZngParserExtra<'a>> + Clone {
+    select! {
+        tok if Token::as_word(&tok).is_some() => Token::as_word(&tok).unwrap(),
+    }
+}
+
 fn additional_include_item<'a>()
 -> impl Parser<'a, ParserInput<'a>, ParsedItem<'a>, ZngParserExtra<'a>> + Clone {
     just(Token::Sharp)
@@ -3227,6 +3976,10 @@ fn additional_include_item<'a>()
                 .boxed(),
             just(Token::Ident("convert_panic_to_exception"))
                 .map_with(|_, extra| ParsedItem::ConvertPanicToException(extra.span()))
+                .boxed(),
+            just(Token::KwCrate)
+                .ignore_then(word_token())
+                .map_with(|name, extra| ParsedItem::CrateName(name, extra.span()))
                 .boxed(),
         )))
         .boxed()
@@ -3370,6 +4123,9 @@ fn path<'a>() -> impl Parser<'a, ParserInput<'a>, ParsedPath<'a>, ZngParserExtra
         just(Token::KwCrate)
             .then(just(Token::ColonColon))
             .to(ParsedPathStart::Crate),
+        just(Token::CppPathStart)
+            .then(just(Token::ColonColon))
+            .to(ParsedPathStart::Cpp),
         empty().to(ParsedPathStart::Relative),
     ));
 

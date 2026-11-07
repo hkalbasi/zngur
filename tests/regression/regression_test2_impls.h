@@ -16,11 +16,14 @@ public:
   virtual ~CppTaskForRust() override {}
   using Inheritance = ::rust::RustInherit<CppTaskForRust, ::rust::crate::RustTask>;
 };
+
+// The name `regression_test2.zng` uses for it (C++ types are named by their path there).
+using CppTask = CppTaskForRust;
 }
 
 namespace rust {
 template<>
-struct is_trivially_relocatable<task::Dispatcher> : std::true_type {};
+struct is_trivially_relocatable< ::task::Dispatcher> : std::true_type {};
 template<>
-struct is_trivially_relocatable<task::CppTaskForRust> : std::true_type {};
+struct is_trivially_relocatable< ::task::CppTaskForRust> : std::true_type {};
 }

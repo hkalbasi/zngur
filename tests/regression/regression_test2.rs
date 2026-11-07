@@ -8,7 +8,7 @@ use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
-use crate::generated::cpp::{CppTask, Dispatcher};
+use crate::generated::task::{CppTask, Dispatcher};
 
 #[repr(C)]
 pub struct CppInherit<Base: zngur_lib::ZngCppStackObject, T> {

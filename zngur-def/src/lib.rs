@@ -122,7 +122,7 @@ pub fn cpp_handle_field_name(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CPP_KEYWORDS, cpp_handle_field_name, cpp_handle_keyword};
+    use super::{CPP_KEYWORDS, RustType, cpp_handle_field_name, cpp_handle_keyword};
 
     #[test]
     fn cpp_keywords_are_escaped() {
@@ -132,6 +132,12 @@ mod tests {
         }
 
         assert_eq!(cpp_handle_keyword("ordinary_name"), "ordinary_name");
+    }
+
+    #[test]
+    fn test_cpp_display() {
+        let cpp = RustType::Cpp(vec!["a".to_owned(), "b".to_owned(), "Name".to_owned()]);
+        assert_eq!(cpp.to_string(), "a::b::Name");
     }
 }
 
@@ -276,13 +282,10 @@ impl LayoutPolicy {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ZngurMethodDetails {
     pub data: ZngurMethod,
-    pub use_path: Option<Vec<String>>,
+    pub use_path: Option<String>,
     pub deref: Option<(RustType, Mutability)>,
     pub cpp_name: Option<String>,
 }
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CppHeapAllocated(pub String);
 
 #[derive(Debug)]
 pub struct CppHeapAllocatedData {
@@ -290,37 +293,54 @@ pub struct CppHeapAllocatedData {
     pub cpp_type: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CppRef(pub String);
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CppStackOwned(pub String);
-
-impl Display for CppStackOwned {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Display for CppRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CppStackOwnedData {
+    pub destructor_fn: String,
+    pub cpp_type: String,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ZngurType {
     pub ty: RustType,
+    /// Required for Rust types. For C++ (`c++::`) types, Rust holds them by value if they have a
+    /// `StackAllocated` layout and are `trivially_relocatable`, holds an owning pointer to a
+    /// heap-allocated C++ object if they are `HeapAllocated`, and only refers to them otherwise.
     pub layout: Option<LayoutPolicy>,
+    /// `#trivially_relocatable`: the C++ type can be moved with `memcpy`, so Rust can hold it by
+    /// value. The generated C++ code checks this with `rust::is_trivially_relocatable`.
+    pub trivially_relocatable: bool,
     pub wellknown_traits: Vec<ZngurWellknownTrait>,
     pub exhaustive: bool,
     pub methods: Vec<ZngurMethodDetails>,
     pub constructor: Option<ZngurConstructor>,
     pub variants: Vec<ZngurVariant>,
     pub fields: Vec<ZngurField>,
-    pub cpp_heap_allocated: Option<CppHeapAllocated>,
-    pub cpp_ref: Option<CppRef>,
-    pub cpp_stack_owned: Option<CppStackOwned>,
+}
+
+impl ZngurType {
+    /// The C++ name of a C++ (`c++::`) type, e.g. `::a::B`.
+    pub fn cpp_name(&self) -> Option<String> {
+        self.ty.cpp_spelling()
+    }
+
+    /// Whether this is a `c++::` type declared with `#heap_allocated`, whose Rust wrapper holds an
+    /// owning pointer + destructor to a heap-allocated C++ object.
+    pub fn is_cpp_heap_allocated(&self) -> bool {
+        matches!(self.ty, RustType::Cpp(_))
+            && matches!(self.layout, Some(LayoutPolicy::HeapAllocated))
+    }
+
+    /// The size and alignment of a C++ type that Rust holds by value (see [`ZngurType::layout`]).
+    pub fn cpp_by_value_layout(&self) -> Option<LayoutPolicy> {
+        match (&self.ty, self.layout) {
+            (RustType::Cpp(_), Some(layout @ LayoutPolicy::StackAllocated { .. }))
+                if self.trivially_relocatable =>
+            {
+                Some(layout)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -341,6 +361,11 @@ pub struct Import(pub std::path::PathBuf);
 #[derive(Debug, Clone)]
 pub struct ModuleImport {
     pub path: std::path::PathBuf,
+    /// The `#crate` of the imported module, if it has one.
+    pub crate_name: Option<String>,
+    /// The `c++::` types that the imported module declares (their paths, without `c++::`). Their
+    /// Rust wrappers live at `::<crate_name>::generated::<path>`.
+    pub cpp_types: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Default)]
@@ -356,6 +381,9 @@ pub struct ZngurSpec {
     pub cpp_include_header_name: String,
     pub mangling_base: String,
     pub cpp_namespace: Option<String>,
+    /// The Rust crate that the generated Rust code is part of, from `#crate <name>`. Other modules
+    /// that import this one find its `c++::` types at `::<crate_name>::generated::<path>`.
+    pub crate_name: Option<String>,
     pub rust_cfg: Vec<(String, Option<String>)>,
 }
 
@@ -412,10 +440,19 @@ pub enum RustType {
     Tuple(Vec<RustType>),
     Adt(RustPathAndGenerics),
     TypeVar(TypeVar),
+    Cpp(Vec<String>),
 }
 
 impl RustType {
     pub const UNIT: Self = RustType::Tuple(Vec::new());
+
+    /// The C++ spelling of a `c++::` type, e.g. `::a::B` for `c++::a::B`.
+    pub fn cpp_spelling(&self) -> Option<String> {
+        match self {
+            RustType::Cpp(segs) => Some(format!("::{}", segs.join("::"))),
+            _ => None,
+        }
+    }
 }
 
 impl Display for RustPathAndGenerics {
@@ -506,6 +543,7 @@ impl Display for RustType {
             }
             RustType::Slice(s) => write!(f, "[{s}]"),
             RustType::TypeVar(TypeVar(v)) => write!(f, "{v}"),
+            RustType::Cpp(segs) => write!(f, "{}", segs.join("::")),
         }
     }
 }

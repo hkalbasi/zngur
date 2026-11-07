@@ -1,0 +1,37 @@
+Error: `#cpp_stack_owned` is no longer supported: C++ types are `c++::` types, whose C++ name is their path
+   ╭─[ removed_cpp_directives.zng:3:5 ]
+   │
+ 3 │     #cpp_stack_owned "::A" (size = 8, align = 4);
+   │     ──────────────────────┬──────────────────────  
+   │                           ╰──────────────────────── no longer supported
+   │ 
+   │ Help: declare the type as `type c++::ns::T { #layout(size = X, align = Y); #trivially_relocatable; }`; Rust holds C++ types by value when they have a layout and are trivially relocatable
+───╯
+Error: `#cpp_ref` is no longer supported: C++ types are `c++::` types, whose C++ name is their path
+   ╭─[ removed_cpp_directives.zng:7:5 ]
+   │
+ 7 │     #cpp_ref "::B";
+   │     ───────┬───────  
+   │            ╰───────── no longer supported
+   │ 
+   │ Help: declare the type as `type c++::ns::T { ... }` with no layout; Rust can then only refer to it
+───╯
+Error: `#cpp_heap_allocated` is no longer supported: C++ types are `c++::` types, whose C++ name is their path
+    ╭─[ removed_cpp_directives.zng:12:5 ]
+    │
+ 12 │     #cpp_heap_allocated "::C";
+    │     ─────────────┬────────────  
+    │                  ╰────────────── no longer supported
+    │ 
+    │ Help: declare the type as `type c++::ns::T { #heap_allocated; }`
+────╯
+Error: `#cpp_value` is no longer supported: C++ types are `c++::` types, whose C++ name is their path
+    ╭─[ removed_cpp_directives.zng:17:5 ]
+    │
+ 17 │     #cpp_value "0" "::D";
+    │     ──────────┬──────────  
+    │               ╰──────────── no longer supported
+    │ 
+    │ Help: declare the type as `type c++::ns::T { #heap_allocated; }`
+────╯
+cfg values used:

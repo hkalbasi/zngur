@@ -122,6 +122,7 @@ fn check_round_trip_with_resolver(
     assert_eq!(parsed.spec.funcs, reparsed.spec.funcs);
     assert_eq!(parsed.spec.extern_cpp_funcs, reparsed.spec.extern_cpp_funcs);
     assert_eq!(parsed.spec.extern_cpp_impls, reparsed.spec.extern_cpp_impls);
+    assert_eq!(parsed.spec.crate_name, reparsed.spec.crate_name);
 
     (parsed.spec, reparsed.spec)
 }
@@ -159,33 +160,84 @@ type [u8] {
 }
 
 #[test]
-fn reparse_cpp_heap_allocated() {
+fn reparse_cpp_paths_and_modules() {
     let _ = check_round_trip(
         r#"
-type crate::Way {
-    #layout(size = 16, align = 8);
-    #cpp_heap_allocated "::osmium::Way";
+use c++::a::b::Item as MyItem;
+
+type c++::Way {
+}
+
+mod c++::a::b {
+    type Item {
+        #layout(size = 16, align = 8);
+        #trivially_relocatable;
+    }
+}
+
+extern "C++" {
+    safe fn make_item(&c++::Way) -> MyItem;
+    impl MyItem {
+        safe fn touch(&mut self, &c++::Way);
+    }
 }
     "#,
         expect![[r#"
-            type crate::Way {
+            type c++::Way {
+            }
+
+            type c++::a::b::Item {
                 #layout(size = 16, align = 8);
-                #cpp_heap_allocated "::osmium::Way";
+                #trivially_relocatable;
+            }
+
+            extern "C++" {
+
+                safe fn make_item(&c++::Way) -> c++::a::b::Item;
+
+                impl c++::a::b::Item {
+                    safe fn touch(&mut self, &c++::Way);
+                }
+
             }
         "#]],
     );
 }
+
 #[test]
-fn reparse_cpp_ref() {
+fn reparse_cpp_reference_only() {
     let _ = check_round_trip(
         r#"
-type crate::Way {
-    #cpp_ref "::osmium::Way";
+type c++::osmium::Way {
+}
+type c++::osmium::Node {
+    #layout(size = 16, align = 8);
 }
     "#,
         expect![[r#"
-            type crate::Way {
-                #cpp_ref "::osmium::Way";
+            type c++::osmium::Way {
+            }
+
+            type c++::osmium::Node {
+                #layout(size = 16, align = 8);
+            }
+        "#]],
+    );
+}
+
+#[test]
+fn reparse_cpp_trivially_relocatable() {
+    let _ = check_round_trip(
+        r#"
+type c++::osmium::Way {
+    #layout(size = 16, align = 8);
+    #trivially_relocatable;
+}
+    "#,
+        expect![[r#"
+            type c++::osmium::Way {
+                #layout(size = 16, align = 8);
+                #trivially_relocatable;
             }
         "#]],
     );
@@ -374,6 +426,24 @@ extern "C++" {
                     unsafe fn u_baz();
                 }
 
+            }
+        "#]],
+    );
+}
+
+#[test]
+fn reparse_crate_directive() {
+    let _ = check_round_trip(
+        r#"
+#crate bar_bindings
+
+type c++::ns::Bar {
+}
+    "#,
+        expect![[r#"
+            #crate bar_bindings
+
+            type c++::ns::Bar {
             }
         "#]],
     );

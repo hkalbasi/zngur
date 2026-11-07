@@ -44,10 +44,10 @@ extern "C" {
 
 {% for td in self.type_defs %}
   {% if let Some(cpp_stack_owned) = td.cpp_stack_owned %}
-    void _zngur__zngur_crate_{{ td.rust_short_name() }}_destructor_(uint8_t* i0, uint8_t* o) {
-      (void)o;
-      auto* data = reinterpret_cast< {{ cpp_stack_owned.0 }}* >(i0);
-      data->~{{ td.cpp_short_name() }}();
+    void {{ cpp_stack_owned.destructor_fn }}(uint8_t* i0) {
+      // An alias, so that qualified and templated C++ types work in the destructor call.
+      using __zngur_T = {{ cpp_stack_owned.cpp_type }};
+      reinterpret_cast< __zngur_T* >(i0)->~__zngur_T();
     }
   {% endif %}
 {% endfor %}

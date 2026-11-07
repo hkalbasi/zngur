@@ -1,3 +1,0 @@
-type crate::MergedCounter {
-    #layout(size = 8, align = 4);
-}

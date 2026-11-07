@@ -1,6 +1,0 @@
-//@ fail
-merge "./cpp_stack_owned_heap_fixture.zng";
-
-type crate::Way {
-    #cpp_stack_owned "::osmium::Way";
-}

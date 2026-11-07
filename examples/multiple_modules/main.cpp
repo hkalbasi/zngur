@@ -11,13 +11,13 @@ int main() {
   rust::std::option::Option<rust::receiver::Receiver> receiver = rust::std::option::Option<rust::receiver::Receiver>::Some(
       rust::receiver::Receiver::new_());
   auto stats =
-      rust::Impl<rust::aggregation::StatsAccumulator, rust::Inherent>::create();
+      rust::Impl<rust::cpp::cpp_stats::StatsAccumulator, rust::Inherent>::create();
 
   std::cout << "Starting LatencyAnalysis simulation..." << std::endl;
 
   processor.unwrap().run(receiver.unwrap(), stats, 5);
 
-  rust::Impl<rust::aggregation::StatsAccumulator, rust::Inherent>::print_report(
+  rust::Impl<rust::cpp::cpp_stats::StatsAccumulator, rust::Inherent>::print_report(
       stats);
 
   return 0;

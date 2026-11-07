@@ -1,0 +1,18 @@
+//@ fail
+type crate::A {
+    #cpp_stack_owned "::A" (size = 8, align = 4);
+}
+
+type crate::B {
+    #cpp_ref "::B";
+}
+
+type crate::C {
+    #layout(size = 8, align = 8);
+    #cpp_heap_allocated "::C";
+}
+
+type crate::D {
+    #layout(size = 8, align = 8);
+    #cpp_value "0" "::D";
+}
