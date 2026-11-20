@@ -21,11 +21,12 @@ r##"
 // @ts-check
 
 export default grammar({{
-    name: "tree-sitter-zngur",
+    name: "zngur",
     extras: $ => [ /\s/, $.comment ],
     reserved: {{
         keywords: ['{keywords}'],
     }},
+    word: $ => $.token,
     rules: {{
         root: $ => repeat($.item),
         item: $ => choice(
@@ -39,12 +40,20 @@ export default grammar({{
             $.import_item, // 1
             $.module_import_item, // 1
             $.alias, // 1
-            $.conditional_item // TODO
+            $.conditional_item // 1
         ),
         comment: $ => seq("//", /[^\n]*/),
         identifier:
             $ => new RustRegex('\p{{XID_Start}}\p{{XID_Continue}}*'),
         ident: $ => alias($.identifier, $.ident),
+        token: $ => choice(
+                $.identifier,
+                // indivisible symbols
+                '=>', '->', '::',
+                $.number,
+                $.plain_string, $.raw_string
+            ),
+        number: $ => /0|[1-9][0-9]+/,
 
         // ... cancel this, we're using Rust-side text templates
         {conditional_item_},
@@ -60,7 +69,7 @@ export default grammar({{
         ),
 
         import_item: $ => seq(
-            'merge', $.plain_string, ';' // TODO
+            'merge', $.plain_string, ';' // 1
         ),
 
         additional_include_item: $ => seq(
@@ -68,7 +77,7 @@ export default grammar({{
             choice(
                 seq(
                     'cpp_additional_includes',
-                    $.rawable_string // TODO
+                    $.rawable_string // 1
                 ),
                 'convert_panic_to_exception'
             )
@@ -76,25 +85,25 @@ export default grammar({{
 
         fn_item: $ => seq(
             optional(choice('safe', 'unsafe')),
-            $.function_signature, ';' // TODO
+            $.function_signature, ';' // 1
         ),
 
         extern_cpp_item: $ => {{
             const safety = choice('safe', 'unsafe');
-            const function = seq(
-                safety, $.method_signature, ';' // 1, TODO
+            const function_ = seq(
+                safety, $.method_signature, ';' // 1, 1
             );
             // impl RustTrait for RustType {{ safety method; ... }}
             const impl_block = seq(
                 'impl',
                 optional(seq(
-                    $.rust_trait, // TODO
+                    $.rust_trait, // 1
                     'for',
                 )),
-                $.rust_type, // TODO
+                $.rust_type, // 1
                 '{{',
                 repeat(seq(
-                    safety, $.method_signature, ';' // 1, TODO
+                    safety, $.method_signature, ';' // 1, 1
                 )),
                 '}}',
             );
@@ -102,15 +111,15 @@ export default grammar({{
                 'extern',
                 '"C++"',
                 '{{',
-                repeat(choice(function, impl_block)),
+                repeat(choice(function_, impl_block)),
                 '}}'
             );
         }},
 
         trait_item: $ => seq(
             'trait',
-            $.rust_trait, // TODO
-            '{{', repeat(seq($.method, ';')), '}}'
+            $.rust_trait, // 1
+            '{{', repeat(seq($.method, ';')), '}}' // TODO
         ),
 
         type_item: $ => seq(
@@ -120,8 +129,8 @@ export default grammar({{
                 $.ident, repeat(seq(',', $.ident)), optional(','),
                 '>'
             )),
-            $.rust_type, // TODO
-            '{{', repeat($.inner_type_item), '}}' // TODO
+            $.rust_type, // 1
+            '{{', repeat($.inner_type_item), '}}' // 1
         ),
 
         module: $ => seq(
@@ -147,8 +156,8 @@ export default grammar({{
 
             return seq(
                 start, // 1
-                $.ident, // TODO
-                repeat(seq('::', $.ident)) // 1, TODO
+                $.ident, // 1
+                repeat(seq('::', $.ident)) // 1, 1
             );
         }},
         // lib.rs:606
@@ -160,17 +169,361 @@ export default grammar({{
             $.ident, // 1
             ';'
         ),
-        
 
+        // lib.rs:2865
+        function_signature: $ => {{
+            const function_path = $.path; // 1
+
+            return seq(
+                optional('async'), 'fn',
+                function_path, // 1
+                optional(seq(
+                    '<',
+                    optional(seq(
+                        $.rust_type, // 1
+                        repeat(seq(',', $.rust_type)) // 1
+                    )),
+                    '>'
+                )),
+                $.fn_args // 1
+            );
+        }},
+
+        // lib.rs:2842
+        // Just like the function_signature,
+        //      but with an identifier name instead of a path
+        method_signature: $ => seq(
+            optional('async'),
+            'fn',
+            $.ident,
+            optional(seq(
+                '<',
+                optional(seq(
+                    $.rust_type, // 1
+                    repeat(seq(',', $.rust_type)) // 1
+                )),
+                '>'
+            )),
+            $.fn_args // 1
+        ),
+
+        // lib.rs:2811
+        rust_trait: $ => {{
+            const fn_trait = seq(
+                $.ident, // 1
+                $.fn_args // 1
+            );
+
+            return choice(
+                fn_trait,
+                $.rust_path_and_generics // 1
+            );
+        }},
+
+        // lib.rs:2633
+        rust_type_trait_bound: $ => seq(
+            '+', $.path
+        ),
+        rust_type: $ => {{
+            const adt = $.rust_path_and_generics; // 1
+
+            const dyn_trait = seq(
+                choice(
+                    'dyn', 'impl'
+                ),
+                $.rust_trait,
+                repeat($.rust_type_trait_bound)
+            );
+
+            const boxed = seq(
+                'Box',
+                $.rust_generics
+            );
+
+            const unit = seq('(', ')');
+            const tuple = seq(
+                '(',
+                $.rust_type,
+                repeat(seq(',', $.rust_type)),
+                optional(','),
+                ')'
+            );
+            const slice = seq('[', $.rust_type, ']');
+            const reference = seq(
+                '&', optional('mut'), $.rust_type
+            );
+            const raw_ptr = seq(
+                '*', choice('mut', 'const'), $.rust_type
+            );
+
+            return choice(
+                $.rust_scalar,
+                boxed,
+                unit,
+                tuple,
+                slice,
+                adt,
+                reference,
+                raw_ptr,
+                dyn_trait
+            );
+        }}, // rust_type
+        rust_scalar: $ => choice(
+            'bool', 'str', 'char', 'usize',
+            'u8', 'u16', 'u32', 'u64', 'u128',
+            'i8', 'i16', 'i32', 'i64', 'i128',
+            'f32', 'f64'
+        ),
+
+        // lib.rs:52
+        inner_type_property_item: $ => seq(
+            $.ident, '=', $.number
+        ),
+        inner_type_trait_item: $ => choice(
+            'Debug',
+            'Copy',
+            seq('?', 'Sized')
+        ),
+        inner_type_constructor_arg: $ => seq(
+            choice(
+                seq(
+                    '(',
+                    optional(seq(
+                        $.rust_type,
+                        repeat(seq(',', $.rust_type))
+                    )),
+                    ')'
+                ),
+                $.ident
+            ),
+            ':',
+            $.rust_type
+        ),
+        inner_type_field: $ => seq(
+            'field',
+            choice($.ident, $.number),
+            '(',
+            repeat(seq(
+                'offset', '=', choice($.number, 'auto'),
+                ',', 'type', '=', $.rust_type
+            )),
+            ')'
+        ),
+        inner_type_item: $ => {{
+            const layout = choice(
+                seq(
+                    '#', 'layout',
+                    '(',
+                    optional(seq(
+                        $.inner_type_property_item,
+                        repeat(seq(',', $.inner_type_property_item))
+                    )),
+                    ')'
+                ), seq(
+                    '#', 'layout_conservative',
+                    '(',
+                    optional(seq(
+                        $.inner_type_property_item,
+                        repeat(seq(',', $.inner_type_property_item))
+                    )),
+                    ')'
+                ),
+                seq('#', 'only_by_ref'),
+                seq('#', 'heap_allocated')
+            );
+
+            const traits = seq(
+                'wellknown_traits',
+                '(',
+                optional(seq(
+                    $.inner_type_trait_item,
+                    repeat(seq(',', $.inner_type_trait_item))
+                )),
+                ')'
+            );
+            
+            const non_exhaustive = 'non_exhaustive';
+
+            const constructor_args = optional(seq(
+                '{{',
+                optional(seq(
+                    $.inner_type_constructor_arg,
+                    repeat(seq(',', $.inner_type_constructor_arg))
+                )),
+                '}}'
+            ));
+
+            const constructor = seq(
+                'constructor',
+                constructor_args
+            );
+
+            const cpp_value = seq(
+                '#', 'cpp_value',
+                $.plain_string,
+                $.plain_string
+            );
+
+            const cpp_heap_allocated = seq(
+                '#', 'cpp_heap_allocated',
+                $.plain_string
+            );
+
+            const cpp_ref = seq(
+                '#', 'cpp_ref',
+                $.plain_string
+            );
+
+            const cpp_stack_owned = seq(
+                '#', 'cpp_stack_owned',
+                $.plain_string,
+                optional(seq(
+                    '(',
+                    optional(seq(
+                        $.inner_type_property_item,
+                        repeat(seq(',', $.inner_type_property_item))
+                    )),
+                    ')'
+                ))
+            );
+
+            const variant = seq(
+                'variant',
+                $.ident,
+                '{{',
+                repeat(seq(
+                    choice(
+                        non_exhaustive,
+                        $.inner_type_field
+                    ),
+                    ';'
+                )),
+                '}}'
+            );
+
+            const inner_item = choice(
+                layout,
+                traits,
+                non_exhaustive,
+                constructor,
+                field,
+                cpp_value,
+                cpp_heap_allocated,
+                cpp_ref,
+                cpp_stack_owned,
+                seq(
+                    $.method, // TODO
+                    optional(seq('use', $.path)),
+                    optional(seq('deref', $.rust_type)),
+                    optional(seq('as', $.ident))
+                )
+            );
+            $.inner_type_inner_item = inner_item;
+
+            const match_stmt = $.inner_type_conditional_item;
+
+            return choice(
+                match_stmt,
+                variant,
+                seq($.inner_type_inner_item, ';')
+            );
+        }}, // inner_type_item
+
+        {conditional_inner_type_item},
+
+        // lib.rs:2784
+        fn_args: $ => seq(
+            '(',
+            optional(seq(
+                $.rust_type,
+                repeat(seq(
+                    ',', $.rust_type
+                )),
+                optional(',')
+            )),
+            ')',
+            optional(seq('->', $.rust_type))
+        ),
+
+        rust_path_and_generics: $ => {{
+            const generics = $.rust_generics; // 1
+
+            return seq(
+                $.path,
+                optional(generics)
+            );
+        }},
+
+        rust_generics: $ => {{
+            const named_generic = seq(
+                $.ident,
+                '=',
+                $.rust_type
+            );
+            $.rust_generics_named_generic = named_generic;
+
+            return seq(
+                optional('::'),
+                '<',
+                optional(seq(
+                    choice(
+                        $.rust_generics_named_generic,
+                        $.rust_type
+                    ),
+                    repeat(seq(
+                        ',', choice(
+                            $.rust_generics_named_generic,
+                            $.rust_type
+                        )
+                    )),
+                    optional(',')
+                )),
+                '>'
+            );
+        }},
+
+        method: $ => seq(
+            optional(choice(
+                'safe', 'unsafe'
+            )),
+            $.method_signature
+        ),
+        
+        plain_string: $ => /"(?:[\\]"|[^"]*)"/,
+        raw_string: choice({raw_string_regexes}),
+        rawable_string: $ => choice($.plain_string, $.raw_string)
     }}
 }});
 "##,
         keywords = KEYWORDS.iter().join("', '"),
-        conditional_item_ = conditional_item().into_iter()
+        conditional_item_ = conditional_item("$.item").into_iter()
             .map(|(name, body)| {
                 format!("{name}: {body}")
             })
-            .join(", ")
+            .join(", "),
+        conditional_inner_type_item =
+            conditional_item("$.inner_type_inner_item").into_iter()
+                .map(|(name, body)| {
+                    format!("inner_type_{name}: {body}")
+                })
+                .join(", "),
+        // tree-sitter-rust uses
+        //      an external tokenizer for raw strings,
+        //      but I'll try this
+        raw_string_regexes = (
+            (1..=20usize).rev().map(|n| {
+                format!(
+                    r##"token(seq(
+                        new RustRegex('r#{{{n}}}"'),
+                        repeat(token.immediate(/./)),
+                        token.immediate(
+                            new RustRegex('/"#{{{n}}}')
+                        )
+                    ))"##,
+                    n = n
+                )
+            }).join(", ")
+        )
     )
 }
 
@@ -178,8 +531,12 @@ pub(crate) fn emit_tree_sitter(folder: &str) -> Result<(), String> {
     let content = make_grammar_js();
     let folder = Path::new(folder);
     let tree_sitter_project_path = folder.join("tree-sitter-zngur");
-    std::fs::create_dir(&tree_sitter_project_path)
-            .map_err(|err| format!("{}", err))?;
+    if let Some(err) = std::fs::create_dir(&tree_sitter_project_path).err() {
+        if err.kind() != std::io::ErrorKind::AlreadyExists {
+             return Err(format!("{}", err));
+        }
+        // else fallthrough
+    } 
     let grammar_js_path = tree_sitter_project_path.join(
             "grammar.js"
         );
@@ -329,7 +686,7 @@ pub(crate) fn emit_tree_sitter(folder: &str) -> Result<(), String> {
 //          >(guard: Parser = guard, fallback: Parser = block) -> Parser {
 //      format!(r#"seq(
 //          '#','if', {guard},
-//          repeated(seq('#','else','if', {guard})),
+//          repeat(seq('#','else','if', {guard})),
 //          optional(seq(
 //              '#','else',
 //              '{{', {fallback}, '}}'
@@ -356,7 +713,7 @@ pub(crate) fn emit_tree_sitter(folder: &str) -> Result<(), String> {
 //                  );
 //          format!(r#"seq(
 //              '#', 'if', {guard},
-//              repeated(seq('#', 'else', 'if', {guard})),
+//              repeat(seq('#', 'else', 'if', {guard})),
 //              optional(seq('#', 'else', '{{', {block}, '}}')),
 //          )"#, guard = &guard, block = &block)
 //      };
@@ -389,7 +746,7 @@ pub(crate) fn emit_tree_sitter(folder: &str) -> Result<(), String> {
 //  >(block: Parser = block, item_parser: Parser = item) -> Parser
 //          where <CfgConditional as Matchable>::Pattern =
 //                  <CfgPattern as MatchPatternParse> {
-//      let arm_choices = format!(r#"choices(
+//      let arm_choices = format!(r#"choice(
 //              seq('{{', {block}, '}}'), // block
 //              {item_parser}, // single
 //              seq('(', ')') // empty block
@@ -410,7 +767,7 @@ pub(crate) fn emit_tree_sitter(folder: &str) -> Result<(), String> {
 //  >(block: Parser, item_parser: Parser = item) -> Parser
 //          where <CfgConditional as Matchable>::Pattern =
 //                  <CfgPattern as MatchPatternParse> {
-//      let arm_choices = format!(r#"choices(
+//      let arm_choices = format!(r#"choice(
 //              seq('{{', {block}, '}}'), // block
 //              {item_parser}, // single
 //              seq('(', ')') // empty block
@@ -450,12 +807,12 @@ pub(crate) fn emit_tree_sitter(folder: &str) -> Result<(), String> {
 //                  );
 //          format!(r#"seq(
 //              '#', 'if', {guard},
-//              repeated(seq('#', 'else', 'if', {guard})),
+//              repeat(seq('#', 'else', 'if', {guard})),
 //              optional(seq('#', 'else', '{{', {block}, '}}')),
 //          )"#, guard = &guard, block = &block)
 //      };
 //      let match_parser = {
-//          let arm_choices = format!(r#"choices(
+//          let arm_choices = format!(r#"choice(
 //                  seq('{{', {block}, '}}'), // block
 //                  {item_parser}, // single
 //                  seq('(', ')') // empty block
@@ -483,7 +840,7 @@ pub(crate) fn emit_tree_sitter(folder: &str) -> Result<(), String> {
 //
 // <CfgPattern as MatchPatternParse>::parser @ cfg.rs:201 :
 fn cfg_pattern_parser(parser_map: &mut Parsers) {
-     parser_map.insert("match_pattern_parser_single", format!(r#"
+     parser_map.insert("cfg_match_pattern_parser_single", format!(r#"
          $ => {{
              let atom = choice( // atom ... .or()
                  choice( // atom.choice(...)
@@ -493,7 +850,7 @@ fn cfg_pattern_parser(parser_map: &mut Parsers) {
                      'None'
                  ),
                  // these're hard because of the fold
-                 seq('(', $.match_pattern_parser_single, ')')
+                 seq('(', $.cfg_match_pattern_parser_single, ')')
              );
              // this's imitating precedence as rules,
              //      if we want to use tree-sitter's precedence later
@@ -506,19 +863,19 @@ fn cfg_pattern_parser(parser_map: &mut Parsers) {
                  and_pat,
                  repeat(seq('|', and_pat))
              );
-             or_pat
+             return or_pat;
          }}
      "#));
 
-     parser_map.insert("match_pattern_parser", format!(r#"
+     parser_map.insert("cfg_match_pattern_parser", format!(r#"
          $ => choice(
              seq(
                  '(',
-                 $.match_pattern_parser_single,
-                 repeat(seq(',', $.match_pattern_parser_single)),
+                 $.cfg_match_pattern_parser_single,
+                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
                  ')'
              ),
-             $.match_pattern_parser_single
+             $.cfg_match_pattern_parser_single
          )
      "#));
 }
@@ -540,7 +897,7 @@ fn cfg_conditional_parser(parser_map: &mut Parsers) {
         seq(
             '(',
             {directive},
-            repeat(',', {directive}), optional(','),
+            repeat(seq(',', {directive})), optional(','),
             ')'
         )
     )"#, directive = "$.cfg_conditional_parser_directive");
@@ -549,11 +906,11 @@ fn cfg_conditional_parser(parser_map: &mut Parsers) {
          cfg_conditional_parser
     );
 }
-fn conditional_item() -> Parsers {
+fn conditional_item(item: &str) -> Parsers {
     let mut parser_map = HashMap::<&'static str, String>::new();
 
     //let item = "$.item";
-    let block = "repeat($.item)";
+    let block = format!("repeat({item})");
 
     let if_parser = {
         let cfg_scrutinee_parser = r#"$ => seq(
@@ -573,14 +930,14 @@ fn conditional_item() -> Parsers {
                     $.cfg_scrutinee,
                     optional(seq('=', $.cfg_scrutinee)),
                     ')'
-                "#
+                )"#
             );
         parser_map.insert("conditional_if_parser_guard", guard);
 
         format!(
             r#"$ => seq(
                 '#', 'if', {guard},
-                repeated(seq('#', 'else', 'if', {guard})),
+                repeat(seq('#', 'else', 'if', {guard})),
                 optional(seq('#', 'else', '{{', {block}, '}}')),
             )"#,
             guard = "$.conditional_if_parser_guard",
@@ -591,9 +948,9 @@ fn conditional_item() -> Parsers {
 
     let match_parser = {
         let arm_choices = format!(
-            r#"choices(
+            r#"choice(
                 seq('{{', {block}, '}}'), // block
-                $.item, // single
+                {item}, // single
                 seq('(', ')') // empty block
             )"#, block=&block
         );
@@ -601,7 +958,7 @@ fn conditional_item() -> Parsers {
         cfg_pattern_parser(&mut parser_map);
         let arm = format!(
             r#"seq(
-                $.cfg_pattern_parser,
+                $.cfg_match_pattern_parser,
                 '=>', {arm_choices}
             )"#
         );
@@ -621,7 +978,7 @@ fn conditional_item() -> Parsers {
 
     parser_map.insert(
         "conditional_item",
-        "$ => choice($.conditional_if, $.match_parser)".into()
+        "$ => choice($.conditional_if, $.conditional_match)".into()
     );
 
     parser_map
