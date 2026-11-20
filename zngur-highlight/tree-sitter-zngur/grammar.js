@@ -12,9 +12,9 @@ export default grammar({
     name: "zngur",
     extras: $ => [ /\s/, $.comment ],
     reserved: {
-        keywords: ['as', 'async', 'dyn', 'mod', 'type', 'trait', 'crate', 'fn', 'mut', 'const', 'use', 'for', 'extern', 'impl', 'import', 'merge', 'if', 'else', 'match', 'safe', 'unsafe'],
+        keywords: $ => ['as', 'async', 'dyn', 'mod', 'type', 'trait', 'crate', 'fn', 'mut', 'const', 'use', 'for', 'extern', 'impl', 'import', 'merge', 'if', 'else', 'match', 'safe', 'unsafe'],
     },
-    word: $ => $.token,
+    word: $ => $.token_,
     rules: {
         root: $ => repeat($.item),
         item: $ => choice(
@@ -34,7 +34,7 @@ export default grammar({
         identifier:
             $ => new RustRegex('\p{XID_Start}\p{XID_Continue}*'),
         ident: $ => alias($.identifier, $.ident),
-        token: $ => choice(
+        token_: $ => choice(
                 $.identifier,
                 // indivisible symbols
                 '=>', '->', '::',
@@ -44,20 +44,7 @@ export default grammar({
         number: $ => /0|[1-9][0-9]+/,
 
         // ... cancel this, we're using Rust-side text templates
-        cfg_conditional_parser: $ => choice(
-        $.cfg_conditional_parser_directive,
-        seq(
-            '(',
-            $.cfg_conditional_parser_directive,
-            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
-            ')'
-        )
-    ), cfg_scrutinee: $ => seq(
-            choice($.ident, $.plain_string),
-            optional(seq(
-                '.', choice($.ident, $.plain_string)
-            ))
-        ), cfg_match_pattern_parser: 
+        cfg_match_pattern_parser: 
          $ => choice(
              seq(
                  '(',
@@ -67,16 +54,14 @@ export default grammar({
              ),
              $.cfg_match_pattern_parser_single
          )
-     , conditional_if: $ => seq(
-                '#', 'if', $.conditional_if_parser_guard,
-                repeat(seq('#', 'else', 'if', $.conditional_if_parser_guard)),
-                optional(seq('#', 'else', '{', repeat($.item), '}')),
-            ), conditional_if_parser_guard: $ => seq(
+     , conditional_if_parser_guard: $ => seq(
                     'cfg','!','(',
                     $.cfg_scrutinee,
                     optional(seq('=', $.cfg_scrutinee)),
                     ')'
-                ), cfg_match_pattern_parser_single: 
+                ), cfg_conditional_parser_directive: $ => seq(
+            'cfg', '!', '(', $.cfg_scrutinee, ')'
+        ), cfg_match_pattern_parser_single: 
          $ => {
              let atom = choice( // atom ... .or()
                  choice( // atom.choice(...)
@@ -101,7 +86,12 @@ export default grammar({
              );
              return or_pat;
          }
-     , conditional_match: 
+     , cfg_scrutinee: $ => seq(
+            choice($.ident, $.plain_string),
+            optional(seq(
+                '.', choice($.ident, $.plain_string)
+            ))
+        ), conditional_match: 
                 $ => seq(
                     '#','match',
                     $.cfg_conditional_parser,
@@ -114,9 +104,19 @@ export default grammar({
             )
             ), optional(','))), '}'
                 )
-            , cfg_conditional_parser_directive: $ => seq(
-            'cfg', '!', '(', $.cfg_scrutinee, ')'
-        ), conditional_item: $ => choice($.conditional_if, $.conditional_match),
+            , cfg_conditional_parser: $ => choice(
+        $.cfg_conditional_parser_directive,
+        seq(
+            '(',
+            $.cfg_conditional_parser_directive,
+            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
+            ')'
+        )
+    ), conditional_if: $ => seq(
+                '#', 'if', $.conditional_if_parser_guard,
+                repeat(seq('#', 'else', 'if', $.conditional_if_parser_guard)),
+                optional(seq('#', 'else', '{', repeat($.item), '}')),
+            ), conditional_item: $ => choice($.conditional_if, $.conditional_match),
 
         unstable_feature: $ => seq(
             '#', 'unstable',
@@ -369,7 +369,7 @@ export default grammar({
             )),
             ')'
         ),
-        inner_type_item: $ => {
+        inner_type_inner_item: $ => {
             const layout = choice(
                 seq(
                     '#', 'layout',
@@ -447,26 +447,12 @@ export default grammar({
                 ))
             );
 
-            const variant = seq(
-                'variant',
-                $.ident,
-                '{',
-                repeat(seq(
-                    choice(
-                        non_exhaustive,
-                        $.inner_type_field
-                    ),
-                    ';'
-                )),
-                '}'
-            );
-
             const inner_item = choice(
                 layout,
                 traits,
                 non_exhaustive,
                 constructor,
-                field,
+                $.inner_type_field,
                 cpp_value,
                 cpp_heap_allocated,
                 cpp_ref,
@@ -478,9 +464,25 @@ export default grammar({
                     optional(seq('as', $.ident))
                 )
             );
-            $.inner_type_inner_item = inner_item;
+            return inner_item;
+        },
 
+        inner_type_item: $ => {
             const match_stmt = $.inner_type_conditional_item;
+
+            const variant = seq(
+                'variant',
+                $.ident,
+                '{',
+                repeat(seq(
+                    choice(
+                        'non_exhaustive',
+                        $.inner_type_field
+                    ),
+                    ';'
+                )),
+                '}'
+            );
 
             return choice(
                 match_stmt,
@@ -489,32 +491,25 @@ export default grammar({
             );
         }, // inner_type_item
 
-        inner_type_cfg_match_pattern_parser: 
-         $ => choice(
-             seq(
-                 '(',
-                 $.cfg_match_pattern_parser_single,
-                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
-                 ')'
-             ),
-             $.cfg_match_pattern_parser_single
-         )
-     , inner_type_cfg_conditional_parser: $ => choice(
-        $.cfg_conditional_parser_directive,
-        seq(
-            '(',
-            $.cfg_conditional_parser_directive,
-            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
-            ')'
-        )
-    ), inner_type_cfg_conditional_parser_directive: $ => seq(
-            'cfg', '!', '(', $.cfg_scrutinee, ')'
-        ), inner_type_conditional_item: $ => choice($.conditional_if, $.conditional_match), inner_type_conditional_if_parser_guard: $ => seq(
+        inner_type_conditional_if_parser_guard: $ => seq(
                     'cfg','!','(',
                     $.cfg_scrutinee,
                     optional(seq('=', $.cfg_scrutinee)),
                     ')'
-                ), inner_type_cfg_match_pattern_parser_single: 
+                ), inner_type_conditional_match: 
+                $ => seq(
+                    '#','match',
+                    $.cfg_conditional_parser,
+                    '{', repeat(seq(seq(
+                $.cfg_match_pattern_parser,
+                '=>', choice(
+                seq('{', repeat($.inner_type_inner_item), '}'), // block
+                $.inner_type_inner_item, // single
+                seq('(', ')') // empty block
+            )
+            ), optional(','))), '}'
+                )
+            , inner_type_cfg_match_pattern_parser_single: 
          $ => {
              let atom = choice( // atom ... .or()
                  choice( // atom.choice(...)
@@ -544,24 +539,31 @@ export default grammar({
             optional(seq(
                 '.', choice($.ident, $.plain_string)
             ))
-        ), inner_type_conditional_match: 
-                $ => seq(
-                    '#','match',
-                    $.cfg_conditional_parser,
-                    '{', repeat(seq(seq(
-                $.cfg_match_pattern_parser,
-                '=>', choice(
-                seq('{', repeat($.inner_type_inner_item), '}'), // block
-                $.inner_type_inner_item, // single
-                seq('(', ')') // empty block
-            )
-            ), optional(','))), '}'
-                )
-            , inner_type_conditional_if: $ => seq(
+        ), inner_type_conditional_if: $ => seq(
                 '#', 'if', $.conditional_if_parser_guard,
                 repeat(seq('#', 'else', 'if', $.conditional_if_parser_guard)),
                 optional(seq('#', 'else', '{', repeat($.inner_type_inner_item), '}')),
-            ),
+            ), inner_type_cfg_match_pattern_parser: 
+         $ => choice(
+             seq(
+                 '(',
+                 $.cfg_match_pattern_parser_single,
+                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
+                 ')'
+             ),
+             $.cfg_match_pattern_parser_single
+         )
+     , inner_type_cfg_conditional_parser_directive: $ => seq(
+            'cfg', '!', '(', $.cfg_scrutinee, ')'
+        ), inner_type_cfg_conditional_parser: $ => choice(
+        $.cfg_conditional_parser_directive,
+        seq(
+            '(',
+            $.cfg_conditional_parser_directive,
+            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
+            ')'
+        )
+    ), inner_type_conditional_item: $ => choice($.conditional_if, $.conditional_match),
 
         // lib.rs:2784
         fn_args: $ => seq(
@@ -586,14 +588,15 @@ export default grammar({
             );
         },
 
-        rust_generics: $ => {
+        rust_generics_named_generic: $ => {
             const named_generic = seq(
                 $.ident,
                 '=',
                 $.rust_type
             );
-            $.rust_generics_named_generic = named_generic;
-
+            return named_generic;
+        },
+        rust_generics: $ => {
             return seq(
                 optional('::'),
                 '<',
@@ -621,122 +624,122 @@ export default grammar({
             $.method_signature
         ),
         
-        plain_string: $ => /"(?:[\\]"|[^"]*)"/,
-        raw_string: choice(token(seq(
+        plain_string: $ => /"(?:[\\]"|[^"])*"/,
+        raw_string: $ => token(choice(seq(
                         new RustRegex('r#{20}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{20}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{19}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{19}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{18}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{18}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{17}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{17}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{16}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{16}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{15}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{15}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{14}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{14}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{13}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{13}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{12}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{12}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{11}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{11}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{10}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{10}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{9}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{9}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{8}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{8}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{7}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{7}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{6}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{6}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{5}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{5}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{4}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{4}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{3}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{3}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{2}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{2}')
                         )
-                    )), token(seq(
+                    ), seq(
                         new RustRegex('r#{1}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(

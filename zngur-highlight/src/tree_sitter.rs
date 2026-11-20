@@ -24,9 +24,9 @@ export default grammar({{
     name: "zngur",
     extras: $ => [ /\s/, $.comment ],
     reserved: {{
-        keywords: ['{keywords}'],
+        keywords: $ => ['{keywords}'],
     }},
-    word: $ => $.token,
+    word: $ => $.token_,
     rules: {{
         root: $ => repeat($.item),
         item: $ => choice(
@@ -46,7 +46,7 @@ export default grammar({{
         identifier:
             $ => new RustRegex('\p{{XID_Start}}\p{{XID_Continue}}*'),
         ident: $ => alias($.identifier, $.ident),
-        token: $ => choice(
+        token_: $ => choice(
                 $.identifier,
                 // indivisible symbols
                 '=>', '->', '::',
@@ -309,7 +309,7 @@ export default grammar({{
             )),
             ')'
         ),
-        inner_type_item: $ => {{
+        inner_type_inner_item: $ => {{
             const layout = choice(
                 seq(
                     '#', 'layout',
@@ -387,26 +387,12 @@ export default grammar({{
                 ))
             );
 
-            const variant = seq(
-                'variant',
-                $.ident,
-                '{{',
-                repeat(seq(
-                    choice(
-                        non_exhaustive,
-                        $.inner_type_field
-                    ),
-                    ';'
-                )),
-                '}}'
-            );
-
             const inner_item = choice(
                 layout,
                 traits,
                 non_exhaustive,
                 constructor,
-                field,
+                $.inner_type_field,
                 cpp_value,
                 cpp_heap_allocated,
                 cpp_ref,
@@ -418,9 +404,25 @@ export default grammar({{
                     optional(seq('as', $.ident))
                 )
             );
-            $.inner_type_inner_item = inner_item;
+            return inner_item;
+        }},
 
+        inner_type_item: $ => {{
             const match_stmt = $.inner_type_conditional_item;
+
+            const variant = seq(
+                'variant',
+                $.ident,
+                '{{',
+                repeat(seq(
+                    choice(
+                        'non_exhaustive',
+                        $.inner_type_field
+                    ),
+                    ';'
+                )),
+                '}}'
+            );
 
             return choice(
                 match_stmt,
@@ -454,14 +456,15 @@ export default grammar({{
             );
         }},
 
-        rust_generics: $ => {{
+        rust_generics_named_generic: $ => {{
             const named_generic = seq(
                 $.ident,
                 '=',
                 $.rust_type
             );
-            $.rust_generics_named_generic = named_generic;
-
+            return named_generic;
+        }},
+        rust_generics: $ => {{
             return seq(
                 optional('::'),
                 '<',
@@ -489,8 +492,8 @@ export default grammar({{
             $.method_signature
         ),
         
-        plain_string: $ => /"(?:[\\]"|[^"]*)"/,
-        raw_string: choice({raw_string_regexes}),
+        plain_string: $ => /"(?:[\\]"|[^"])*"/,
+        raw_string: $ => token(choice({raw_string_regexes})),
         rawable_string: $ => choice($.plain_string, $.raw_string)
     }}
 }});
@@ -513,13 +516,13 @@ export default grammar({{
         raw_string_regexes = (
             (1..=20usize).rev().map(|n| {
                 format!(
-                    r##"token(seq(
+                    r##"seq(
                         new RustRegex('r#{{{n}}}"'),
                         repeat(token.immediate(/./)),
                         token.immediate(
                             new RustRegex('/"#{{{n}}}')
                         )
-                    ))"##,
+                    )"##,
                     n = n
                 )
             }).join(", ")
