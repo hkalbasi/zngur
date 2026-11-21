@@ -324,6 +324,127 @@
     }
   },
   {
+    "type": "inner_type_cfg_conditional_parser",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "inner_type_cfg_conditional_parser_directive",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "inner_type_cfg_conditional_parser_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "inner_type_cfg_scrutinee",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "inner_type_cfg_match_pattern_parser",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "inner_type_cfg_match_pattern_parser_single",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "inner_type_cfg_match_pattern_parser_single",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "inner_type_cfg_match_pattern_parser_single",
+          "named": true
+        },
+        {
+          "type": "number",
+          "named": true
+        },
+        {
+          "type": "plain_string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "inner_type_cfg_scrutinee",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "ident",
+          "named": true
+        },
+        {
+          "type": "plain_string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "inner_type_conditional_if",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "inner_type_conditional_if_parser_guard",
+          "named": true
+        },
+        {
+          "type": "inner_type_inner_item",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "inner_type_conditional_if_parser_guard",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "inner_type_cfg_scrutinee",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "inner_type_conditional_item",
     "named": true,
     "fields": {},
@@ -332,11 +453,34 @@
       "required": true,
       "types": [
         {
-          "type": "conditional_if",
+          "type": "inner_type_conditional_if",
           "named": true
         },
         {
-          "type": "conditional_match",
+          "type": "inner_type_conditional_match",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "inner_type_conditional_match",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "inner_type_cfg_conditional_parser",
+          "named": true
+        },
+        {
+          "type": "inner_type_cfg_match_pattern_parser",
+          "named": true
+        },
+        {
+          "type": "inner_type_inner_item",
           "named": true
         }
       ]

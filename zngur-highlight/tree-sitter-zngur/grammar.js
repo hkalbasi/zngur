@@ -40,11 +40,25 @@ export default grammar({
             $ => new RustRegex('[#]?\\p{XID_Start}\\p{XID_Continue}*'),
 
         // ... cancel this, we're using Rust-side text templates
-        conditional_if: $ => seq(
-                '#if', $.conditional_if_parser_guard,
-                repeat(seq('#else', 'if', $.conditional_if_parser_guard)),
-                optional(seq('#else', '{', repeat($.item), '}'))
-            ), conditional_match: 
+        cfg_scrutinee: $ => seq(
+            choice($.ident, $.plain_string),
+            optional(seq(
+                '.', choice($.ident, $.plain_string)
+            ))
+        ), cfg_match_pattern_parser: 
+         $ => prec(2, choice(
+             seq(
+                 '(',
+                 $.cfg_match_pattern_parser_single,
+                 repeat(seq(
+                     ',',
+                     $.cfg_match_pattern_parser_single
+                 )),
+                 ')'
+             ),
+             $.cfg_match_pattern_parser_single
+         ))
+     , conditional_match: 
                 $ => seq(
                     '#match',
                     $.cfg_conditional_parser,
@@ -57,12 +71,20 @@ export default grammar({
             )
             ), optional(','))), '}'
                 )
-            , conditional_if_parser_guard: $ => seq(
-                    'cfg','!','(',
-                    $.cfg_scrutinee,
-                    optional(seq('=', $.cfg_scrutinee)),
-                    ')'
-                ), cfg_match_pattern_parser_single: 
+            , cfg_conditional_parser: $ => choice(
+            $.cfg_conditional_parser_directive,
+            seq(
+                '(',
+                $.cfg_conditional_parser_directive,
+                repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
+                ')'
+            )
+        ), conditional_item: $ => choice(
+            $.conditional_if,
+            $.conditional_match
+        ), cfg_conditional_parser_directive: $ => seq(
+            'cfg', '!', '(', $.cfg_scrutinee, ')'
+        ), cfg_match_pattern_parser_single: 
          $ => {
              let atom = choice( // atom ... .or()
                  choice( // atom.choice(...)
@@ -72,7 +94,11 @@ export default grammar({
                      'None'
                  ),
                  // these're hard because of the fold
-                 seq('(', $.cfg_match_pattern_parser_single, ')')
+                 seq(
+                    '(',
+                    $.cfg_match_pattern_parser_single,
+                    ')'
+                )
              );
              // this's imitating precedence as rules,
              //      if we want to use tree-sitter's precedence later
@@ -87,32 +113,16 @@ export default grammar({
              );
              return or_pat;
          }
-     , conditional_item: $ => choice($.conditional_if, $.conditional_match), cfg_conditional_parser_directive: $ => seq(
-            'cfg', '!', '(', $.cfg_scrutinee, ')'
-        ), cfg_scrutinee: $ => seq(
-            choice($.ident, $.plain_string),
-            optional(seq(
-                '.', choice($.ident, $.plain_string)
-            ))
-        ), cfg_conditional_parser: $ => choice(
-        $.cfg_conditional_parser_directive,
-        seq(
-            '(',
-            $.cfg_conditional_parser_directive,
-            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
-            ')'
-        )
-    ), cfg_match_pattern_parser: 
-         $ => prec(2, choice(
-             seq(
-                 '(',
-                 $.cfg_match_pattern_parser_single,
-                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
-                 ')'
-             ),
-             $.cfg_match_pattern_parser_single
-         ))
-     ,
+     , conditional_if: $ => seq(
+                '#if', $.conditional_if_parser_guard,
+                repeat(seq('#else', 'if', $.conditional_if_parser_guard)),
+                optional(seq('#else', '{', repeat($.item), '}'))
+            ), conditional_if_parser_guard: $ => seq(
+                    'cfg','!','(',
+                    $.cfg_scrutinee,
+                    optional(seq('=', $.cfg_scrutinee)),
+                    ')'
+                ),
 
         unstable_feature: $ => seq(
             '#unstable',
@@ -459,7 +469,7 @@ export default grammar({
                     optional(seq('as', $.ident))
                 )
             );
-            return inner_item;
+            return prec.left(inner_item);
         },
 
         inner_type_item: $ => {
@@ -486,28 +496,22 @@ export default grammar({
             );
         }, // inner_type_item
 
-        inner_type_conditional_if_parser_guard: $ => seq(
-                    'cfg','!','(',
-                    $.cfg_scrutinee,
-                    optional(seq('=', $.cfg_scrutinee)),
-                    ')'
-                ), inner_type_cfg_conditional_parser_directive: $ => seq(
-            'cfg', '!', '(', $.cfg_scrutinee, ')'
-        ), inner_type_cfg_scrutinee: $ => seq(
+        inner_type_cfg_scrutinee: $ => seq(
             choice($.ident, $.plain_string),
             optional(seq(
                 '.', choice($.ident, $.plain_string)
             ))
-        ), inner_type_conditional_if: $ => seq(
-                '#if', $.conditional_if_parser_guard,
-                repeat(seq('#else', 'if', $.conditional_if_parser_guard)),
-                optional(seq('#else', '{', repeat($.inner_type_inner_item), '}'))
-            ), inner_type_conditional_match: 
+        ), inner_type_conditional_if_parser_guard: $ => seq(
+                    'cfg','!','(',
+                    $.inner_type_cfg_scrutinee,
+                    optional(seq('=', $.inner_type_cfg_scrutinee)),
+                    ')'
+                ), inner_type_conditional_match: 
                 $ => seq(
                     '#match',
-                    $.cfg_conditional_parser,
+                    $.inner_type_cfg_conditional_parser,
                     '{', repeat(seq(seq(
-                $.cfg_match_pattern_parser,
+                $.inner_type_cfg_match_pattern_parser,
                 '=>', choice(
                 seq('{', repeat($.inner_type_inner_item), '}'), // block
                 $.inner_type_inner_item, // single
@@ -515,15 +519,7 @@ export default grammar({
             )
             ), optional(','))), '}'
                 )
-            , inner_type_conditional_item: $ => choice($.conditional_if, $.conditional_match), inner_type_cfg_conditional_parser: $ => choice(
-        $.cfg_conditional_parser_directive,
-        seq(
-            '(',
-            $.cfg_conditional_parser_directive,
-            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
-            ')'
-        )
-    ), inner_type_cfg_match_pattern_parser_single: 
+            , inner_type_cfg_match_pattern_parser_single: 
          $ => {
              let atom = choice( // atom ... .or()
                  choice( // atom.choice(...)
@@ -533,7 +529,11 @@ export default grammar({
                      'None'
                  ),
                  // these're hard because of the fold
-                 seq('(', $.cfg_match_pattern_parser_single, ')')
+                 seq(
+                    '(',
+                    $.inner_type_cfg_match_pattern_parser_single,
+                    ')'
+                )
              );
              // this's imitating precedence as rules,
              //      if we want to use tree-sitter's precedence later
@@ -548,15 +548,35 @@ export default grammar({
              );
              return or_pat;
          }
-     , inner_type_cfg_match_pattern_parser: 
+     , inner_type_cfg_conditional_parser: $ => choice(
+            $.inner_type_cfg_conditional_parser_directive,
+            seq(
+                '(',
+                $.inner_type_cfg_conditional_parser_directive,
+                repeat(seq(',', $.inner_type_cfg_conditional_parser_directive)), optional(','),
+                ')'
+            )
+        ), inner_type_conditional_item: $ => choice(
+            $.inner_type_conditional_if,
+            $.inner_type_conditional_match
+        ), inner_type_cfg_conditional_parser_directive: $ => seq(
+            'cfg', '!', '(', $.inner_type_cfg_scrutinee, ')'
+        ), inner_type_conditional_if: $ => seq(
+                '#if', $.inner_type_conditional_if_parser_guard,
+                repeat(seq('#else', 'if', $.inner_type_conditional_if_parser_guard)),
+                optional(seq('#else', '{', repeat($.inner_type_inner_item), '}'))
+            ), inner_type_cfg_match_pattern_parser: 
          $ => prec(2, choice(
              seq(
                  '(',
-                 $.cfg_match_pattern_parser_single,
-                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
+                 $.inner_type_cfg_match_pattern_parser_single,
+                 repeat(seq(
+                     ',',
+                     $.inner_type_cfg_match_pattern_parser_single
+                 )),
                  ')'
              ),
-             $.cfg_match_pattern_parser_single
+             $.inner_type_cfg_match_pattern_parser_single
          ))
      ,
 

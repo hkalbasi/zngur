@@ -399,7 +399,7 @@ export default grammar({{
                     optional(seq('as', $.ident))
                 )
             );
-            return inner_item;
+            return prec.left(inner_item);
         }},
 
         inner_type_item: $ => {{
@@ -495,13 +495,17 @@ export default grammar({{
 "##,
         keywords = KEYWORDS.iter()
             .filter(|&x| *x != "else" && *x != "match").join("', '"),
-        conditional_item_ = conditional_item("$.item").into_iter()
+        conditional_item_ =
+            conditional_item("$.item", "").into_iter()
             .map(|(name, body)| {
                 format!("{name}: {body}")
             })
             .join(", "),
         conditional_inner_type_item =
-            conditional_item("$.inner_type_inner_item").into_iter()
+            conditional_item(
+                    "$.inner_type_inner_item",
+                    "inner_type_"
+                ).into_iter()
                 .map(|(name, body)| {
                     format!("inner_type_{name}: {body}")
                 })
@@ -838,7 +842,7 @@ pub(crate) fn emit_tree_sitter(folder: &str) -> Result<(), String> {
 // }
 //
 // <CfgPattern as MatchPatternParse>::parser @ cfg.rs:201 :
-fn cfg_pattern_parser(parser_map: &mut Parsers) {
+fn cfg_pattern_parser(prefix: &str, parser_map: &mut Parsers) {
      parser_map.insert("cfg_match_pattern_parser_single", format!(r#"
          $ => {{
              let atom = choice( // atom ... .or()
@@ -849,7 +853,11 @@ fn cfg_pattern_parser(parser_map: &mut Parsers) {
                      'None'
                  ),
                  // these're hard because of the fold
-                 seq('(', $.cfg_match_pattern_parser_single, ')')
+                 seq(
+                    '(',
+                    $.{prefix}cfg_match_pattern_parser_single,
+                    ')'
+                )
              );
              // this's imitating precedence as rules,
              //      if we want to use tree-sitter's precedence later
@@ -870,20 +878,23 @@ fn cfg_pattern_parser(parser_map: &mut Parsers) {
          $ => prec(2, choice(
              seq(
                  '(',
-                 $.cfg_match_pattern_parser_single,
-                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
+                 $.{prefix}cfg_match_pattern_parser_single,
+                 repeat(seq(
+                     ',',
+                     $.{prefix}cfg_match_pattern_parser_single
+                 )),
                  ')'
              ),
-             $.cfg_match_pattern_parser_single
+             $.{prefix}cfg_match_pattern_parser_single
          ))
      "#));
 }
 //
 // <CfgConditional as MatchableParse>::parser @ cfg.rs:331 :
-fn cfg_conditional_parser(parser_map: &mut Parsers) {
+fn cfg_conditional_parser(prefix: &str, parser_map: &mut Parsers) {
     let directive = format!(
         r#"$ => seq(
-            'cfg', '!', '(', $.cfg_scrutinee, ')'
+            'cfg', '!', '(', $.{prefix}cfg_scrutinee, ')'
         )"#
     );
     parser_map.insert(
@@ -891,21 +902,24 @@ fn cfg_conditional_parser(parser_map: &mut Parsers) {
         directive
     );
 
-    let cfg_conditional_parser = format!(r#"$ => choice(
-        {directive},
-        seq(
-            '(',
+    let cfg_conditional_parser = format!(
+        r#"$ => choice(
             {directive},
-            repeat(seq(',', {directive})), optional(','),
-            ')'
-        )
-    )"#, directive = "$.cfg_conditional_parser_directive");
+            seq(
+                '(',
+                {directive},
+                repeat(seq(',', {directive})), optional(','),
+                ')'
+            )
+        )"#, directive =
+            format!("$.{prefix}cfg_conditional_parser_directive")
+    );
     parser_map.insert(
         "cfg_conditional_parser",
          cfg_conditional_parser
     );
 }
-fn conditional_item(item: &str) -> Parsers {
+fn conditional_item(item: &str, prefix: &str) -> Parsers {
     let mut parser_map = HashMap::<&'static str, String>::new();
 
     //let item = "$.item";
@@ -926,8 +940,8 @@ fn conditional_item(item: &str) -> Parsers {
         let guard = format!(
                 r#"$ => seq(
                     'cfg','!','(',
-                    $.cfg_scrutinee,
-                    optional(seq('=', $.cfg_scrutinee)),
+                    $.{prefix}cfg_scrutinee,
+                    optional(seq('=', $.{prefix}cfg_scrutinee)),
                     ')'
                 )"#
             );
@@ -939,7 +953,7 @@ fn conditional_item(item: &str) -> Parsers {
                 repeat(seq('#else', 'if', {guard})),
                 optional(seq('#else', '{{', {block}, '}}'))
             )"#,
-            guard = "$.conditional_if_parser_guard",
+            guard = format!("$.{prefix}conditional_if_parser_guard"),
             block = &block
         )
     };
@@ -954,20 +968,20 @@ fn conditional_item(item: &str) -> Parsers {
             )"#, block=&block
         );
 
-        cfg_pattern_parser(&mut parser_map);
+        cfg_pattern_parser(prefix, &mut parser_map);
         let arm = format!(
             r#"seq(
-                $.cfg_match_pattern_parser,
+                $.{prefix}cfg_match_pattern_parser,
                 '=>', {arm_choices}
             )"#
         );
 
-        cfg_conditional_parser(&mut parser_map);
+        cfg_conditional_parser(prefix, &mut parser_map);
         format!(
             r#"
                 $ => seq(
                     '#match',
-                    $.cfg_conditional_parser,
+                    $.{prefix}cfg_conditional_parser,
                     '{{', repeat(seq({arm}, optional(','))), '}}'
                 )
             "#
@@ -977,7 +991,10 @@ fn conditional_item(item: &str) -> Parsers {
 
     parser_map.insert(
         "conditional_item",
-        "$ => choice($.conditional_if, $.conditional_match)".into()
+        format!(r#"$ => choice(
+            $.{prefix}conditional_if,
+            $.{prefix}conditional_match
+        )"#)
     );
 
     parser_map
