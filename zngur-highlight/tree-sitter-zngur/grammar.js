@@ -14,7 +14,8 @@ export default grammar({
     reserved: {
         keywords: $ => ['as', 'async', 'dyn', 'mod', 'type', 'trait', 'crate', 'fn', 'mut', 'const', 'use', 'for', 'extern', 'impl', 'import', 'merge', 'if', 'else', 'match', 'safe', 'unsafe'],
     },
-    word: $ => $.token_,
+    word: $ => $.identifier,
+    //externals: $ => [$.raw_string],
     rules: {
         root: $ => repeat($.item),
         item: $ => choice(
@@ -32,34 +33,12 @@ export default grammar({
         ),
         comment: $ => seq("//", /[^\n]*/),
         identifier:
-            $ => new RustRegex('\p{XID_Start}\p{XID_Continue}*'),
+            $ => new RustRegex('\\p{XID_Start}\\p{XID_Continue}*'),
         ident: $ => alias($.identifier, $.ident),
-        token_: $ => choice(
-                $.identifier,
-                // indivisible symbols
-                '=>', '->', '::',
-                $.number,
-                $.plain_string, $.raw_string
-            ),
         number: $ => /0|[1-9][0-9]+/,
 
         // ... cancel this, we're using Rust-side text templates
-        cfg_match_pattern_parser: 
-         $ => choice(
-             seq(
-                 '(',
-                 $.cfg_match_pattern_parser_single,
-                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
-                 ')'
-             ),
-             $.cfg_match_pattern_parser_single
-         )
-     , conditional_if_parser_guard: $ => seq(
-                    'cfg','!','(',
-                    $.cfg_scrutinee,
-                    optional(seq('=', $.cfg_scrutinee)),
-                    ')'
-                ), cfg_conditional_parser_directive: $ => seq(
+        cfg_conditional_parser_directive: $ => seq(
             'cfg', '!', '(', $.cfg_scrutinee, ')'
         ), cfg_match_pattern_parser_single: 
          $ => {
@@ -86,7 +65,34 @@ export default grammar({
              );
              return or_pat;
          }
-     , cfg_scrutinee: $ => seq(
+     , cfg_match_pattern_parser: 
+         $ => choice(
+             seq(
+                 '(',
+                 $.cfg_match_pattern_parser_single,
+                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
+                 ')'
+             ),
+             $.cfg_match_pattern_parser_single
+         )
+     , conditional_if_parser_guard: $ => seq(
+                    'cfg','!','(',
+                    $.cfg_scrutinee,
+                    optional(seq('=', $.cfg_scrutinee)),
+                    ')'
+                ), conditional_if: $ => seq(
+                '#', 'if', $.conditional_if_parser_guard,
+                repeat(seq('#', 'else', 'if', $.conditional_if_parser_guard)),
+                optional(seq('#', 'else', '{', repeat($.item), '}'))
+            ), cfg_conditional_parser: $ => choice(
+        $.cfg_conditional_parser_directive,
+        seq(
+            '(',
+            $.cfg_conditional_parser_directive,
+            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
+            ')'
+        )
+    ), conditional_item: $ => choice($.conditional_if, $.conditional_match), cfg_scrutinee: $ => seq(
             choice($.ident, $.plain_string),
             optional(seq(
                 '.', choice($.ident, $.plain_string)
@@ -104,19 +110,7 @@ export default grammar({
             )
             ), optional(','))), '}'
                 )
-            , cfg_conditional_parser: $ => choice(
-        $.cfg_conditional_parser_directive,
-        seq(
-            '(',
-            $.cfg_conditional_parser_directive,
-            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
-            ')'
-        )
-    ), conditional_if: $ => seq(
-                '#', 'if', $.conditional_if_parser_guard,
-                repeat(seq('#', 'else', 'if', $.conditional_if_parser_guard)),
-                optional(seq('#', 'else', '{', repeat($.item), '}')),
-            ), conditional_item: $ => choice($.conditional_if, $.conditional_match),
+            ,
 
         unstable_feature: $ => seq(
             '#', 'unstable',
@@ -214,11 +208,11 @@ export default grammar({
                 )
             ));
 
-            return seq(
+            return prec.left(seq(
                 start, // 1
                 $.ident, // 1
                 repeat(seq('::', $.ident)) // 1, 1
-            );
+            ));
         },
         // lib.rs:606
         // e.g. ? `use ::std::boxed::Box as Boxed;`
@@ -491,25 +485,32 @@ export default grammar({
             );
         }, // inner_type_item
 
-        inner_type_conditional_if_parser_guard: $ => seq(
-                    'cfg','!','(',
-                    $.cfg_scrutinee,
-                    optional(seq('=', $.cfg_scrutinee)),
-                    ')'
-                ), inner_type_conditional_match: 
-                $ => seq(
-                    '#','match',
-                    $.cfg_conditional_parser,
-                    '{', repeat(seq(seq(
-                $.cfg_match_pattern_parser,
-                '=>', choice(
-                seq('{', repeat($.inner_type_inner_item), '}'), // block
-                $.inner_type_inner_item, // single
-                seq('(', ')') // empty block
-            )
-            ), optional(','))), '}'
-                )
-            , inner_type_cfg_match_pattern_parser_single: 
+        inner_type_cfg_scrutinee: $ => seq(
+            choice($.ident, $.plain_string),
+            optional(seq(
+                '.', choice($.ident, $.plain_string)
+            ))
+        ), inner_type_cfg_conditional_parser: $ => choice(
+        $.cfg_conditional_parser_directive,
+        seq(
+            '(',
+            $.cfg_conditional_parser_directive,
+            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
+            ')'
+        )
+    ), inner_type_cfg_match_pattern_parser: 
+         $ => choice(
+             seq(
+                 '(',
+                 $.cfg_match_pattern_parser_single,
+                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
+                 ')'
+             ),
+             $.cfg_match_pattern_parser_single
+         )
+     , inner_type_cfg_conditional_parser_directive: $ => seq(
+            'cfg', '!', '(', $.cfg_scrutinee, ')'
+        ), inner_type_cfg_match_pattern_parser_single: 
          $ => {
              let atom = choice( // atom ... .or()
                  choice( // atom.choice(...)
@@ -534,36 +535,29 @@ export default grammar({
              );
              return or_pat;
          }
-     , inner_type_cfg_scrutinee: $ => seq(
-            choice($.ident, $.plain_string),
-            optional(seq(
-                '.', choice($.ident, $.plain_string)
-            ))
-        ), inner_type_conditional_if: $ => seq(
+     , inner_type_conditional_match: 
+                $ => seq(
+                    '#','match',
+                    $.cfg_conditional_parser,
+                    '{', repeat(seq(seq(
+                $.cfg_match_pattern_parser,
+                '=>', choice(
+                seq('{', repeat($.inner_type_inner_item), '}'), // block
+                $.inner_type_inner_item, // single
+                seq('(', ')') // empty block
+            )
+            ), optional(','))), '}'
+                )
+            , inner_type_conditional_item: $ => choice($.conditional_if, $.conditional_match), inner_type_conditional_if_parser_guard: $ => seq(
+                    'cfg','!','(',
+                    $.cfg_scrutinee,
+                    optional(seq('=', $.cfg_scrutinee)),
+                    ')'
+                ), inner_type_conditional_if: $ => seq(
                 '#', 'if', $.conditional_if_parser_guard,
                 repeat(seq('#', 'else', 'if', $.conditional_if_parser_guard)),
-                optional(seq('#', 'else', '{', repeat($.inner_type_inner_item), '}')),
-            ), inner_type_cfg_match_pattern_parser: 
-         $ => choice(
-             seq(
-                 '(',
-                 $.cfg_match_pattern_parser_single,
-                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
-                 ')'
-             ),
-             $.cfg_match_pattern_parser_single
-         )
-     , inner_type_cfg_conditional_parser_directive: $ => seq(
-            'cfg', '!', '(', $.cfg_scrutinee, ')'
-        ), inner_type_cfg_conditional_parser: $ => choice(
-        $.cfg_conditional_parser_directive,
-        seq(
-            '(',
-            $.cfg_conditional_parser_directive,
-            repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
-            ')'
-        )
-    ), inner_type_conditional_item: $ => choice($.conditional_if, $.conditional_match),
+                optional(seq('#', 'else', '{', repeat($.inner_type_inner_item), '}'))
+            ),
 
         // lib.rs:2784
         fn_args: $ => seq(

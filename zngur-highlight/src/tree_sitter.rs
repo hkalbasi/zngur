@@ -26,7 +26,8 @@ export default grammar({{
     reserved: {{
         keywords: $ => ['{keywords}'],
     }},
-    word: $ => $.token_,
+    word: $ => $.identifier,
+    //externals: $ => [$.raw_string],
     rules: {{
         root: $ => repeat($.item),
         item: $ => choice(
@@ -44,15 +45,8 @@ export default grammar({{
         ),
         comment: $ => seq("//", /[^\n]*/),
         identifier:
-            $ => new RustRegex('\p{{XID_Start}}\p{{XID_Continue}}*'),
+            $ => new RustRegex('\\p{{XID_Start}}\\p{{XID_Continue}}*'),
         ident: $ => alias($.identifier, $.ident),
-        token_: $ => choice(
-                $.identifier,
-                // indivisible symbols
-                '=>', '->', '::',
-                $.number,
-                $.plain_string, $.raw_string
-            ),
         number: $ => /0|[1-9][0-9]+/,
 
         // ... cancel this, we're using Rust-side text templates
@@ -154,11 +148,11 @@ export default grammar({{
                 )
             ));
 
-            return seq(
+            return prec.left(seq(
                 start, // 1
                 $.ident, // 1
                 repeat(seq('::', $.ident)) // 1, 1
-            );
+            ));
         }},
         // lib.rs:606
         // e.g. ? `use ::std::boxed::Box as Boxed;`
@@ -941,7 +935,7 @@ fn conditional_item(item: &str) -> Parsers {
             r#"$ => seq(
                 '#', 'if', {guard},
                 repeat(seq('#', 'else', 'if', {guard})),
-                optional(seq('#', 'else', '{{', {block}, '}}')),
+                optional(seq('#', 'else', '{{', {block}, '}}'))
             )"#,
             guard = "$.conditional_if_parser_guard",
             block = &block
