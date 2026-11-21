@@ -12,7 +12,7 @@ export default grammar({
     name: "zngur",
     extras: $ => [ /\s/, $.comment ],
     reserved: {
-        keywords: $ => ['as', 'async', 'dyn', 'mod', 'type', 'trait', 'crate', 'fn', 'mut', 'const', 'use', 'for', 'extern', 'impl', 'import', 'merge', 'if', 'else', 'match', 'safe', 'unsafe'],
+        keywords: $ => ['as', 'async', 'dyn', 'mod', 'type', 'trait', 'crate', 'fn', 'mut', 'const', 'use', 'for', 'extern', 'impl', 'import', 'merge', 'if', 'safe', 'unsafe'],
     },
     word: $ => $.identifier,
     //externals: $ => [$.raw_string],
@@ -36,11 +36,33 @@ export default grammar({
             $ => new RustRegex('\\p{XID_Start}\\p{XID_Continue}*'),
         ident: $ => alias($.identifier, $.ident),
         number: $ => /0|[1-9][0-9]+/,
+        token:
+            $ => new RustRegex('[#]?\\p{XID_Start}\\p{XID_Continue}*'),
 
         // ... cancel this, we're using Rust-side text templates
-        cfg_conditional_parser_directive: $ => seq(
-            'cfg', '!', '(', $.cfg_scrutinee, ')'
-        ), cfg_match_pattern_parser_single: 
+        conditional_if: $ => seq(
+                '#if', $.conditional_if_parser_guard,
+                repeat(seq('#else', 'if', $.conditional_if_parser_guard)),
+                optional(seq('#else', '{', repeat($.item), '}'))
+            ), conditional_match: 
+                $ => seq(
+                    '#match',
+                    $.cfg_conditional_parser,
+                    '{', repeat(seq(seq(
+                $.cfg_match_pattern_parser,
+                '=>', choice(
+                seq('{', repeat($.item), '}'), // block
+                $.item, // single
+                seq('(', ')') // empty block
+            )
+            ), optional(','))), '}'
+                )
+            , conditional_if_parser_guard: $ => seq(
+                    'cfg','!','(',
+                    $.cfg_scrutinee,
+                    optional(seq('=', $.cfg_scrutinee)),
+                    ')'
+                ), cfg_match_pattern_parser_single: 
          $ => {
              let atom = choice( // atom ... .or()
                  choice( // atom.choice(...)
@@ -65,26 +87,14 @@ export default grammar({
              );
              return or_pat;
          }
-     , cfg_match_pattern_parser: 
-         $ => choice(
-             seq(
-                 '(',
-                 $.cfg_match_pattern_parser_single,
-                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
-                 ')'
-             ),
-             $.cfg_match_pattern_parser_single
-         )
-     , conditional_if_parser_guard: $ => seq(
-                    'cfg','!','(',
-                    $.cfg_scrutinee,
-                    optional(seq('=', $.cfg_scrutinee)),
-                    ')'
-                ), conditional_if: $ => seq(
-                '#', 'if', $.conditional_if_parser_guard,
-                repeat(seq('#', 'else', 'if', $.conditional_if_parser_guard)),
-                optional(seq('#', 'else', '{', repeat($.item), '}'))
-            ), cfg_conditional_parser: $ => choice(
+     , conditional_item: $ => choice($.conditional_if, $.conditional_match), cfg_conditional_parser_directive: $ => seq(
+            'cfg', '!', '(', $.cfg_scrutinee, ')'
+        ), cfg_scrutinee: $ => seq(
+            choice($.ident, $.plain_string),
+            optional(seq(
+                '.', choice($.ident, $.plain_string)
+            ))
+        ), cfg_conditional_parser: $ => choice(
         $.cfg_conditional_parser_directive,
         seq(
             '(',
@@ -92,28 +102,20 @@ export default grammar({
             repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
             ')'
         )
-    ), conditional_item: $ => choice($.conditional_if, $.conditional_match), cfg_scrutinee: $ => seq(
-            choice($.ident, $.plain_string),
-            optional(seq(
-                '.', choice($.ident, $.plain_string)
-            ))
-        ), conditional_match: 
-                $ => seq(
-                    '#','match',
-                    $.cfg_conditional_parser,
-                    '{', repeat(seq(seq(
-                $.cfg_match_pattern_parser,
-                '=>', choice(
-                seq('{', repeat($.item), '}'), // block
-                $.item, // single
-                seq('(', ')') // empty block
-            )
-            ), optional(','))), '}'
-                )
-            ,
+    ), cfg_match_pattern_parser: 
+         $ => prec(2, choice(
+             seq(
+                 '(',
+                 $.cfg_match_pattern_parser_single,
+                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
+                 ')'
+             ),
+             $.cfg_match_pattern_parser_single
+         ))
+     ,
 
         unstable_feature: $ => seq(
-            '#', 'unstable',
+            '#unstable',
             // ident can be 'cfg_match', 'cfg_if', or 'template_types'
             '(', $.ident, ')'
         ),
@@ -127,13 +129,12 @@ export default grammar({
         ),
 
         additional_include_item: $ => seq(
-            '#',
             choice(
                 seq(
-                    'cpp_additional_includes',
+                    '#cpp_additional_includes',
                     $.rawable_string // 1
                 ),
-                'convert_panic_to_exception'
+                '#convert_panic_to_exception'
             )
         ),
 
@@ -310,7 +311,7 @@ export default grammar({
                 '*', choice('mut', 'const'), $.rust_type
             );
 
-            return choice(
+            return prec.right(choice(
                 $.rust_scalar,
                 boxed,
                 unit,
@@ -320,7 +321,7 @@ export default grammar({
                 reference,
                 raw_ptr,
                 dyn_trait
-            );
+            ));
         }, // rust_type
         rust_scalar: $ => choice(
             'bool', 'str', 'char', 'usize',
@@ -366,7 +367,7 @@ export default grammar({
         inner_type_inner_item: $ => {
             const layout = choice(
                 seq(
-                    '#', 'layout',
+                    '#layout',
                     '(',
                     optional(seq(
                         $.inner_type_property_item,
@@ -374,7 +375,7 @@ export default grammar({
                     )),
                     ')'
                 ), seq(
-                    '#', 'layout_conservative',
+                    '#layout_conservative',
                     '(',
                     optional(seq(
                         $.inner_type_property_item,
@@ -382,8 +383,8 @@ export default grammar({
                     )),
                     ')'
                 ),
-                seq('#', 'only_by_ref'),
-                seq('#', 'heap_allocated')
+                '#only_by_ref',
+                '#heap_allocated'
             );
 
             const traits = seq(
@@ -413,23 +414,23 @@ export default grammar({
             );
 
             const cpp_value = seq(
-                '#', 'cpp_value',
+                '#cpp_value',
                 $.plain_string,
                 $.plain_string
             );
 
             const cpp_heap_allocated = seq(
-                '#', 'cpp_heap_allocated',
+                '#cpp_heap_allocated',
                 $.plain_string
             );
 
             const cpp_ref = seq(
-                '#', 'cpp_ref',
+                '#cpp_ref',
                 $.plain_string
             );
 
             const cpp_stack_owned = seq(
-                '#', 'cpp_stack_owned',
+                '#cpp_stack_owned',
                 $.plain_string,
                 optional(seq(
                     '(',
@@ -485,12 +486,36 @@ export default grammar({
             );
         }, // inner_type_item
 
-        inner_type_cfg_scrutinee: $ => seq(
+        inner_type_conditional_if_parser_guard: $ => seq(
+                    'cfg','!','(',
+                    $.cfg_scrutinee,
+                    optional(seq('=', $.cfg_scrutinee)),
+                    ')'
+                ), inner_type_cfg_conditional_parser_directive: $ => seq(
+            'cfg', '!', '(', $.cfg_scrutinee, ')'
+        ), inner_type_cfg_scrutinee: $ => seq(
             choice($.ident, $.plain_string),
             optional(seq(
                 '.', choice($.ident, $.plain_string)
             ))
-        ), inner_type_cfg_conditional_parser: $ => choice(
+        ), inner_type_conditional_if: $ => seq(
+                '#if', $.conditional_if_parser_guard,
+                repeat(seq('#else', 'if', $.conditional_if_parser_guard)),
+                optional(seq('#else', '{', repeat($.inner_type_inner_item), '}'))
+            ), inner_type_conditional_match: 
+                $ => seq(
+                    '#match',
+                    $.cfg_conditional_parser,
+                    '{', repeat(seq(seq(
+                $.cfg_match_pattern_parser,
+                '=>', choice(
+                seq('{', repeat($.inner_type_inner_item), '}'), // block
+                $.inner_type_inner_item, // single
+                seq('(', ')') // empty block
+            )
+            ), optional(','))), '}'
+                )
+            , inner_type_conditional_item: $ => choice($.conditional_if, $.conditional_match), inner_type_cfg_conditional_parser: $ => choice(
         $.cfg_conditional_parser_directive,
         seq(
             '(',
@@ -498,19 +523,7 @@ export default grammar({
             repeat(seq(',', $.cfg_conditional_parser_directive)), optional(','),
             ')'
         )
-    ), inner_type_cfg_match_pattern_parser: 
-         $ => choice(
-             seq(
-                 '(',
-                 $.cfg_match_pattern_parser_single,
-                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
-                 ')'
-             ),
-             $.cfg_match_pattern_parser_single
-         )
-     , inner_type_cfg_conditional_parser_directive: $ => seq(
-            'cfg', '!', '(', $.cfg_scrutinee, ')'
-        ), inner_type_cfg_match_pattern_parser_single: 
+    ), inner_type_cfg_match_pattern_parser_single: 
          $ => {
              let atom = choice( // atom ... .or()
                  choice( // atom.choice(...)
@@ -535,29 +548,17 @@ export default grammar({
              );
              return or_pat;
          }
-     , inner_type_conditional_match: 
-                $ => seq(
-                    '#','match',
-                    $.cfg_conditional_parser,
-                    '{', repeat(seq(seq(
-                $.cfg_match_pattern_parser,
-                '=>', choice(
-                seq('{', repeat($.inner_type_inner_item), '}'), // block
-                $.inner_type_inner_item, // single
-                seq('(', ')') // empty block
-            )
-            ), optional(','))), '}'
-                )
-            , inner_type_conditional_item: $ => choice($.conditional_if, $.conditional_match), inner_type_conditional_if_parser_guard: $ => seq(
-                    'cfg','!','(',
-                    $.cfg_scrutinee,
-                    optional(seq('=', $.cfg_scrutinee)),
-                    ')'
-                ), inner_type_conditional_if: $ => seq(
-                '#', 'if', $.conditional_if_parser_guard,
-                repeat(seq('#', 'else', 'if', $.conditional_if_parser_guard)),
-                optional(seq('#', 'else', '{', repeat($.inner_type_inner_item), '}'))
-            ),
+     , inner_type_cfg_match_pattern_parser: 
+         $ => prec(2, choice(
+             seq(
+                 '(',
+                 $.cfg_match_pattern_parser_single,
+                 repeat(seq(',', $.cfg_match_pattern_parser_single)),
+                 ')'
+             ),
+             $.cfg_match_pattern_parser_single
+         ))
+     ,
 
         // lib.rs:2784
         fn_args: $ => seq(

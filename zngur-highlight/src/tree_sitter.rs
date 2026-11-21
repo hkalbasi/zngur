@@ -48,12 +48,14 @@ export default grammar({{
             $ => new RustRegex('\\p{{XID_Start}}\\p{{XID_Continue}}*'),
         ident: $ => alias($.identifier, $.ident),
         number: $ => /0|[1-9][0-9]+/,
+        token:
+            $ => new RustRegex('[#]?\\p{{XID_Start}}\\p{{XID_Continue}}*'),
 
         // ... cancel this, we're using Rust-side text templates
         {conditional_item_},
 
         unstable_feature: $ => seq(
-            '#', 'unstable',
+            '#unstable',
             // ident can be 'cfg_match', 'cfg_if', or 'template_types'
             '(', $.ident, ')'
         ),
@@ -67,13 +69,12 @@ export default grammar({{
         ),
 
         additional_include_item: $ => seq(
-            '#',
             choice(
                 seq(
-                    'cpp_additional_includes',
+                    '#cpp_additional_includes',
                     $.rawable_string // 1
                 ),
-                'convert_panic_to_exception'
+                '#convert_panic_to_exception'
             )
         ),
 
@@ -250,7 +251,7 @@ export default grammar({{
                 '*', choice('mut', 'const'), $.rust_type
             );
 
-            return choice(
+            return prec.right(choice(
                 $.rust_scalar,
                 boxed,
                 unit,
@@ -260,7 +261,7 @@ export default grammar({{
                 reference,
                 raw_ptr,
                 dyn_trait
-            );
+            ));
         }}, // rust_type
         rust_scalar: $ => choice(
             'bool', 'str', 'char', 'usize',
@@ -306,7 +307,7 @@ export default grammar({{
         inner_type_inner_item: $ => {{
             const layout = choice(
                 seq(
-                    '#', 'layout',
+                    '#layout',
                     '(',
                     optional(seq(
                         $.inner_type_property_item,
@@ -314,7 +315,7 @@ export default grammar({{
                     )),
                     ')'
                 ), seq(
-                    '#', 'layout_conservative',
+                    '#layout_conservative',
                     '(',
                     optional(seq(
                         $.inner_type_property_item,
@@ -322,8 +323,8 @@ export default grammar({{
                     )),
                     ')'
                 ),
-                seq('#', 'only_by_ref'),
-                seq('#', 'heap_allocated')
+                '#only_by_ref',
+                '#heap_allocated'
             );
 
             const traits = seq(
@@ -353,23 +354,23 @@ export default grammar({{
             );
 
             const cpp_value = seq(
-                '#', 'cpp_value',
+                '#cpp_value',
                 $.plain_string,
                 $.plain_string
             );
 
             const cpp_heap_allocated = seq(
-                '#', 'cpp_heap_allocated',
+                '#cpp_heap_allocated',
                 $.plain_string
             );
 
             const cpp_ref = seq(
-                '#', 'cpp_ref',
+                '#cpp_ref',
                 $.plain_string
             );
 
             const cpp_stack_owned = seq(
-                '#', 'cpp_stack_owned',
+                '#cpp_stack_owned',
                 $.plain_string,
                 optional(seq(
                     '(',
@@ -492,7 +493,8 @@ export default grammar({{
     }}
 }});
 "##,
-        keywords = KEYWORDS.iter().join("', '"),
+        keywords = KEYWORDS.iter()
+            .filter(|&x| *x != "else" && *x != "match").join("', '"),
         conditional_item_ = conditional_item("$.item").into_iter()
             .map(|(name, body)| {
                 format!("{name}: {body}")
@@ -865,7 +867,7 @@ fn cfg_pattern_parser(parser_map: &mut Parsers) {
      "#));
 
      parser_map.insert("cfg_match_pattern_parser", format!(r#"
-         $ => choice(
+         $ => prec(2, choice(
              seq(
                  '(',
                  $.cfg_match_pattern_parser_single,
@@ -873,7 +875,7 @@ fn cfg_pattern_parser(parser_map: &mut Parsers) {
                  ')'
              ),
              $.cfg_match_pattern_parser_single
-         )
+         ))
      "#));
 }
 //
@@ -933,9 +935,9 @@ fn conditional_item(item: &str) -> Parsers {
 
         format!(
             r#"$ => seq(
-                '#', 'if', {guard},
-                repeat(seq('#', 'else', 'if', {guard})),
-                optional(seq('#', 'else', '{{', {block}, '}}'))
+                '#if', {guard},
+                repeat(seq('#else', 'if', {guard})),
+                optional(seq('#else', '{{', {block}, '}}'))
             )"#,
             guard = "$.conditional_if_parser_guard",
             block = &block
@@ -964,7 +966,7 @@ fn conditional_item(item: &str) -> Parsers {
         format!(
             r#"
                 $ => seq(
-                    '#','match',
+                    '#match',
                     $.cfg_conditional_parser,
                     '{{', repeat(seq({arm}, optional(','))), '}}'
                 )
